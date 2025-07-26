@@ -1,0 +1,19 @@
+blueprint:
+  template: development
+  image: ${WORKSPACE_REGISTRY}/workspaces/dev:0.8-1.9
+  shell: /bin/zsh
+  sudo: true
+  network_policy: workspace
+  resources:
+    limits:
+      cpu: 8
+      memory: 8Gi
+
+  init_scripts:
+    files:
+      - init_repo@&: |
+          go env -w GOPRIVATE=github.com/k8shell-io/*
+          cd $HOME/provisioner
+          GOPATH="$HOME/go" go mod tidy
+
+
