@@ -3,7 +3,7 @@ blueprint:
   image: ${WORKSPACE_REGISTRY}/workspaces/dev:0.8-1.9
   shell: /bin/zsh
   sudo: true
-  network_policy: workspace
+  network_policy: system
   resources:
     limits:
       cpu: 8
