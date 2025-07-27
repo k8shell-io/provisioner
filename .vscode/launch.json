@@ -1,0 +1,27 @@
+{
+    // Use IntelliSense to learn about possible attributes.
+    // Hover to view descriptions of existing attributes.
+    // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
+    // k8shell-db-postgresql-dev
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Go provisioner",
+            "type": "go",
+            "request": "launch",
+            "mode": "auto",
+            "program": "cmd/provisioner/main.go", // Path to your Go file or main package
+            "env": {
+                "SECRET_FILES": "/opt/shared/provisioner/secrets"
+            },
+            "cwd": "${workspaceFolder}",
+            "args": [
+                "--logtext",
+                "--config",
+                "config/config.yaml"
+            ],
+            "showLog": true
+            //"stopOnEntry": true
+        }
+    ]
+}

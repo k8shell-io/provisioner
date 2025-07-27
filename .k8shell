@@ -16,4 +16,3 @@ blueprint:
           cd $HOME/provisioner
           GOPATH="$HOME/go" go mod tidy
 
-

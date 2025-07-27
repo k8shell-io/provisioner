@@ -1,0 +1,10 @@
+# Provisioner service configuration
+
+# Server configuration
+http:
+  port: 9201
+  APIKey: !file ${SECRET_FILES}/provisioner_key
+
+blueprintProviders:
+  - name: file
+    directory: blueprints
