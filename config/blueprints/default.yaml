@@ -1,129 +1,129 @@
-blueprint:
-  name: default
-  shell: /bin/bash
-  sudo: false
+blueprints:
+  - name: default
+    shell: /bin/bash
+    sudo: false
 
-  #image: <image:tag>
-  imagePullSecret: ${WORKSPACE_REGCRED}
-  imagePullPolicy: Always
-
-  k8shelld: 
-    image: ${WORKSPACE_REGISTRY}/k8shell-base/k8shelld:v0.10.1-35
+    #image: <image:tag>
     imagePullSecret: ${WORKSPACE_REGCRED}
     imagePullPolicy: Always
-    encryptConfig: !cel "!(user.roles.exists(r, r in ['org-admin', 'admin', 'workspace-admin']))"
-    ignoreOrphans:
-      - .*JetBrains.*
-    cert:
-      country: CZ
-      state: Czech Republic
-      locality: Prague
-      organization: ksi.fit.cvut.cz
-      commonName: ksi.fit.cvut.cz
 
-  env:
-    TEST: "test_value"
+    k8shelld: 
+      image: ${WORKSPACE_REGISTRY}/k8shell-base/k8shelld:v0.10.1-35
+      imagePullSecret: ${WORKSPACE_REGCRED}
+      imagePullPolicy: Always
+      encryptConfig: !cel "!(user.roles.exists(r, r in ['org-admin', 'admin', 'workspace-admin']))"
+      ignoreOrphans:
+        - .*JetBrains.*
+      cert:
+        country: CZ
+        state: Czech Republic
+        locality: Prague
+        organization: ksi.fit.cvut.cz
+        commonName: ksi.fit.cvut.cz
 
-  portForwarding:
-    - localnetworks:0
+    env:
+      TEST: "test_value"
 
-  network:
-    networkPolicy: workspace
-    allowEgress:
-      - 10.126.2.52/32
+    portForwarding:
+      - localnetworks:0
 
-  resources:
-    cpu: 2
-    memory: 2Gi
-
-  docker:
-    enabled: false
-    image: docker:28.0.4-dind
+    network:
+      networkPolicy: workspace
+      allowEgress:
+        - 10.126.2.52/32
 
     resources:
       cpu: 2
       memory: 2Gi
 
-    # group id used in the dind image to create the docker socket; when the dind image is rootless
-    # the actual group id will be 100000 + group_id - 1 where 100000 is subordinate group id
-    group_id: 999
-
-    # subordinate group id used in the dind image; 
-    # this should be set to 100000 when the dind image is rootless otehrwise it should be set to 0
-    #subgid: 100000
-    subgid: 0
-
-    # use the same volumes as in the main workspace
-    parentStorages: true
-
-    extFiles:
-      # the private CA certificate so that docker pull, push works
-      /etc/ssl/certs/private-ca.pem: !file private-ca.pem
-
-  credentialHelpers:
     docker:
       enabled: false
-      servers:
-      - address: ${WORKSPACE_REGISTRY}
-        username: ${WORKSPACE_REGISTRY_USERNAME}
-        password: ${WORKSPACE_REGISTRY_PASSWORD}
+      image: docker:28.0.4-dind
 
-    # git:
-    #   enabled: false
-    #   servers:
-    #   - address: github.com
-    #     username: none
-    #     password: gh_12345
+      resources:
+        cpu: 2
+        memory: 2Gi
 
-  # list of storages in the workspace
-  storages:
-    home:
-      enabled: true
-      storageClass: ${WORKSPACE_STORAGE_CLASS}
-      size: 10Gi
-      path: /home/{username}
-      readonly: False      
-      annotations:
-        zfs-csi.k8shell.io/volume-name: "{blueprint}/{username}"
-        zfs-csi.k8shell.io/retain-on-delete: "true"
-        zfs-csi.k8shell.io/squash: "all_squash"
-        zfs-csi.k8shell.io/squash-uid: "{user.uid}"
-        zfs-csi.k8shell.io/squash-gid: "{user.gid}"    
-    
-    shared:
-      enabled: true
-      storageClass: ${WORKSPACE_STORAGE_CLASS}
-      size: 50Gi
-      path: /opt/shared
-      readonly: !cel "!(user.roles.exists(r, r in ['org-admin', 'admin', 'workspace-admin']))"
-      annotations:    
-        zfs-csi.k8shell.io/volume-name: "{blueprint}/shared"
-        zfs-csi.k8shell.io/retain-on-delete: "true"
+      # group id used in the dind image to create the docker socket; when the dind image is rootless
+      # the actual group id will be 100000 + group_id - 1 where 100000 is subordinate group id
+      group_id: 999
 
-  initScripts:
-    - workspace@: |
-        ln -s /opt/shared $HOME/shared            
+      # subordinate group id used in the dind image; 
+      # this should be set to 100000 when the dind image is rootless otehrwise it should be set to 0
+      #subgid: 100000
+      subgid: 0
 
-    - vscode@: |
-        # add the vscode server settings
-        mkdir -p $HOME/.vscode-server/data/Machine
-        [ ! -f /$HOME/.vscode-server/data/Machine/settings.json ] && \
-        if [ ! -f /$HOME/.vscode-server/data/Machine/settings.json ] && [ -f /opt/ext/vscode-server/settings.json ]; then
-          cp /opt/ext/vscode-server/settings.json $HOME/.vscode-server/data/Machine/settings.json
-        fi
+      # use the same volumes as in the main workspace
+      parentStorages: true
 
-    - git@: |
-        # set the git configuration
-        touch /$HOME/.gitconfig
-        git config --global pull.rebase true
-        git config --global user.name "${USERNAME}"
-        git config --global user.email "${USEREMAIL}"
+      extFiles:
+        # the private CA certificate so that docker pull, push works
+        /etc/ssl/certs/private-ca.pem: !file private-ca.pem
 
-    - docker@: |
-        [ -f $HOME/.docker/config.json ] && exit 0
-        if [ -f /usr/local/bin/docker-credential-k8shell ]; then
-          mkdir -p $HOME/.docker
-          echo "{\"credsStore\":\"k8shell\"}" > $HOME/.docker/config.json
-        fi
-          
+    credentialHelpers:
+      docker:
+        enabled: false
+        servers:
+        - address: ${WORKSPACE_REGISTRY}
+          username: ${WORKSPACE_REGISTRY_USERNAME}
+          password: ${WORKSPACE_REGISTRY_PASSWORD}
+
+      # git:
+      #   enabled: false
+      #   servers:
+      #   - address: github.com
+      #     username: none
+      #     password: gh_12345
+
+    # list of storages in the workspace
+    storages:
+      home:
+        enabled: true
+        storageClass: ${WORKSPACE_STORAGE_CLASS}
+        size: 10Gi
+        path: /home/{username}
+        readonly: False      
+        annotations:
+          zfs-csi.k8shell.io/volume-name: "{blueprint}/{username}"
+          zfs-csi.k8shell.io/retain-on-delete: "true"
+          zfs-csi.k8shell.io/squash: "all_squash"
+          zfs-csi.k8shell.io/squash-uid: "{user.uid}"
+          zfs-csi.k8shell.io/squash-gid: "{user.gid}"    
+      
+      shared:
+        enabled: true
+        storageClass: ${WORKSPACE_STORAGE_CLASS}
+        size: 50Gi
+        path: /opt/shared
+        readonly: !cel "!(user.roles.exists(r, r in ['org-admin', 'admin', 'workspace-admin']))"
+        annotations:    
+          zfs-csi.k8shell.io/volume-name: "{blueprint}/shared"
+          zfs-csi.k8shell.io/retain-on-delete: "true"
+
+    initScripts:
+      - workspace@: |
+          ln -s /opt/shared $HOME/shared            
+
+      - vscode@: |
+          # add the vscode server settings
+          mkdir -p $HOME/.vscode-server/data/Machine
+          [ ! -f /$HOME/.vscode-server/data/Machine/settings.json ] && \
+          if [ ! -f /$HOME/.vscode-server/data/Machine/settings.json ] && [ -f /opt/ext/vscode-server/settings.json ]; then
+            cp /opt/ext/vscode-server/settings.json $HOME/.vscode-server/data/Machine/settings.json
+          fi
+
+      - git@: |
+          # set the git configuration
+          touch /$HOME/.gitconfig
+          git config --global pull.rebase true
+          git config --global user.name "${USERNAME}"
+          git config --global user.email "${USEREMAIL}"
+
+      - docker@: |
+          [ -f $HOME/.docker/config.json ] && exit 0
+          if [ -f /usr/local/bin/docker-credential-k8shell ]; then
+            mkdir -p $HOME/.docker
+            echo "{\"credsStore\":\"k8shell\"}" > $HOME/.docker/config.json
+          fi
+            
 

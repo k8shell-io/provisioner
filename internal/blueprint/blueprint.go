@@ -12,7 +12,6 @@ import (
 	"github.com/k8shell-io/yaml-cel/pkg/yamlcel"
 	"github.com/k8shell-io/yaml-config/pkg/yamlconfig"
 	"github.com/rs/zerolog/log"
-	"gopkg.in/yaml.v3"
 )
 
 // Blueprint represents the loaded blueprint from YAML.
@@ -107,19 +106,9 @@ func processYAMLFile(p *yamlconfig.Processor, path string, scope map[string]any)
 		return nil, fmt.Errorf("unmarshal template: %w", err)
 	}
 
-	result, err := tmpl.Eval(scope, map[string]string{})
+	doc, err := tmpl.Eval(scope, map[string]string{})
 	if err != nil {
 		return nil, fmt.Errorf("error evaluating template: %w", err)
-	}
-
-	yamlBytes, err := yaml.Marshal(result)
-	if err != nil {
-		return nil, fmt.Errorf("error marshalling result to YAML: %w", err)
-	}
-
-	var doc yaml.Node
-	if err := yaml.Unmarshal(yamlBytes, &doc); err != nil {
-		return nil, fmt.Errorf("error unmarshalling YAML to node: %w", err)
 	}
 
 	var top map[string]interface{}
@@ -207,13 +196,12 @@ func extractMultipleBlueprints(data interface{}, path string, blueprintsRaw map[
 	return nil
 }
 
-// LoadBlueprints loads all blueprints from the specified directory with given scope.
-func LoadBlueprints(opts LoadOptions) (map[string]*Blueprint, error) {
-	if opts.Scope == nil {
+// LoadRawBlueprints loads raw blueprints from the specified directory with given scope.
+// It processes YAML files, expands environment variables, and handles custom tags.
+// Returns a map of blueprint names to their raw data.
+func LoadRawBlueprints(dir string, scope map[string]any) (map[string]*Blueprint, error) {
+	if scope == nil {
 		return nil, fmt.Errorf("scope cannot be nil")
-	}
-	if opts.Strategies == nil {
-		opts.Strategies = MergeStrategies{}
 	}
 
 	blueprintsRaw := make(map[string]*Blueprint)
@@ -226,8 +214,7 @@ func LoadBlueprints(opts LoadOptions) (map[string]*Blueprint, error) {
 		},
 	)
 
-	// load all YAML files in the directory
-	err := filepath.WalkDir(opts.Dir, func(path string, d fs.DirEntry, err error) error {
+	err := filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
@@ -238,7 +225,7 @@ func LoadBlueprints(opts LoadOptions) (map[string]*Blueprint, error) {
 			return nil
 		}
 
-		top, err := processYAMLFile(p, path, opts.Scope)
+		top, err := processYAMLFile(p, path, scope)
 		if err != nil {
 			return err
 		}
@@ -249,7 +236,16 @@ func LoadBlueprints(opts LoadOptions) (map[string]*Blueprint, error) {
 		return nil, err
 	}
 
-	// Apply template resolution
+	return blueprintsRaw, nil
+}
+
+// LoadBlueprints loads all blueprints from the specified directory with given scope.
+func LoadBlueprints(opts LoadOptions) (map[string]*Blueprint, error) {
+	blueprintsRaw, err := LoadRawBlueprints(opts.Dir, opts.Scope)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load raw blueprints: %w", err)
+	}
+
 	resolved := make(map[string]*Blueprint)
 	for name := range blueprintsRaw {
 		bp, err := ResolveTemplate(name, blueprintsRaw, opts.Strategies, map[string]bool{})
@@ -261,6 +257,7 @@ func LoadBlueprints(opts LoadOptions) (map[string]*Blueprint, error) {
 	return resolved, nil
 }
 
+// generateRandomName creates a random name with the given prefix.
 func generateRandomName(prefix string) string {
 	b := make([]byte, 4)
 	if _, err := rand.Read(b); err != nil {

@@ -30,6 +30,10 @@ github.com/josharian/intern v1.0.0 h1:vlS4z54oSdjm0bgjRigI+G1HpF+tI+9rE5LLzOg8Hm
 github.com/josharian/intern v1.0.0/go.mod h1:5DoeVV0s6jJacbCEi61lwdGj/aVlrQvzHFFd8Hwg//Y=
 github.com/k8shell-io/yaml-cel v0.1.8 h1:jfjznUpD3b/nQVEojD9zriz1B77ITmuRPBDckFLanfE=
 github.com/k8shell-io/yaml-cel v0.1.8/go.mod h1:CyPl7TwA70tplPTom9ZTdnAPg11FRWbSBZX6otG9xZ4=
+github.com/k8shell-io/yaml-cel v0.2.0 h1:/OK1S5pjmm6T7s/Q+uVbmek4IZZqx1Dddu9J4WplaYA=
+github.com/k8shell-io/yaml-cel v0.2.0/go.mod h1:CyPl7TwA70tplPTom9ZTdnAPg11FRWbSBZX6otG9xZ4=
+github.com/k8shell-io/yaml-cel v0.2.1 h1:+4rhXwX7Q1rkEBYgYP3XBJM+XzyGPGmrxHFmU/yoTlU=
+github.com/k8shell-io/yaml-cel v0.2.1/go.mod h1:CyPl7TwA70tplPTom9ZTdnAPg11FRWbSBZX6otG9xZ4=
 github.com/k8shell-io/yaml-config v0.1.1 h1:k4Yx4elOAWGdxmka/fLo3N+dwCaJla0nEcX1qL/SMHk=
 github.com/k8shell-io/yaml-config v0.1.1/go.mod h1:e0hBGrhGNCqkE+fBe2tIvAFSiGk1SGnMnH7R7DahTcE=
 github.com/kr/pretty v0.1.0/go.mod h1:dAy3ld7l9f0ibDNOQOHHMYYIIbhfbHSm3C4ZsoJORNo=

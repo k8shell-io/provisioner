@@ -23,7 +23,7 @@ require (
 	github.com/go-openapi/swag v0.19.15 // indirect
 	github.com/google/cel-go v0.26.0 // indirect
 	github.com/josharian/intern v1.0.0 // indirect
-	github.com/k8shell-io/yaml-cel v0.1.8 // indirect
+	github.com/k8shell-io/yaml-cel v0.2.1 // indirect
 	github.com/mailru/easyjson v0.7.6 // indirect
 	github.com/mattn/go-colorable v0.1.13 // indirect
 	github.com/mattn/go-isatty v0.0.19 // indirect
