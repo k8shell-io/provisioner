@@ -25,6 +25,13 @@ type Blueprint struct {
 // MergeStrategies allow custom list merging strategies per dotted path.
 type MergeStrategies map[string]func(dst, src []interface{}) []interface{}
 
+// LoadOptions contains configuration for loading blueprints.
+type LoadOptions struct {
+	Dir        string
+	Scope      map[string]any
+	Strategies MergeStrategies
+}
+
 // mergeMaps recursively merges `src` into `dst`. Modifies dst.
 func mergeMaps(dst, src map[string]interface{}, path []string, strategies MergeStrategies) map[string]interface{} {
 	for key, value := range src {
@@ -87,9 +94,128 @@ func deepCopyMap(src map[string]interface{}) map[string]interface{} {
 	return dst
 }
 
-// LoadBlueprints loads all blueprints from the specified directory.
-// It processes YAML files, resolves templates, and returns a map of blueprints.
-func LoadBlueprints(dir string) (map[string]*Blueprint, error) {
+// processYAMLFile processes a single YAML file with the given scope.
+func processYAMLFile(p *yamlconfig.Processor, path string, scope map[string]any) (map[string]interface{}, error) {
+	root, err := p.LoadFile(path)
+	if err != nil {
+		log.Error().Err(err).Str("path", path).Msg("Failed to load blueprint file")
+		return nil, err
+	}
+
+	var tmpl yamlcel.CELTemplate
+	if err := root.Decode(&tmpl); err != nil {
+		return nil, fmt.Errorf("unmarshal template: %w", err)
+	}
+
+	result, err := tmpl.Eval(scope, map[string]string{})
+	if err != nil {
+		return nil, fmt.Errorf("error evaluating template: %w", err)
+	}
+
+	yamlBytes, err := yaml.Marshal(result)
+	if err != nil {
+		return nil, fmt.Errorf("error marshalling result to YAML: %w", err)
+	}
+
+	var doc yaml.Node
+	if err := yaml.Unmarshal(yamlBytes, &doc); err != nil {
+		return nil, fmt.Errorf("error unmarshalling YAML to node: %w", err)
+	}
+
+	var top map[string]interface{}
+	if err := doc.Decode(&top); err != nil {
+		log.Error().Err(err).Str("path", path).Msg("Failed to decode YAML to map")
+		return nil, fmt.Errorf("failed to decode YAML to map: %w", err)
+	}
+
+	return top, nil
+}
+
+// extractBlueprints extracts blueprints from processed YAML data.
+func extractBlueprints(top map[string]interface{}, path string, blueprintsRaw map[string]*Blueprint) error {
+	switch {
+	case top["blueprint"] != nil:
+		return extractSingleBlueprint(top["blueprint"], path, blueprintsRaw)
+	case top["blueprints"] != nil:
+		return extractMultipleBlueprints(top["blueprints"], path, blueprintsRaw)
+	default:
+		log.Warn().Str("path", path).Msg("No blueprint or blueprints key found")
+		return nil
+	}
+}
+
+// extractSingleBlueprint extracts a single blueprint from the data.
+func extractSingleBlueprint(data interface{}, path string, blueprintsRaw map[string]*Blueprint) error {
+	bpMap, ok := data.(map[string]interface{})
+	if !ok {
+		log.Error().Str("path", path).Msg("Expected blueprint to be a map.")
+		return fmt.Errorf("expected blueprint to be a map at %s", path)
+	}
+
+	bp := &Blueprint{
+		Name:     generateRandomName("bp"),
+		Template: "",
+		Raw:      bpMap,
+	}
+
+	if n, ok := bpMap["name"].(string); ok {
+		bp.Name = n
+	}
+	if t, ok := bpMap["template"].(string); ok {
+		bp.Template = t
+	}
+
+	blueprintsRaw[bp.Name] = bp
+	return nil
+}
+
+// extractMultipleBlueprints extracts multiple blueprints from a list.
+func extractMultipleBlueprints(data interface{}, path string, blueprintsRaw map[string]*Blueprint) error {
+	list, ok := data.([]interface{})
+	if !ok {
+		log.Error().Str("path", path).Msg("Expected blueprints to be a list.")
+		return fmt.Errorf("expected blueprints to be a list at %s", path)
+	}
+
+	for i, item := range list {
+		bpMap, ok := item.(map[string]interface{})
+		if !ok {
+			log.Warn().Str("path", path).Int("index", i).Msg("Skipping non-object in blueprints list")
+			continue
+		}
+
+		var name string
+		if n, ok := bpMap["name"].(string); ok {
+			name = n
+		} else {
+			name = generateRandomName("bp")
+		}
+
+		bp := &Blueprint{
+			Name:     name,
+			Template: "",
+			Raw:      bpMap,
+		}
+
+		if t, ok := bpMap["template"].(string); ok {
+			bp.Template = t
+		}
+
+		blueprintsRaw[bp.Name] = bp
+	}
+
+	return nil
+}
+
+// LoadBlueprints loads all blueprints from the specified directory with given scope.
+func LoadBlueprints(opts LoadOptions) (map[string]*Blueprint, error) {
+	if opts.Scope == nil {
+		return nil, fmt.Errorf("scope cannot be nil")
+	}
+	if opts.Strategies == nil {
+		opts.Strategies = MergeStrategies{}
+	}
+
 	blueprintsRaw := make(map[string]*Blueprint)
 
 	p := yamlconfig.NewProcessor(
@@ -101,7 +227,7 @@ func LoadBlueprints(dir string) (map[string]*Blueprint, error) {
 	)
 
 	// load all YAML files in the directory
-	err := filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
+	err := filepath.WalkDir(opts.Dir, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
@@ -112,107 +238,12 @@ func LoadBlueprints(dir string) (map[string]*Blueprint, error) {
 			return nil
 		}
 
-		root, err := p.LoadFile(path)
+		top, err := processYAMLFile(p, path, opts.Scope)
 		if err != nil {
-			log.Error().Err(err).Str("path", path).Msg("Failed to load blueprint file")
 			return err
 		}
 
-		var tmpl yamlcel.CELTemplate
-		if err := root.Decode(&tmpl); err != nil {
-			return fmt.Errorf("unmarshal template: %w", err)
-		}
-
-		resource := map[string]any{
-			"username": "john",
-			"uid":      1001,
-			"user": map[string]any{
-				"username": "vitvatom",
-				"roles":    []string{"admin", "user", "admin"},
-			},
-			"repo": map[string]any{
-				"name":  "my-repo",
-				"owner": "vitvatom",
-			},
-		}
-
-		result, err := tmpl.Eval(resource, map[string]string{})
-		if err != nil {
-			return fmt.Errorf("error evaluating template: %w", err)
-		}
-
-		yamlBytes, err := yaml.Marshal(result)
-		if err != nil {
-			return fmt.Errorf("error marshalling result to YAML: %w", err)
-		}
-
-		var doc yaml.Node
-		if err := yaml.Unmarshal(yamlBytes, &doc); err != nil {
-			return fmt.Errorf("error unmarshalling YAML to node: %w", err)
-		}
-
-		root = &doc
-
-		var top map[string]interface{}
-		if err := root.Decode(&top); err != nil {
-			log.Error().Err(err).Str("path", path).Msg("Failed to decode YAML to map")
-			return nil
-		}
-
-		switch {
-		case top["blueprint"] != nil:
-			if bpMap, ok := top["blueprint"].(map[string]interface{}); ok {
-				bp := &Blueprint{
-					Name:     generateRandomName("bp"),
-					Template: "",
-					Raw:      bpMap,
-				}
-				if n, ok := bpMap["name"].(string); ok {
-					bp.Name = n
-				}
-				if t, ok := bpMap["template"].(string); ok {
-					bp.Template = t
-				}
-				blueprintsRaw[bp.Name] = bp
-			} else {
-				log.Error().Str("path", path).Msg("Expected blueprint to be a map.")
-				return fmt.Errorf("expected blueprint to be a map at %s", path)
-			}
-
-		case top["blueprints"] != nil:
-			list, ok := top["blueprints"].([]interface{})
-			if !ok {
-				log.Error().Str("path", path).Msg("Expected blueprints to be a list.")
-				return fmt.Errorf("expected blueprints to be a list at %s", path)
-			}
-			for i, item := range list {
-				bpMap, ok := item.(map[string]interface{})
-				if !ok {
-					log.Warn().Str("path", path).Int("index", i).Msg("Skipping non-object in blueprints list")
-					continue
-				}
-				var name string
-				if n, ok := bpMap["name"].(string); ok {
-					name = n
-				} else {
-					name = generateRandomName("bp")
-				}
-				bp := &Blueprint{
-					Name:     name,
-					Template: "",
-					Raw:      bpMap,
-				}
-				if t, ok := bpMap["template"].(string); ok {
-					bp.Template = t
-				}
-				blueprintsRaw[bp.Name] = bp
-			}
-
-		default:
-			log.Warn().Str("path", path).Msg("No blueprint or blueprints key found")
-		}
-
-		return nil
+		return extractBlueprints(top, path, blueprintsRaw)
 	})
 	if err != nil {
 		return nil, err
@@ -221,7 +252,7 @@ func LoadBlueprints(dir string) (map[string]*Blueprint, error) {
 	// Apply template resolution
 	resolved := make(map[string]*Blueprint)
 	for name := range blueprintsRaw {
-		bp, err := ResolveTemplate(name, blueprintsRaw, MergeStrategies{}, map[string]bool{})
+		bp, err := ResolveTemplate(name, blueprintsRaw, opts.Strategies, map[string]bool{})
 		if err != nil {
 			return nil, fmt.Errorf("error resolving blueprint %s: %w", name, err)
 		}

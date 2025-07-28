@@ -6,9 +6,8 @@ import (
 	"os"
 	"testing"
 
-	"github.com/stretchr/testify/require"
-
 	"github.com/k8shell-io/provisioner/internal/blueprint"
+	"github.com/stretchr/testify/require"
 )
 
 func TestLoadAndResolveBlueprints(t *testing.T) {
@@ -33,8 +32,30 @@ func TestLoadAndResolveBlueprints(t *testing.T) {
 		}
 	}()
 
-	blueprints, err := blueprint.LoadBlueprints(dir)
-	require.NoError(t, err)
+	// Basic usage
+	scope := map[string]any{
+		"username": "bruckins",
+		"uid":      1001,
+		"user": map[string]any{
+			"name":  "John Doe",
+			"email": "",
+			"roles": []string{"admin", "developer"},
+		},
+		"repo": map[string]any{
+			"owner": "k8shell-io",
+			"name":  "provisioner",
+		},
+	}
+
+	// Advanced usage with custom strategies
+	blueprints, err := blueprint.LoadBlueprints(blueprint.LoadOptions{
+		Dir:   dir,
+		Scope: scope,
+	})
+	require.NoError(t, err, "Failed to load blueprints")
+
+	// blueprints, err := blueprint.LoadBlueprints(dir)
+	// require.NoError(t, err)
 
 	out, err := json.MarshalIndent(blueprints["development"].Raw, "", "  ")
 	require.NoError(t, err)
