@@ -5,10 +5,10 @@ import (
 	"encoding/hex"
 	"fmt"
 	"io/fs"
-	"os"
 	"path/filepath"
 
 	"github.com/k8shell-io/yaml-cel/pkg/yamlcel"
+	"github.com/k8shell-io/yaml-config/pkg/yamlconfig"
 	"github.com/rs/zerolog/log"
 	"gopkg.in/yaml.v3"
 )
@@ -40,6 +40,7 @@ type LoadOptions struct {
 type BlueprintManager struct {
 	rawBlueprints map[string]*RawBlueprint
 	strategies    MergeStrategies
+	processor     *yamlconfig.Processor
 }
 
 // NewBlueprintManager creates a new blueprint manager.
@@ -51,6 +52,7 @@ func NewBlueprintManager(opts LoadOptions) (*BlueprintManager, error) {
 	manager := &BlueprintManager{
 		rawBlueprints: make(map[string]*RawBlueprint),
 		strategies:    opts.Strategies,
+		processor:     yamlconfig.NewProcessor(yamlconfig.DefaultOptions()),
 	}
 
 	if err := manager.loadRawBlueprints(opts.Dir); err != nil {
@@ -77,19 +79,12 @@ func (bm *BlueprintManager) loadRawBlueprints(dir string) error {
 			return nil
 		}
 
-		data, err := os.ReadFile(path)
+		root, err := bm.processor.LoadFile(path)
 		if err != nil {
-			log.Error().Err(err).Str("path", path).Msg("Failed to read blueprint file")
-			return err
+			return fmt.Errorf("failed to load YAML file '%s': %w", path, err)
 		}
 
-		var root yaml.Node
-		if err := yaml.Unmarshal(data, &root); err != nil {
-			log.Error().Err(err).Str("path", path).Msg("Failed to parse YAML file")
-			return err
-		}
-
-		return bm.extractRawBlueprints(&root, path)
+		return bm.extractRawBlueprints(root, path)
 	})
 }
 

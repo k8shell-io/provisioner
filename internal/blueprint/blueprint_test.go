@@ -33,9 +33,8 @@ func TestLoadAndResolveBlueprints(t *testing.T) {
 	}()
 
 	// Basic usage
-	scope := map[string]any{
+	scope1 := map[string]any{
 		"username": "bruckins",
-		"uid":      1001,
 		"user": map[string]any{
 			"name":  "John Doe",
 			"email": "",
@@ -53,10 +52,32 @@ func TestLoadAndResolveBlueprints(t *testing.T) {
 	})
 	require.NoError(t, err, "Failed to create blueprint manager")
 
-	blueprint, err := manager.GetBlueprint("identity", scope)
+	blueprint, err := manager.GetBlueprint("identity", scope1)
 	require.NoError(t, err, "Failed to load blueprints")
 
 	out, err := json.MarshalIndent(blueprint.Raw, "", "  ")
 	require.NoError(t, err)
 	fmt.Println(string(out))
+	fmt.Println("---")
+
+	// scope2 := map[string]any{
+	// 	"username": "alice",
+	// 	"user": map[string]any{
+	// 		"name":  "John Doe",
+	// 		"email": "",
+	// 		"roles": []string{"developer"},
+	// 	},
+	// 	"repo": map[string]any{
+	// 		"owner": "k8shell-io",
+	// 		"name":  "identity",
+	// 	},
+	// }
+
+	// blueprint, err = manager.GetBlueprint("identity", scope2)
+	// require.NoError(t, err, "Failed to load blueprints")
+
+	// out, err = json.MarshalIndent(blueprint.Raw, "", "  ")
+	// require.NoError(t, err)
+	// fmt.Println(string(out))
+
 }
