@@ -1,5 +1,5 @@
-blueprints:
-- name: default
+blueprint:
+  name: default
   shell: /bin/bash
   sudo: false
 

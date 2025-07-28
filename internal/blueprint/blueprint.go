@@ -9,8 +9,10 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/k8shell-io/yaml-cel/pkg/yamlcel"
 	"github.com/k8shell-io/yaml-config/pkg/yamlconfig"
 	"github.com/rs/zerolog/log"
+	"gopkg.in/yaml.v3"
 )
 
 // Blueprint represents the loaded blueprint from YAML.
@@ -115,6 +117,41 @@ func LoadBlueprints(dir string) (map[string]*Blueprint, error) {
 			log.Error().Err(err).Str("path", path).Msg("Failed to load blueprint file")
 			return err
 		}
+
+		var tmpl yamlcel.CELTemplate
+		if err := root.Decode(&tmpl); err != nil {
+			return fmt.Errorf("unmarshal template: %w", err)
+		}
+
+		resource := map[string]any{
+			"username": "john",
+			"uid":      1001,
+			"user": map[string]any{
+				"username": "vitvatom",
+				"roles":    []string{"admin", "user", "admin"},
+			},
+			"repo": map[string]any{
+				"name":  "my-repo",
+				"owner": "vitvatom",
+			},
+		}
+
+		result, err := tmpl.Eval(resource, map[string]string{})
+		if err != nil {
+			return fmt.Errorf("error evaluating template: %w", err)
+		}
+
+		yamlBytes, err := yaml.Marshal(result)
+		if err != nil {
+			return fmt.Errorf("error marshalling result to YAML: %w", err)
+		}
+
+		var doc yaml.Node
+		if err := yaml.Unmarshal(yamlBytes, &doc); err != nil {
+			return fmt.Errorf("error unmarshalling YAML to node: %w", err)
+		}
+
+		root = &doc
 
 		var top map[string]interface{}
 		if err := root.Decode(&top); err != nil {

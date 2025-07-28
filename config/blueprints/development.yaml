@@ -1,5 +1,5 @@
-blueprints:
-- name: development
+blueprint:
+  name: development
   template: default
 
   credentialHelpers:
