@@ -55,7 +55,7 @@ func TestLoadAndResolveBlueprints(t *testing.T) {
 	blueprint, err := manager.GetBlueprint("identity", scope1)
 	require.NoError(t, err, "Failed to load blueprints")
 
-	out, err := json.MarshalIndent(blueprint.Raw, "", "  ")
+	out, err := json.MarshalIndent(blueprint, "", "  ")
 	require.NoError(t, err)
 	fmt.Println(string(out))
 	fmt.Println("---")

@@ -7,17 +7,18 @@ import (
 	"io/fs"
 	"path/filepath"
 
+	"github.com/k8shell-io/provisioner/pkg/models"
 	"github.com/k8shell-io/yaml-cel/pkg/yamlcel"
 	"github.com/k8shell-io/yaml-config/pkg/yamlconfig"
 	"gopkg.in/yaml.v3"
 )
 
-// Blueprint represents the loaded blueprint from YAML.
-type Blueprint struct {
-	Name     string `yaml:"name"`
-	Template string `yaml:"template,omitempty"`
-	Raw      map[string]interface{}
-}
+// // Blueprint represents the loaded blueprint from YAML.
+// type Blueprint struct {
+// 	Name     string `yaml:"name"`
+// 	Template string `yaml:"template,omitempty"`
+// 	Raw      map[string]interface{}
+// }
 
 // RawBlueprint represents an unprocessed blueprint with CEL expressions intact.
 type RawBlueprint struct {
@@ -374,7 +375,7 @@ func (bm *BlueprintManager) mergeSequenceNodes(parentSeq, childSeq *yaml.Node, k
 }
 
 // GetBlueprint evaluates CEL expressions for a specific blueprint with given scope.
-func (bm *BlueprintManager) GetBlueprint(name string, scope map[string]any) (*Blueprint, error) {
+func (bm *BlueprintManager) GetBlueprint(name string, scope map[string]any) (*models.Blueprint, error) {
 	if scope == nil {
 		return nil, fmt.Errorf("scope cannot be nil")
 	}
@@ -394,15 +395,12 @@ func (bm *BlueprintManager) GetBlueprint(name string, scope map[string]any) (*Bl
 		return nil, fmt.Errorf("error evaluating CEL template for %s: %w", name, err)
 	}
 
-	var raw map[string]interface{}
-	if err := doc.Decode(&raw); err != nil {
+	var bp models.Blueprint
+	if err := doc.Decode(&bp); err != nil {
 		return nil, fmt.Errorf("failed to decode evaluated result for %s: %w", name, err)
 	}
 
-	return &Blueprint{
-		Name: name,
-		Raw:  raw,
-	}, nil
+	return &bp, nil
 }
 
 // ListBlueprintNames returns all available blueprint names.
@@ -415,8 +413,8 @@ func (bm *BlueprintManager) ListBlueprintNames() []string {
 }
 
 // GetAllBlueprints evaluates all blueprints with the given scope.
-func (bm *BlueprintManager) GetAllBlueprints(scope map[string]any) (map[string]*Blueprint, error) {
-	result := make(map[string]*Blueprint)
+func (bm *BlueprintManager) GetAllBlueprints(scope map[string]any) (map[string]*models.Blueprint, error) {
+	result := make(map[string]*models.Blueprint)
 
 	for name := range bm.rawBlueprints {
 		bp, err := bm.GetBlueprint(name, scope)
