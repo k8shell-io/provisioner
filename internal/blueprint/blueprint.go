@@ -9,7 +9,6 @@ import (
 
 	"github.com/k8shell-io/yaml-cel/pkg/yamlcel"
 	"github.com/k8shell-io/yaml-config/pkg/yamlconfig"
-	"github.com/rs/zerolog/log"
 	"gopkg.in/yaml.v3"
 )
 
@@ -145,7 +144,6 @@ func (bm *BlueprintManager) findChildNode(parent *yaml.Node, key string) *yaml.N
 
 // extractFromSequence extracts blueprints from a sequence node.
 func (bm *BlueprintManager) extractFromSequence(root *yaml.Node, path string) error {
-	log.Info().Str("path", path).Msg("Root is sequence, treating as multiple blueprints")
 	return bm.extractMultipleRawBlueprints(root, path)
 }
 
@@ -153,7 +151,6 @@ func (bm *BlueprintManager) extractFromSequence(root *yaml.Node, path string) er
 func (bm *BlueprintManager) extractSingleRawBlueprint(node *yaml.Node, path string) error {
 	var bpData map[string]interface{}
 	if err := node.Decode(&bpData); err != nil {
-		log.Warn().Err(err).Str("path", path).Msg("Could not fully decode blueprint data, using defaults")
 		bpData = make(map[string]interface{})
 	}
 
