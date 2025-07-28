@@ -4,7 +4,7 @@ blueprint:
   image: ${WORKSPACE_REGISTRY}/workspaces/dev:0.8-1.9
   shell: /bin/zsh
   sudo: true
-  network_policy: system
+  networkPolicy: system
   resources:
     cpu: 8
     memory: 8Gi
