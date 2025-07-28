@@ -47,17 +47,16 @@ func TestLoadAndResolveBlueprints(t *testing.T) {
 		},
 	}
 
-	// Advanced usage with custom strategies
-	blueprints, err := blueprint.LoadBlueprints(blueprint.LoadOptions{
-		Dir:   dir,
-		Scope: scope,
+	manager, err := blueprint.NewBlueprintManager(blueprint.LoadOptions{
+		Dir:        dir,
+		Strategies: blueprint.MergeStrategies{},
 	})
+	require.NoError(t, err, "Failed to create blueprint manager")
+
+	blueprint, err := manager.GetBlueprint("identity", scope)
 	require.NoError(t, err, "Failed to load blueprints")
 
-	// blueprints, err := blueprint.LoadBlueprints(dir)
-	// require.NoError(t, err)
-
-	out, err := json.MarshalIndent(blueprints["development"].Raw, "", "  ")
+	out, err := json.MarshalIndent(blueprint.Raw, "", "  ")
 	require.NoError(t, err)
 	fmt.Println(string(out))
 }

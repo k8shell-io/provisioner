@@ -3,15 +3,14 @@ package blueprint
 import (
 	"crypto/rand"
 	"encoding/hex"
-	"encoding/json"
 	"fmt"
 	"io/fs"
+	"os"
 	"path/filepath"
-	"strings"
 
 	"github.com/k8shell-io/yaml-cel/pkg/yamlcel"
-	"github.com/k8shell-io/yaml-config/pkg/yamlconfig"
 	"github.com/rs/zerolog/log"
+	"gopkg.in/yaml.v3"
 )
 
 // Blueprint represents the loaded blueprint from YAML.
@@ -21,200 +20,53 @@ type Blueprint struct {
 	Raw      map[string]interface{}
 }
 
+// RawBlueprint represents an unprocessed blueprint with CEL expressions intact.
+type RawBlueprint struct {
+	Name     string
+	Template string
+	Node     *yaml.Node // Raw YAML node preserving CEL expressions
+}
+
 // MergeStrategies allow custom list merging strategies per dotted path.
 type MergeStrategies map[string]func(dst, src []interface{}) []interface{}
 
 // LoadOptions contains configuration for loading blueprints.
 type LoadOptions struct {
 	Dir        string
-	Scope      map[string]any
 	Strategies MergeStrategies
 }
 
-// mergeMaps recursively merges `src` into `dst`. Modifies dst.
-func mergeMaps(dst, src map[string]interface{}, path []string, strategies MergeStrategies) map[string]interface{} {
-	for key, value := range src {
-		currentPath := append(path, key)
-		pathStr := strings.Join(currentPath, ".")
-
-		if vMap, ok := value.(map[string]interface{}); ok {
-			if dstMap, exists := dst[key].(map[string]interface{}); exists {
-				dst[key] = mergeMaps(dstMap, vMap, currentPath, strategies)
-			} else {
-				dst[key] = mergeMaps(make(map[string]interface{}), vMap, currentPath, strategies)
-			}
-		} else if vList, ok := value.([]interface{}); ok {
-			if strategy, found := strategies[pathStr]; found {
-				existing, _ := dst[key].([]interface{})
-				dst[key] = strategy(existing, vList)
-			} else {
-				existing, _ := dst[key].([]interface{})
-				dst[key] = append(existing, vList...)
-			}
-		} else {
-			dst[key] = value
-		}
-	}
-	return dst
+// BlueprintManager manages blueprints with lazy CEL evaluation.
+type BlueprintManager struct {
+	rawBlueprints map[string]*RawBlueprint
+	strategies    MergeStrategies
 }
 
-// resolveTemplate recursively resolves templates in blueprints.
-func ResolveTemplate(bpName string, all map[string]*Blueprint, strategies MergeStrategies,
-	visited map[string]bool) (*Blueprint, error) {
-	if visited[bpName] {
-		return nil, fmt.Errorf("circular template reference: %s", bpName)
+// NewBlueprintManager creates a new blueprint manager.
+func NewBlueprintManager(opts LoadOptions) (*BlueprintManager, error) {
+	if opts.Strategies == nil {
+		opts.Strategies = MergeStrategies{}
 	}
-	visited[bpName] = true
 
-	bp, found := all[bpName]
-	if !found {
-		return nil, fmt.Errorf("blueprint %s not found", bpName)
+	manager := &BlueprintManager{
+		rawBlueprints: make(map[string]*RawBlueprint),
+		strategies:    opts.Strategies,
 	}
-	if bp.Template == "" {
-		return bp, nil
-	}
-	parent, err := ResolveTemplate(bp.Template, all, strategies, visited)
-	if err != nil {
-		return nil, err
-	}
-	merged := mergeMaps(deepCopyMap(parent.Raw), bp.Raw, []string{}, strategies)
-	return &Blueprint{
-		Name:     bp.Name,
-		Template: "",
-		Raw:      merged,
-	}, nil
-}
 
-// deepCopyMap creates a deep copy of a map[string]interface{}.
-func deepCopyMap(src map[string]interface{}) map[string]interface{} {
-	b, _ := json.Marshal(src)
-	var dst map[string]interface{}
-	json.Unmarshal(b, &dst)
-	return dst
-}
-
-// processYAMLFile processes a single YAML file with the given scope.
-func processYAMLFile(p *yamlconfig.Processor, path string, scope map[string]any) (map[string]interface{}, error) {
-	root, err := p.LoadFile(path)
-	if err != nil {
-		log.Error().Err(err).Str("path", path).Msg("Failed to load blueprint file")
+	if err := manager.loadRawBlueprints(opts.Dir); err != nil {
 		return nil, err
 	}
 
-	var tmpl yamlcel.CELTemplate
-	if err := root.Decode(&tmpl); err != nil {
-		return nil, fmt.Errorf("unmarshal template: %w", err)
+	if err := manager.resolveInheritance(); err != nil {
+		return nil, err
 	}
 
-	doc, err := tmpl.Eval(scope, map[string]string{})
-	if err != nil {
-		return nil, fmt.Errorf("error evaluating template: %w", err)
-	}
-
-	var top map[string]interface{}
-	if err := doc.Decode(&top); err != nil {
-		log.Error().Err(err).Str("path", path).Msg("Failed to decode YAML to map")
-		return nil, fmt.Errorf("failed to decode YAML to map: %w", err)
-	}
-
-	return top, nil
+	return manager, nil
 }
 
-// extractBlueprints extracts blueprints from processed YAML data.
-func extractBlueprints(top map[string]interface{}, path string, blueprintsRaw map[string]*Blueprint) error {
-	switch {
-	case top["blueprint"] != nil:
-		return extractSingleBlueprint(top["blueprint"], path, blueprintsRaw)
-	case top["blueprints"] != nil:
-		return extractMultipleBlueprints(top["blueprints"], path, blueprintsRaw)
-	default:
-		log.Warn().Str("path", path).Msg("No blueprint or blueprints key found")
-		return nil
-	}
-}
-
-// extractSingleBlueprint extracts a single blueprint from the data.
-func extractSingleBlueprint(data interface{}, path string, blueprintsRaw map[string]*Blueprint) error {
-	bpMap, ok := data.(map[string]interface{})
-	if !ok {
-		log.Error().Str("path", path).Msg("Expected blueprint to be a map.")
-		return fmt.Errorf("expected blueprint to be a map at %s", path)
-	}
-
-	bp := &Blueprint{
-		Name:     generateRandomName("bp"),
-		Template: "",
-		Raw:      bpMap,
-	}
-
-	if n, ok := bpMap["name"].(string); ok {
-		bp.Name = n
-	}
-	if t, ok := bpMap["template"].(string); ok {
-		bp.Template = t
-	}
-
-	blueprintsRaw[bp.Name] = bp
-	return nil
-}
-
-// extractMultipleBlueprints extracts multiple blueprints from a list.
-func extractMultipleBlueprints(data interface{}, path string, blueprintsRaw map[string]*Blueprint) error {
-	list, ok := data.([]interface{})
-	if !ok {
-		log.Error().Str("path", path).Msg("Expected blueprints to be a list.")
-		return fmt.Errorf("expected blueprints to be a list at %s", path)
-	}
-
-	for i, item := range list {
-		bpMap, ok := item.(map[string]interface{})
-		if !ok {
-			log.Warn().Str("path", path).Int("index", i).Msg("Skipping non-object in blueprints list")
-			continue
-		}
-
-		var name string
-		if n, ok := bpMap["name"].(string); ok {
-			name = n
-		} else {
-			name = generateRandomName("bp")
-		}
-
-		bp := &Blueprint{
-			Name:     name,
-			Template: "",
-			Raw:      bpMap,
-		}
-
-		if t, ok := bpMap["template"].(string); ok {
-			bp.Template = t
-		}
-
-		blueprintsRaw[bp.Name] = bp
-	}
-
-	return nil
-}
-
-// LoadRawBlueprints loads raw blueprints from the specified directory with given scope.
-// It processes YAML files, expands environment variables, and handles custom tags.
-// Returns a map of blueprint names to their raw data.
-func LoadRawBlueprints(dir string, scope map[string]any) (map[string]*Blueprint, error) {
-	if scope == nil {
-		return nil, fmt.Errorf("scope cannot be nil")
-	}
-
-	blueprintsRaw := make(map[string]*Blueprint)
-
-	p := yamlconfig.NewProcessor(
-		yamlconfig.ProcessorOptions{
-			EnableEnvVarExpansion: true,
-			EnableFileTag:         true,
-			RequireEnvVars:        true,
-		},
-	)
-
-	err := filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
+// loadRawBlueprints loads raw blueprints from YAML files WITHOUT any processing to preserve CEL tags.
+func (bm *BlueprintManager) loadRawBlueprints(dir string) error {
+	return filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
@@ -225,36 +77,312 @@ func LoadRawBlueprints(dir string, scope map[string]any) (map[string]*Blueprint,
 			return nil
 		}
 
-		top, err := processYAMLFile(p, path, scope)
+		data, err := os.ReadFile(path)
 		if err != nil {
+			log.Error().Err(err).Str("path", path).Msg("Failed to read blueprint file")
 			return err
 		}
 
-		return extractBlueprints(top, path, blueprintsRaw)
+		var root yaml.Node
+		if err := yaml.Unmarshal(data, &root); err != nil {
+			log.Error().Err(err).Str("path", path).Msg("Failed to parse YAML file")
+			return err
+		}
+
+		return bm.extractRawBlueprints(&root, path)
 	})
+}
+
+// extractRawBlueprints extracts raw blueprints from YAML nodes.
+func (bm *BlueprintManager) extractRawBlueprints(root *yaml.Node, path string) error {
+	if root.Kind == yaml.DocumentNode && len(root.Content) > 0 {
+		return bm.extractRawBlueprints(root.Content[0], path)
+	}
+
+	switch root.Kind {
+	case yaml.MappingNode:
+		return bm.extractFromMapping(root, path)
+	case yaml.SequenceNode:
+		return bm.extractFromSequence(root, path)
+	default:
+		return fmt.Errorf("unsupported YAML structure at %s: expected mapping or sequence, got %v", path, root.Kind)
+	}
+}
+
+// extractFromMapping extracts blueprints from a mapping node.
+func (bm *BlueprintManager) extractFromMapping(root *yaml.Node, path string) error {
+	var data map[string]interface{}
+	if err := root.Decode(&data); err != nil {
+		return fmt.Errorf("failed to decode YAML mapping at %s: %w", path, err)
+	}
+
+	switch {
+	case data["blueprint"] != nil:
+		blueprintNode := bm.findChildNode(root, "blueprint")
+		if blueprintNode == nil {
+			return fmt.Errorf("blueprint key found but node not accessible at %s", path)
+		}
+		return bm.extractSingleRawBlueprint(blueprintNode, path)
+	case data["blueprints"] != nil:
+		blueprintsNode := bm.findChildNode(root, "blueprints")
+		if blueprintsNode == nil {
+			return fmt.Errorf("blueprints key found but node not accessible at %s", path)
+		}
+		return bm.extractMultipleRawBlueprints(blueprintsNode, path)
+	default:
+		return bm.extractSingleRawBlueprint(root, path)
+	}
+}
+
+// findChildNode finds a child node by key in a mapping node.
+func (bm *BlueprintManager) findChildNode(parent *yaml.Node, key string) *yaml.Node {
+	if parent.Kind != yaml.MappingNode {
+		return nil
+	}
+
+	for i := 0; i < len(parent.Content); i += 2 {
+		if i+1 < len(parent.Content) && parent.Content[i].Value == key {
+			return parent.Content[i+1]
+		}
+	}
+	return nil
+}
+
+// extractFromSequence extracts blueprints from a sequence node.
+func (bm *BlueprintManager) extractFromSequence(root *yaml.Node, path string) error {
+	log.Info().Str("path", path).Msg("Root is sequence, treating as multiple blueprints")
+	return bm.extractMultipleRawBlueprints(root, path)
+}
+
+// extractSingleRawBlueprint extracts a single raw blueprint.
+func (bm *BlueprintManager) extractSingleRawBlueprint(node *yaml.Node, path string) error {
+	var bpData map[string]interface{}
+	if err := node.Decode(&bpData); err != nil {
+		log.Warn().Err(err).Str("path", path).Msg("Could not fully decode blueprint data, using defaults")
+		bpData = make(map[string]interface{})
+	}
+
+	name := generateRandomName("bp")
+	if n, ok := bpData["name"].(string); ok {
+		name = n
+	}
+
+	template := ""
+	if t, ok := bpData["template"].(string); ok {
+		template = t
+	}
+
+	bm.rawBlueprints[name] = &RawBlueprint{
+		Name:     name,
+		Template: template,
+		Node:     node,
+	}
+
+	return nil
+}
+
+// extractMultipleRawBlueprints extracts multiple raw blueprints from a list.
+func (bm *BlueprintManager) extractMultipleRawBlueprints(node *yaml.Node, path string) error {
+	if node.Kind != yaml.SequenceNode {
+		return fmt.Errorf("expected sequence node for blueprints at %s, got %v", path, node.Kind)
+	}
+
+	for _, childNode := range node.Content {
+		var item map[string]interface{}
+		if err := childNode.Decode(&item); err != nil {
+			item = make(map[string]interface{})
+		}
+
+		name := generateRandomName("bp")
+		if n, ok := item["name"].(string); ok {
+			name = n
+		}
+
+		template := ""
+		if t, ok := item["template"].(string); ok {
+			template = t
+		}
+
+		bm.rawBlueprints[name] = &RawBlueprint{
+			Name:     name,
+			Template: template,
+			Node:     childNode,
+		}
+	}
+
+	return nil
+}
+
+// resolveInheritance resolves template inheritance at YAML level.
+func (bm *BlueprintManager) resolveInheritance() error {
+	resolved := make(map[string]*RawBlueprint)
+
+	for name := range bm.rawBlueprints {
+		if _, exists := resolved[name]; !exists {
+			resolvedBp, err := bm.resolveRawTemplate(name, map[string]bool{})
+			if err != nil {
+				return err
+			}
+			resolved[name] = resolvedBp
+		}
+	}
+
+	bm.rawBlueprints = resolved
+	return nil
+}
+
+// resolveRawTemplate recursively resolves template inheritance at YAML level.
+func (bm *BlueprintManager) resolveRawTemplate(bpName string, visited map[string]bool) (*RawBlueprint, error) {
+	if visited[bpName] {
+		return nil, fmt.Errorf("circular template reference: %s", bpName)
+	}
+	visited[bpName] = true
+
+	bp, found := bm.rawBlueprints[bpName]
+	if !found {
+		return nil, fmt.Errorf("blueprint %s not found", bpName)
+	}
+
+	if bp.Template == "" {
+		return bp, nil
+	}
+
+	parent, err := bm.resolveRawTemplate(bp.Template, visited)
 	if err != nil {
 		return nil, err
 	}
 
-	return blueprintsRaw, nil
+	// Merge YAML nodes
+	mergedNode, err := bm.mergeYAMLNodes(parent.Node, bp.Node)
+	if err != nil {
+		return nil, fmt.Errorf("failed to merge templates for %s: %w", bpName, err)
+	}
+
+	return &RawBlueprint{
+		Name:     bp.Name,
+		Template: "",
+		Node:     mergedNode,
+	}, nil
 }
 
-// LoadBlueprints loads all blueprints from the specified directory with given scope.
-func LoadBlueprints(opts LoadOptions) (map[string]*Blueprint, error) {
-	blueprintsRaw, err := LoadRawBlueprints(opts.Dir, opts.Scope)
-	if err != nil {
-		return nil, fmt.Errorf("failed to load raw blueprints: %w", err)
+// mergeYAMLNodes merges two YAML nodes, preserving CEL expressions.
+func (bm *BlueprintManager) mergeYAMLNodes(parent, child *yaml.Node) (*yaml.Node, error) {
+	// Instead of decoding to maps (which loses tags), we need to merge at the node level
+	return bm.mergeYAMLNodesWithTags(parent, child)
+}
+
+// mergeYAMLNodesWithTags merges YAML nodes while preserving all tags
+func (bm *BlueprintManager) mergeYAMLNodesWithTags(parent, child *yaml.Node) (*yaml.Node, error) {
+	if child.Kind != yaml.MappingNode || parent.Kind != yaml.MappingNode {
+		return child, nil
 	}
 
-	resolved := make(map[string]*Blueprint)
-	for name := range blueprintsRaw {
-		bp, err := ResolveTemplate(name, blueprintsRaw, opts.Strategies, map[string]bool{})
-		if err != nil {
-			return nil, fmt.Errorf("error resolving blueprint %s: %w", name, err)
-		}
-		resolved[name] = bp
+	result := &yaml.Node{
+		Kind:    yaml.MappingNode,
+		Tag:     "!!map",
+		Content: make([]*yaml.Node, 0),
 	}
-	return resolved, nil
+
+	parentKeys := make(map[string]*yaml.Node)
+	for i := 0; i < len(parent.Content); i += 2 {
+		if i+1 < len(parent.Content) {
+			key := parent.Content[i].Value
+			value := parent.Content[i+1]
+			parentKeys[key] = value
+		}
+	}
+
+	processedKeys := make(map[string]bool)
+	for i := 0; i < len(child.Content); i += 2 {
+		if i+1 < len(child.Content) {
+			keyNode := child.Content[i]
+			valueNode := child.Content[i+1]
+			key := keyNode.Value
+
+			if parentValue, exists := parentKeys[key]; exists && valueNode.Kind == yaml.MappingNode &&
+				parentValue.Kind == yaml.MappingNode {
+
+				mergedValue, err := bm.mergeYAMLNodesWithTags(parentValue, valueNode)
+				if err != nil {
+					return nil, err
+				}
+				result.Content = append(result.Content, keyNode, mergedValue)
+			} else {
+				result.Content = append(result.Content, keyNode, valueNode)
+			}
+			processedKeys[key] = true
+		}
+	}
+
+	for i := 0; i < len(parent.Content); i += 2 {
+		if i+1 < len(parent.Content) {
+			keyNode := parent.Content[i]
+			valueNode := parent.Content[i+1]
+			key := keyNode.Value
+
+			if !processedKeys[key] {
+				result.Content = append(result.Content, keyNode, valueNode)
+			}
+		}
+	}
+
+	return result, nil
+}
+
+// GetBlueprint evaluates CEL expressions for a specific blueprint with given scope.
+func (bm *BlueprintManager) GetBlueprint(name string, scope map[string]any) (*Blueprint, error) {
+	if scope == nil {
+		return nil, fmt.Errorf("scope cannot be nil")
+	}
+
+	rawBp, exists := bm.rawBlueprints[name]
+	if !exists {
+		return nil, fmt.Errorf("blueprint %s not found", name)
+	}
+
+	var tmpl yamlcel.CELTemplate
+	if err := rawBp.Node.Decode(&tmpl); err != nil {
+		return nil, fmt.Errorf("failed to decode CEL template for %s: %w", name, err)
+	}
+
+	doc, err := tmpl.Eval(scope, map[string]string{})
+	if err != nil {
+		return nil, fmt.Errorf("error evaluating CEL template for %s: %w", name, err)
+	}
+
+	var raw map[string]interface{}
+	if err := doc.Decode(&raw); err != nil {
+		return nil, fmt.Errorf("failed to decode evaluated result for %s: %w", name, err)
+	}
+
+	return &Blueprint{
+		Name: name,
+		Raw:  raw,
+	}, nil
+}
+
+// ListBlueprintNames returns all available blueprint names.
+func (bm *BlueprintManager) ListBlueprintNames() []string {
+	names := make([]string, 0, len(bm.rawBlueprints))
+	for name := range bm.rawBlueprints {
+		names = append(names, name)
+	}
+	return names
+}
+
+// GetAllBlueprints evaluates all blueprints with the given scope.
+func (bm *BlueprintManager) GetAllBlueprints(scope map[string]any) (map[string]*Blueprint, error) {
+	result := make(map[string]*Blueprint)
+
+	for name := range bm.rawBlueprints {
+		bp, err := bm.GetBlueprint(name, scope)
+		if err != nil {
+			return nil, fmt.Errorf("failed to evaluate blueprint %s: %w", name, err)
+		}
+		result[name] = bp
+	}
+
+	return result, nil
 }
 
 // generateRandomName creates a random name with the given prefix.
