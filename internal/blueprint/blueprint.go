@@ -266,7 +266,7 @@ func (bm *BlueprintManager) mergeYAMLNodes(parent, child *yaml.Node) (*yaml.Node
 	return bm.mergeYAMLNodesWithTags(parent, child)
 }
 
-// mergeYAMLNodesWithTags merges YAML nodes while preserving all tags including !CEL
+// mergeYAMLNodesWithTags merges YAML nodes while preserving all tags
 func (bm *BlueprintManager) mergeYAMLNodesWithTags(parent, child *yaml.Node) (*yaml.Node, error) {
 	if child.Kind != yaml.MappingNode {
 		return child, nil
