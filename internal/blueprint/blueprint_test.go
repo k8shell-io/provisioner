@@ -22,13 +22,11 @@ func TestLoadAndResolveBlueprints(t *testing.T) {
 		"WORKSPACE_STORAGE_CLASS":     "standard",
 	}
 	for key, value := range envVars {
-		err := os.Setenv(key, value)
-		require.NoError(t, err, "Failed to set environment variable %s", key)
+		os.Setenv(key, value)
 	}
 	defer func() {
 		for key := range envVars {
-			err := os.Unsetenv(key)
-			require.NoError(t, err, "Failed to unset environment variable %s", key)
+			os.Unsetenv(key)
 		}
 	}()
 
@@ -55,6 +53,11 @@ func TestLoadAndResolveBlueprints(t *testing.T) {
 	blueprint, err := manager.GetBlueprint("identity", scope1)
 	require.NoError(t, err, "Failed to load blueprints")
 
+	v := blueprint.Validate()
+	if v != nil {
+		t.Fatalf("Validation failed: %v", v.Error())
+	}
+
 	out, err := json.MarshalIndent(blueprint, "", "  ")
 	require.NoError(t, err)
 	fmt.Println(string(out))
@@ -74,7 +77,7 @@ func TestLoadAndResolveBlueprints(t *testing.T) {
 	// }
 
 	// blueprint, err = manager.GetBlueprint("identity", scope2)
-	// require.NoError(t, err, "Failed to load blueprints")
+	// //require.NoError(t, err, "Failed to load blueprints")
 
 	// out, err = json.MarshalIndent(blueprint.Raw, "", "  ")
 	// require.NoError(t, err)
