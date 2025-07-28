@@ -1,0 +1,30 @@
+blueprints:
+- name: development
+  template: default
+
+  credentialHelpers:
+    docker:
+      enabled: true
+
+  docker:
+    enabled: true
+
+  serviceAccount: !cel |
+    username in ['bruckins']
+      ? "admin-sa"
+      : "default"
+
+  storages:
+    home:
+      annotations:
+        zfs-csi.k8shell.io/volume-name: !cel "repo.owner + '/' + repo.name + '/' + username"
+    shared:
+      readonly: false
+      annotations:
+        zfs-csi.k8shell.io/volume-name: !cel "repo.owner + '/shared'"
+
+  initScripts:
+    - clone_repo@: |
+        cd $HOME
+        git config --global credential.helper k8shell
+        git clone https://${GIT_ADDRESS}/${REPO_OWNER}/${REPO_NAME}.git
