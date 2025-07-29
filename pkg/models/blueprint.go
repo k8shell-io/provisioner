@@ -1,7 +1,5 @@
 package models
 
-import "github.com/go-playground/validator/v10"
-
 // Blueprint represents a single blueprint configuration
 type Blueprint struct {
 	Name              string              `yaml:"name" validate:"required,min=1,max=30"`
@@ -42,7 +40,7 @@ type Cert struct {
 
 // Network represents network configuration
 type Network struct {
-	NetworkPolicy string   `yaml:"networkPolicy" validate:"required"`
+	NetworkPolicy string   `yaml:"networkPolicy" validate:"required,oneof=workspace system isolated user organization"`
 	AllowEgress   []string `yaml:"allowEgress,omitempty" validate:"dive,cidr"`
 }
 
@@ -92,8 +90,7 @@ type Storage struct {
 	Annotations  map[string]string `yaml:"annotations,omitempty"`
 }
 
-// Validate validates the blueprint struct
-func (b *Blueprint) Validate() error {
-	validate := validator.New()
-	return validate.Struct(b)
+// Validate validates the blueprint and returns user-friendly errors
+func (b *Blueprint) Validate() Validator {
+	return NewValidator(b)
 }
