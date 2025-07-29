@@ -2,6 +2,7 @@ package server
 
 import (
 	"fmt"
+	"path/filepath"
 
 	"github.com/k8shell-io/yaml-config/pkg/yamlconfig"
 )
@@ -10,6 +11,7 @@ import (
 type Config struct {
 	Http       HttpConfig           `yaml:"http"`
 	Blueprints BlueprintsFileConfig `yaml:"blueprints"`
+	BaseDir    string               `yaml:"baseDir"`
 }
 
 // HttpConfig represents the HTTP server configuration.
@@ -25,8 +27,9 @@ type BlueprintsFileConfig struct {
 
 func NewConfig(configFile string) (*Config, error) {
 	var config Config
-	err := yamlconfig.LoadConfig(configFile, &config)
-	if err != nil {
+
+	processor := yamlconfig.NewDefaultProcessor()
+	if err := processor.LoadAndDecode(configFile, &config); err != nil {
 		return nil, fmt.Errorf("failed to load configuration from '%s': %w", configFile, err)
 	}
 
@@ -34,6 +37,6 @@ func NewConfig(configFile string) (*Config, error) {
 		return nil, fmt.Errorf("missing required configuration values: port and APIKey must be set")
 	}
 
+	config.BaseDir = filepath.Dir(configFile)
 	return &config, nil
-
 }

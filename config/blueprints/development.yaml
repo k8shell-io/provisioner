@@ -10,7 +10,7 @@ blueprint:
     enabled: true
 
   serviceAccount: !cel |
-    username in ['bruckins']
+    user.username in ['bruckins']
       ? "admin-sa"
       : "default"
 

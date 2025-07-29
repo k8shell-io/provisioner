@@ -2,6 +2,7 @@ package server
 
 import (
 	"fmt"
+	"path/filepath"
 
 	"github.com/k8shell-io/provisioner/internal/blueprint"
 	"github.com/k8shell-io/provisioner/internal/log"
@@ -29,7 +30,8 @@ func NewServer(configFile string) (*Server, error) {
 
 	server.log.Info().Msgf("Loading blueprints from directory: %s", server.config.Blueprints.Directory)
 	server.bpManager, err = blueprint.NewBlueprintManager(blueprint.LoadOptions{
-		Dir: server.config.Blueprints.Directory,
+		Dir:         filepath.Join(server.config.BaseDir, server.config.Blueprints.Directory),
+		EnableWatch: true,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to create blueprint manager: %w", err)

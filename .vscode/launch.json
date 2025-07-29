@@ -12,7 +12,12 @@
             "mode": "auto",
             "program": "cmd/provisioner/main.go", // Path to your Go file or main package
             "env": {
-                "SECRET_FILES": "/opt/shared/provisioner/secrets"
+                "SECRET_FILES": "/opt/shared/provisioner/secrets",
+                "WORKSPACE_REGCRED": "k8shell-regcred",
+                "WORKSPACE_REGISTRY": "k8shell-registry",
+                "WORKSPACE_REGISTRY_USERNAME": "k8shell",
+                "WORKSPACE_REGISTRY_PASSWORD": "k8shell",
+                "WORKSPACE_STORAGE_CLASS": "k8shell-standard",
             },
             "cwd": "${workspaceFolder}",
             "args": [
