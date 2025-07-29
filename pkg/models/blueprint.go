@@ -90,6 +90,11 @@ type Storage struct {
 	Annotations  map[string]string `yaml:"annotations,omitempty"`
 }
 
+type Repo struct {
+	Name  string `yaml:"name" validate:"required"`
+	Owner string `yaml:"owner" validate:"required"`
+}
+
 // Validate validates the blueprint and returns user-friendly errors
 func (b *Blueprint) Validate() Validator {
 	return NewValidator(b)

@@ -6,11 +6,24 @@ import (
 	"github.com/k8shell-io/yaml-config/pkg/yamlconfig"
 )
 
+// Config represents the server configuration
 type Config struct {
-	Http HttpConfig `yaml:"http"`
+	Http       HttpConfig           `yaml:"http"`
+	Blueprints BlueprintsFileConfig `yaml:"blueprints"`
 }
 
-func LoadConfig(configFile string) (*Config, error) {
+// HttpConfig represents the HTTP server configuration.
+type HttpConfig struct {
+	Port   int    `yaml:"port"`
+	APIKey string `yaml:"APIKey"`
+}
+
+// Blueprint represents a blueprint configuration
+type BlueprintsFileConfig struct {
+	Directory string `yaml:"directory" validate:"required"`
+}
+
+func NewConfig(configFile string) (*Config, error) {
 	var config Config
 	err := yamlconfig.LoadConfig(configFile, &config)
 	if err != nil {

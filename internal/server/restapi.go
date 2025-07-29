@@ -13,26 +13,23 @@ package server
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"strings"
 	"time"
 
 	"github.com/gorilla/mux"
+	"github.com/k8shell-io/provisioner/internal/blueprint"
 	"github.com/k8shell-io/provisioner/internal/log"
 	"github.com/rs/zerolog"
 	httpSwagger "github.com/swaggo/http-swagger"
 )
 
-// HttpConfig represents the HTTP server configuration.
-type HttpConfig struct {
-	Port   int    `yaml:"port"`
-	APIKey string `yaml:"APIKey"`
-}
-
 // RESTApiService represents the REST API service for the K8Shell Provisioner server.
 type RESTApiService struct {
 	httpConfig HttpConfig
+	bpManager  *blueprint.BlueprintManager
 	log        *zerolog.Logger
 }
 
@@ -57,12 +54,13 @@ func (rec *responseRecorder) Write(data []byte) (int, error) {
 }
 
 // NewRESTAPI creates a new REST API service
-func NewRESTAPI(httpConfig HttpConfig) (*RESTApiService, error) {
+func NewRESTAPI(httpConfig HttpConfig, bpManager *blueprint.BlueprintManager) (*RESTApiService, error) {
 	log := log.NewLogger("api")
 
 	return &RESTApiService{
 		httpConfig: httpConfig,
 		log:        log,
+		bpManager:  bpManager,
 	}, nil
 }
 
@@ -110,7 +108,7 @@ func (a *RESTApiService) initializeRouter() *mux.Router {
 	apiRouter.Use(a.loggingMiddleware)
 
 	// Define API endpoints
-	// apiRouter.HandleFunc("/users", a.GetUsers).Methods(http.MethodGet)
+	apiRouter.HandleFunc("/blueprints", a.GetBlueprints).Methods(http.MethodGet)
 	a.logRoutes(router)
 
 	router.NotFoundHandler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -172,4 +170,29 @@ func (a *RESTApiService) logRoutes(router *mux.Router) {
 	if err != nil {
 		a.log.Error().Msgf("Error walking routes: %v", err)
 	}
+}
+
+// GetBlueprints handles the GET request for blueprints
+func (a *RESTApiService) GetBlueprints(w http.ResponseWriter, r *http.Request) {
+	a.log.Info().Msg("GetBlueprints called")
+	blueprints := a.bpManager.ListBlueprintNames()
+	if len(blueprints) == 0 {
+		http.Error(w, "No blueprints found", http.StatusNotFound)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	response := map[string]interface{}{}
+	for _, bp := range blueprints {
+		response[bp] = map[string]string{"name": bp, "url": fmt.Sprintf("/api/v1/blueprints/%s", bp)}
+	}
+
+	data, err := json.Marshal(response)
+	if err != nil {
+		http.Error(w, "Failed to marshal response", http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Length", fmt.Sprintf("%d", len(data)))
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(data)
 }

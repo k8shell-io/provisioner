@@ -6,25 +6,73 @@ import (
 	"fmt"
 	"io/fs"
 	"path/filepath"
+	"sync"
+	"time"
 
+	"github.com/fsnotify/fsnotify"
+	identity "github.com/k8shell-io/identity/pkg/models"
 	"github.com/k8shell-io/provisioner/pkg/models"
 	"github.com/k8shell-io/yaml-cel/pkg/yamlcel"
 	"github.com/k8shell-io/yaml-config/pkg/yamlconfig"
 	"gopkg.in/yaml.v3"
 )
 
-// // Blueprint represents the loaded blueprint from YAML.
-// type Blueprint struct {
-// 	Name     string `yaml:"name"`
-// 	Template string `yaml:"template,omitempty"`
-// 	Raw      map[string]interface{}
-// }
-
 // RawBlueprint represents an unprocessed blueprint with CEL expressions intact.
 type RawBlueprint struct {
 	Name     string
 	Template string
-	Node     *yaml.Node // Raw YAML node preserving CEL expressions
+	Node     *yaml.Node
+}
+
+type BlueprintScope struct {
+	Blueprint string        `yaml:"blueprint"`
+	User      identity.User `yaml:"user"`
+	Repo      models.Repo   `yaml:"repo"`
+}
+
+func (bs *BlueprintScope) ToMap() (map[string]any, error) {
+	data, err := yaml.Marshal(bs)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal BlueprintScope: %w", err)
+	}
+
+	var result map[string]any
+	if err := yaml.Unmarshal(data, &result); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal to map: %w", err)
+	}
+
+	return result, nil
+}
+
+// TestScope creates a minimal BlueprintScope for testing purposes.
+func TestScope() *BlueprintScope {
+	return &BlueprintScope{
+		Blueprint: "testblueprint",
+		User: identity.User{
+			Username:     "testuser",
+			IsValid:      true,
+			ExpiresAt:    time.Now().Add(24 * time.Hour),
+			UID:          1000,
+			GID:          1000,
+			Fullname:     "Test User",
+			AccessToken:  "testtoken",
+			Email:        "testuser@example.com",
+			Password:     "testpassword",
+			Auths:        []identity.AuthMethod{identity.AuthMethodPublicKey, identity.AuthMethodPassword},
+			AuthKeys:     []string{"ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQC3..."},
+			Locked:       false,
+			FailedLogins: 0,
+			Channels:     []identity.Channel{identity.ChannelShell, identity.ChannelSFTP},
+			Envs:         []string{},
+			Roles:        []identity.Role{"role1", "role2"},
+			Blueprints:   []string{"testblueprint"},
+			Source:       "testsource",
+		},
+		Repo: models.Repo{
+			Owner: "testowner",
+			Name:  "testrepo",
+		},
+	}
 }
 
 // MergeStrategies allow custom list merging strategies per dotted path.
@@ -32,8 +80,9 @@ type MergeStrategies map[string]func(dst, src []interface{}) []interface{}
 
 // LoadOptions contains configuration for loading blueprints.
 type LoadOptions struct {
-	Dir        string
-	Strategies MergeStrategies
+	Dir         string
+	Strategies  MergeStrategies
+	EnableWatch bool
 }
 
 // BlueprintManager manages blueprints with lazy CEL evaluation.
@@ -41,6 +90,13 @@ type BlueprintManager struct {
 	rawBlueprints map[string]*RawBlueprint
 	strategies    MergeStrategies
 	processor     *yamlconfig.Processor
+	watcher       *fsnotify.Watcher
+	watchDir      string
+	watchEnabled  bool
+	mu            sync.RWMutex
+	reloadTimer   *time.Timer
+	reloadDelay   time.Duration
+	stopChan      chan struct{}
 }
 
 // NewBlueprintManager creates a new blueprint manager.
@@ -53,17 +109,260 @@ func NewBlueprintManager(opts LoadOptions) (*BlueprintManager, error) {
 		rawBlueprints: make(map[string]*RawBlueprint),
 		strategies:    opts.Strategies,
 		processor:     yamlconfig.NewProcessor(yamlconfig.DefaultOptions()),
+		watchDir:      opts.Dir,
+		watchEnabled:  opts.EnableWatch,
+		reloadDelay:   500 * time.Millisecond,
+		stopChan:      make(chan struct{}),
 	}
 
-	if err := manager.loadRawBlueprints(opts.Dir); err != nil {
+	if err := manager.loadAndValidateBlueprints(); err != nil {
 		return nil, err
 	}
 
-	if err := manager.resolveInheritance(); err != nil {
-		return nil, err
+	if opts.EnableWatch {
+		if err := manager.setupWatcher(); err != nil {
+			return nil, fmt.Errorf("failed to setup file watcher: %w", err)
+		}
 	}
 
 	return manager, nil
+}
+
+// loadAndValidateBlueprints loads and validates all blueprints atomically
+func (bm *BlueprintManager) loadAndValidateBlueprints() error {
+	tempBlueprints := make(map[string]*RawBlueprint)
+
+	bm.mu.Lock()
+	originalBlueprints := bm.rawBlueprints
+	bm.rawBlueprints = tempBlueprints
+	bm.mu.Unlock()
+
+	if err := bm.loadRawBlueprints(bm.watchDir); err != nil {
+		bm.mu.Lock()
+		bm.rawBlueprints = originalBlueprints
+		bm.mu.Unlock()
+		return fmt.Errorf("failed to load blueprints: %w", err)
+	}
+
+	if err := bm.resolveInheritance(); err != nil {
+		bm.mu.Lock()
+		bm.rawBlueprints = originalBlueprints
+		bm.mu.Unlock()
+		return fmt.Errorf("failed to resolve inheritance: %w", err)
+	}
+
+	if err := bm.validateAllBlueprints(); err != nil {
+		bm.mu.Lock()
+		bm.rawBlueprints = originalBlueprints
+		bm.mu.Unlock()
+		return fmt.Errorf("blueprint validation failed: %w", err)
+	}
+
+	return nil
+}
+
+// validateAllBlueprints validates all loaded blueprints with a minimal scope
+func (bm *BlueprintManager) validateAllBlueprints() error {
+	validationScope := TestScope()
+
+	var allErrors []error
+
+	bm.mu.RLock()
+	blueprintNames := make([]string, 0, len(bm.rawBlueprints))
+	for name := range bm.rawBlueprints {
+		blueprintNames = append(blueprintNames, name)
+	}
+	bm.mu.RUnlock()
+
+	for _, name := range blueprintNames {
+		_, err := bm.GetBlueprint(name, validationScope)
+		if err != nil {
+			allErrors = append(allErrors, fmt.Errorf("blueprint '%s': %w", name, err))
+		}
+	}
+
+	if len(allErrors) > 0 {
+		return fmt.Errorf("validation errors found: %v", allErrors)
+	}
+
+	return nil
+}
+
+// setupWatcher initializes the file system watcher
+func (bm *BlueprintManager) setupWatcher() error {
+	watcher, err := fsnotify.NewWatcher()
+	if err != nil {
+		return err
+	}
+
+	bm.watcher = watcher
+
+	err = filepath.WalkDir(bm.watchDir, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			return bm.watcher.Add(path)
+		}
+		return nil
+	})
+
+	if err != nil {
+		bm.watcher.Close()
+		return err
+	}
+
+	go bm.watchLoop()
+
+	return nil
+}
+
+// watchLoop handles file system events
+func (bm *BlueprintManager) watchLoop() {
+	for {
+		select {
+		case event, ok := <-bm.watcher.Events:
+			if !ok {
+				return
+			}
+
+			if !isYAMLFile(event.Name) {
+				continue
+			}
+
+			switch {
+			case event.Op&fsnotify.Write == fsnotify.Write,
+				event.Op&fsnotify.Create == fsnotify.Create,
+				event.Op&fsnotify.Remove == fsnotify.Remove,
+				event.Op&fsnotify.Rename == fsnotify.Rename:
+				bm.scheduleReload()
+			}
+
+		case err, ok := <-bm.watcher.Errors:
+			if !ok {
+				return
+			}
+			fmt.Printf("Watcher error: %v\n", err)
+
+		case <-bm.stopChan:
+			return
+		}
+	}
+}
+
+// scheduleReload debounces multiple file changes and schedules a reload
+func (bm *BlueprintManager) scheduleReload() {
+	bm.mu.Lock()
+	defer bm.mu.Unlock()
+
+	if bm.reloadTimer != nil {
+		bm.reloadTimer.Stop()
+	}
+
+	bm.reloadTimer = time.AfterFunc(bm.reloadDelay, func() {
+		if err := bm.loadAndValidateBlueprints(); err != nil {
+			fmt.Printf("Failed to reload blueprints: %v\n", err)
+		} else {
+			fmt.Println("Blueprints reloaded successfully")
+		}
+	})
+}
+
+// isYAMLFile checks if a file has a YAML extension
+func isYAMLFile(filename string) bool {
+	ext := filepath.Ext(filename)
+	return ext == ".yaml" || ext == ".yml"
+}
+
+// GetBlueprint evaluates CEL expressions for a specific blueprint with given scope.
+func (bm *BlueprintManager) GetBlueprint(name string, scope *BlueprintScope) (*models.Blueprint, error) {
+	if scope == nil {
+		return nil, fmt.Errorf("scope cannot be nil")
+	}
+
+	bm.mu.RLock()
+	rawBp, exists := bm.rawBlueprints[name]
+	bm.mu.RUnlock()
+
+	if !exists {
+		return nil, fmt.Errorf("blueprint %s not found", name)
+	}
+
+	var tmpl yamlcel.CELTemplate
+	if err := rawBp.Node.Decode(&tmpl); err != nil {
+		return nil, fmt.Errorf("failed to decode CEL template for %s: %w", name, err)
+	}
+
+	mapScope, err := scope.ToMap()
+	if err != nil {
+		return nil, fmt.Errorf("failed to convert scope to map: %w", err)
+	}
+
+	doc, err := tmpl.Eval(mapScope, map[string]string{})
+	if err != nil {
+		return nil, fmt.Errorf("error evaluating CEL template for %s: %w", name, err)
+	}
+
+	var bp models.Blueprint
+	if err := doc.Decode(&bp); err != nil {
+		return nil, fmt.Errorf("failed to decode evaluated result for %s: %w", name, err)
+	}
+
+	return &bp, nil
+}
+
+// ListBlueprintNames returns all available blueprint names.
+func (bm *BlueprintManager) ListBlueprintNames() []string {
+	bm.mu.RLock()
+	defer bm.mu.RUnlock()
+
+	names := make([]string, 0, len(bm.rawBlueprints))
+	for name := range bm.rawBlueprints {
+		names = append(names, name)
+	}
+	return names
+}
+
+// GetAllBlueprints evaluates all blueprints with the given scope.
+func (bm *BlueprintManager) GetAllBlueprints(scope *BlueprintScope) (map[string]*models.Blueprint, error) {
+	bm.mu.RLock()
+	blueprintNames := make([]string, 0, len(bm.rawBlueprints))
+	for name := range bm.rawBlueprints {
+		blueprintNames = append(blueprintNames, name)
+	}
+	bm.mu.RUnlock()
+
+	result := make(map[string]*models.Blueprint)
+	for _, name := range blueprintNames {
+		bp, err := bm.GetBlueprint(name, scope)
+		if err != nil {
+			return nil, fmt.Errorf("failed to evaluate blueprint %s: %w", name, err)
+		}
+		result[name] = bp
+	}
+
+	return result, nil
+}
+
+// Close stops the file watcher and cleans up resources
+func (bm *BlueprintManager) Close() error {
+	if !bm.watchEnabled {
+		return nil
+	}
+
+	close(bm.stopChan)
+
+	bm.mu.Lock()
+	if bm.reloadTimer != nil {
+		bm.reloadTimer.Stop()
+	}
+	bm.mu.Unlock()
+
+	if bm.watcher != nil {
+		return bm.watcher.Close()
+	}
+
+	return nil
 }
 
 // loadRawBlueprints loads raw blueprints from YAML files WITHOUT any processing to preserve CEL tags.
@@ -370,59 +669,6 @@ func (bm *BlueprintManager) mergeSequenceNodes(parentSeq, childSeq *yaml.Node, k
 
 	result.Content = append(result.Content, parentSeq.Content...)
 	result.Content = append(result.Content, childSeq.Content...)
-
-	return result, nil
-}
-
-// GetBlueprint evaluates CEL expressions for a specific blueprint with given scope.
-func (bm *BlueprintManager) GetBlueprint(name string, scope map[string]any) (*models.Blueprint, error) {
-	if scope == nil {
-		return nil, fmt.Errorf("scope cannot be nil")
-	}
-
-	rawBp, exists := bm.rawBlueprints[name]
-	if !exists {
-		return nil, fmt.Errorf("blueprint %s not found", name)
-	}
-
-	var tmpl yamlcel.CELTemplate
-	if err := rawBp.Node.Decode(&tmpl); err != nil {
-		return nil, fmt.Errorf("failed to decode CEL template for %s: %w", name, err)
-	}
-
-	doc, err := tmpl.Eval(scope, map[string]string{})
-	if err != nil {
-		return nil, fmt.Errorf("error evaluating CEL template for %s: %w", name, err)
-	}
-
-	var bp models.Blueprint
-	if err := doc.Decode(&bp); err != nil {
-		return nil, fmt.Errorf("failed to decode evaluated result for %s: %w", name, err)
-	}
-
-	return &bp, nil
-}
-
-// ListBlueprintNames returns all available blueprint names.
-func (bm *BlueprintManager) ListBlueprintNames() []string {
-	names := make([]string, 0, len(bm.rawBlueprints))
-	for name := range bm.rawBlueprints {
-		names = append(names, name)
-	}
-	return names
-}
-
-// GetAllBlueprints evaluates all blueprints with the given scope.
-func (bm *BlueprintManager) GetAllBlueprints(scope map[string]any) (map[string]*models.Blueprint, error) {
-	result := make(map[string]*models.Blueprint)
-
-	for name := range bm.rawBlueprints {
-		bp, err := bm.GetBlueprint(name, scope)
-		if err != nil {
-			return nil, fmt.Errorf("failed to evaluate blueprint %s: %w", name, err)
-		}
-		result[name] = bp
-	}
 
 	return result, nil
 }

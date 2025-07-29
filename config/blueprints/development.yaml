@@ -17,7 +17,7 @@ blueprint:
   storages:
     home:
       annotations:
-        zfs-csi.k8shell.io/volume-name: !cel "repo.owner + '/' + repo.name + '/' + username"
+        zfs-csi.k8shell.io/volume-name: !cel "repo.owner + '/' + repo.name + '/' + user.username"
     shared:
       readonly: false
       annotations:
