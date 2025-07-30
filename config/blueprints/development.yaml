@@ -22,7 +22,7 @@ blueprint:
     shared:
       readonly: false
       annotations:
-        zfs-csi.k8shell.io/volume-name: !cel "repo.owner2 + '/shared'"
+        zfs-csi.k8shell.io/volume-name: !cel "repo.owner + '/shared'"
 
   initScripts:
     - clone_repo@: |
