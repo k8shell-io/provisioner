@@ -50,6 +50,8 @@ github.com/k8shell-io/yaml-cel v0.2.3 h1:efgaDzHTd9IBEva8VS7FyAM3dA9MpTpVbDFBrlx
 github.com/k8shell-io/yaml-cel v0.2.3/go.mod h1:q3ZgK0aNRjTakgp7KlLbqvkeZ4cMsxXGlDfiC8r0EXU=
 github.com/k8shell-io/yaml-cel v0.2.4 h1:DL4dIS8BJjW2HQEnXTufqBqPvA+KpvbJMHeDwV50YQg=
 github.com/k8shell-io/yaml-cel v0.2.4/go.mod h1:q3ZgK0aNRjTakgp7KlLbqvkeZ4cMsxXGlDfiC8r0EXU=
+github.com/k8shell-io/yaml-cel v0.2.5 h1:xapOenNK0DxoFIRmvzoBfH1M0g7Dbl9C2erj6Xyq+q4=
+github.com/k8shell-io/yaml-cel v0.2.5/go.mod h1:q3ZgK0aNRjTakgp7KlLbqvkeZ4cMsxXGlDfiC8r0EXU=
 github.com/k8shell-io/yaml-config v0.1.1 h1:k4Yx4elOAWGdxmka/fLo3N+dwCaJla0nEcX1qL/SMHk=
 github.com/k8shell-io/yaml-config v0.1.1/go.mod h1:e0hBGrhGNCqkE+fBe2tIvAFSiGk1SGnMnH7R7DahTcE=
 github.com/kr/pretty v0.1.0/go.mod h1:dAy3ld7l9f0ibDNOQOHHMYYIIbhfbHSm3C4ZsoJORNo=
