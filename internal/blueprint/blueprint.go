@@ -191,7 +191,7 @@ func (bm *BlueprintManager) validateAllBlueprints() error {
 		}
 		v := bp.Validate()
 		if v != nil {
-			allErrors = append(allErrors, fmt.Errorf("blueprint '%s': %w", name, v))
+			allErrors = append(allErrors, fmt.Errorf("blueprint '%s': %v", name, v))
 		}
 	}
 
