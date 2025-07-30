@@ -42,16 +42,8 @@ github.com/josharian/intern v1.0.0 h1:vlS4z54oSdjm0bgjRigI+G1HpF+tI+9rE5LLzOg8Hm
 github.com/josharian/intern v1.0.0/go.mod h1:5DoeVV0s6jJacbCEi61lwdGj/aVlrQvzHFFd8Hwg//Y=
 github.com/k8shell-io/identity v0.10.1 h1:h5QAV80thDZjSsnikGIkQDWvOgfVZ/GBg9M0cHsetgQ=
 github.com/k8shell-io/identity v0.10.1/go.mod h1:5DqjcHsUh0hHj3C7VE/jfqUObWmpAPQ/BwwQ8YHXZJA=
-github.com/k8shell-io/yaml-cel v0.2.1 h1:+4rhXwX7Q1rkEBYgYP3XBJM+XzyGPGmrxHFmU/yoTlU=
-github.com/k8shell-io/yaml-cel v0.2.1/go.mod h1:CyPl7TwA70tplPTom9ZTdnAPg11FRWbSBZX6otG9xZ4=
-github.com/k8shell-io/yaml-cel v0.2.2 h1:fRTSP+0ep0TTB2bq2U0gT4njITOvydntHcjxLI+dOYg=
-github.com/k8shell-io/yaml-cel v0.2.2/go.mod h1:q3ZgK0aNRjTakgp7KlLbqvkeZ4cMsxXGlDfiC8r0EXU=
-github.com/k8shell-io/yaml-cel v0.2.3 h1:efgaDzHTd9IBEva8VS7FyAM3dA9MpTpVbDFBrlxZnMA=
-github.com/k8shell-io/yaml-cel v0.2.3/go.mod h1:q3ZgK0aNRjTakgp7KlLbqvkeZ4cMsxXGlDfiC8r0EXU=
-github.com/k8shell-io/yaml-cel v0.2.4 h1:DL4dIS8BJjW2HQEnXTufqBqPvA+KpvbJMHeDwV50YQg=
+github.com/k8shell-io/yaml-cel v0.2.4 h1:yy3gs4FIcHoue2F3pPiqrNFJBNqKvKM2JFOYQVZuejc=
 github.com/k8shell-io/yaml-cel v0.2.4/go.mod h1:q3ZgK0aNRjTakgp7KlLbqvkeZ4cMsxXGlDfiC8r0EXU=
-github.com/k8shell-io/yaml-cel v0.2.5 h1:xapOenNK0DxoFIRmvzoBfH1M0g7Dbl9C2erj6Xyq+q4=
-github.com/k8shell-io/yaml-cel v0.2.5/go.mod h1:q3ZgK0aNRjTakgp7KlLbqvkeZ4cMsxXGlDfiC8r0EXU=
 github.com/k8shell-io/yaml-config v0.1.1 h1:k4Yx4elOAWGdxmka/fLo3N+dwCaJla0nEcX1qL/SMHk=
 github.com/k8shell-io/yaml-config v0.1.1/go.mod h1:e0hBGrhGNCqkE+fBe2tIvAFSiGk1SGnMnH7R7DahTcE=
 github.com/kr/pretty v0.1.0/go.mod h1:dAy3ld7l9f0ibDNOQOHHMYYIIbhfbHSm3C4ZsoJORNo=

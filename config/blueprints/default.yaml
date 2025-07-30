@@ -3,7 +3,7 @@ blueprints:
     shell: /bin/bash
     sudo: false
 
-    #image: <image:tag>
+    image: <image:tag>
     imagePullSecret: ${WORKSPACE_REGCRED}
     imagePullPolicy: Always
 

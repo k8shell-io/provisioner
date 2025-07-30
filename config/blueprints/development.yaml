@@ -1,6 +1,7 @@
 blueprint:
   name: development
   template: default
+  image: ${WORKSPACE_REGISTRY}/workspaces/dev:0.8-1.9
 
   credentialHelpers:
     docker:
@@ -21,7 +22,7 @@ blueprint:
     shared:
       readonly: false
       annotations:
-        zfs-csi.k8shell.io/volume-name: !cel "repo.owner + '/shared'"
+        zfs-csi.k8shell.io/volume-name: !cel "repo.owner2 + '/shared'"
 
   initScripts:
     - clone_repo@: |

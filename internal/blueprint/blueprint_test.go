@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"os"
 	"testing"
-	"time"
 
 	identity "github.com/k8shell-io/identity/pkg/models"
 	"github.com/k8shell-io/provisioner/internal/blueprint"
@@ -37,40 +36,9 @@ func setupTestEnvironment(t *testing.T) func() {
 	}
 }
 
-// TestScope creates a minimal BlueprintScope for testing purposes.
-func testScope() *blueprint.BlueprintScope {
-	return &blueprint.BlueprintScope{
-		Blueprint: "testblueprint",
-		User: identity.User{
-			Username:     "testuser",
-			IsValid:      true,
-			ExpiresAt:    time.Now().Add(24 * time.Hour),
-			UID:          1000,
-			GID:          1000,
-			Fullname:     "Test User",
-			AccessToken:  "testtoken",
-			Email:        "testuser@example.com",
-			Password:     "testpassword",
-			Auths:        []identity.AuthMethod{identity.AuthMethodPublicKey, identity.AuthMethodPassword},
-			AuthKeys:     []string{"ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQC3..."},
-			Locked:       false,
-			FailedLogins: 0,
-			Channels:     []identity.Channel{identity.ChannelShell, identity.ChannelSFTP},
-			Envs:         []string{},
-			Roles:        []identity.Role{"role1", "role2"},
-			Blueprints:   []string{"testblueprint"},
-			Source:       "testsource",
-		},
-		Repo: models.Repo{
-			Owner: "testowner",
-			Name:  "testrepo",
-		},
-	}
-}
-
 // createTestScope creates a test scope with user data
 func createTestScope(username string, roles []identity.Role) *blueprint.BlueprintScope {
-	scope := testScope()
+	scope := blueprint.TestScope()
 	scope.User = identity.User{
 		Username: username,
 		Roles:    roles,

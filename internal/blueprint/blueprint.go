@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io/fs"
 	"path/filepath"
-	"reflect"
 	"sync"
 	"time"
 
@@ -70,6 +69,37 @@ type BlueprintManager struct {
 	reloadTimer   *time.Timer
 	reloadDelay   time.Duration
 	stopChan      chan struct{}
+}
+
+// TestScope creates a minimal BlueprintScope for testing purposes.
+func TestScope() *BlueprintScope {
+	return &BlueprintScope{
+		Blueprint: "testblueprint",
+		User: identity.User{
+			Username:     "testuser",
+			IsValid:      true,
+			ExpiresAt:    time.Now().Add(24 * time.Hour),
+			UID:          1000,
+			GID:          1000,
+			Fullname:     "Test User",
+			AccessToken:  "testtoken",
+			Email:        "testuser@example.com",
+			Password:     "testpassword",
+			Auths:        []identity.AuthMethod{identity.AuthMethodPublicKey, identity.AuthMethodPassword},
+			AuthKeys:     []string{"ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQC3..."},
+			Locked:       false,
+			FailedLogins: 0,
+			Channels:     []identity.Channel{identity.ChannelShell, identity.ChannelSFTP},
+			Envs:         []string{},
+			Roles:        []identity.Role{"role1", "role2"},
+			Blueprints:   []string{"testblueprint"},
+			Source:       "testsource",
+		},
+		Repo: models.Repo{
+			Owner: "testowner",
+			Name:  "testrepo",
+		},
+	}
 }
 
 // NewBlueprintManager creates a new blueprint manager.
@@ -143,6 +173,8 @@ func (bm *BlueprintManager) loadAndValidateBlueprints() error {
 
 // validateAllBlueprints validates all loaded blueprints by checking CEL template syntax
 func (bm *BlueprintManager) validateAllBlueprints() error {
+	validationScope := TestScope()
+
 	var allErrors []error
 
 	bm.mu.RLock()
@@ -153,45 +185,18 @@ func (bm *BlueprintManager) validateAllBlueprints() error {
 	bm.mu.RUnlock()
 
 	for _, name := range blueprintNames {
-		bm.mu.RLock()
-		rawBp := bm.rawBlueprints[name]
-		bm.mu.RUnlock()
-
-		var tmpl yamlcel.CELTemplate
-		if err := rawBp.Node.Decode(&tmpl); err != nil {
-			allErrors = append(allErrors, fmt.Errorf("blueprint '%s': failed to decode CEL template: %w", name, err))
-			continue
+		bp, err := bm.GetBlueprint(name, validationScope)
+		if err != nil {
+			allErrors = append(allErrors, fmt.Errorf("blueprint '%s': %w", name, err))
 		}
-
-		scopeType := reflect.TypeOf(BlueprintScope{})
-		if err := tmpl.ValidateWithScope(scopeType, map[string]string{}); err != nil {
-			allErrors = append(allErrors, fmt.Errorf("blueprint '%s': CEL validation failed: %w", name, err))
-			continue
-		}
-
-		if err := bm.validateBlueprintStructure(rawBp); err != nil {
-			allErrors = append(allErrors, fmt.Errorf("blueprint '%s': structure validation failed: %w", name, err))
+		v := bp.Validate()
+		if v != nil {
+			allErrors = append(allErrors, fmt.Errorf("blueprint '%s': %w", name, v))
 		}
 	}
 
 	if len(allErrors) > 0 {
-		return fmt.Errorf("%v", allErrors)
-	}
-
-	return nil
-}
-
-// validateBlueprintStructure validates the basic structure of a blueprint
-func (bm *BlueprintManager) validateBlueprintStructure(rawBp *RawBlueprint) error {
-	var data map[string]interface{}
-	if err := rawBp.Node.Decode(&data); err != nil {
-		return fmt.Errorf("failed to decode blueprint structure: %w", err)
-	}
-
-	// Add any structural validation rules here
-	// For example, check if required top-level fields exist
-	if rawBp.Name == "" {
-		return fmt.Errorf("blueprint name is required")
+		return fmt.Errorf("validation errors found: %v", allErrors)
 	}
 
 	return nil
