@@ -59,18 +59,18 @@ type LoadOptions struct {
 
 // BlueprintManager manages blueprints with lazy CEL evaluation.
 type BlueprintManager struct {
-	log           *zerolog.Logger
-	rawBlueprints map[string]*RawBlueprint
-	knownFields   bool
-	strategies    MergeStrategies
-	processor     *yamlconfig.Processor
-	watcher       *fsnotify.Watcher
-	watchDir      string
-	watchEnabled  bool
-	mu            sync.RWMutex
-	reloadTimer   *time.Timer
-	reloadDelay   time.Duration
-	stopChan      chan struct{}
+	log           *zerolog.Logger          // Logger for the blueprint manager
+	rawBlueprints map[string]*RawBlueprint // Map of blueprint names to their raw definitions
+	knownFields   bool                     // Whether to allow unknown fields in YAML decoding
+	strategies    MergeStrategies          // Custom strategies for merging lists in blueprints
+	processor     *yamlconfig.Processor    // YAML processor for parsing and validating blueprints
+	watcher       *fsnotify.Watcher        // File system watcher for monitoring blueprint directory changes
+	watchDir      string                   // Directory to watch for blueprint changes
+	watchEnabled  bool                     // Whether file watching is enabled
+	mu            sync.RWMutex             // Mutex for synchronizing access to blueprints
+	reloadTimer   *time.Timer              // Timer for debouncing reloads after file changes
+	reloadDelay   time.Duration            // Delay before reloading blueprints after file changes
+	stopChan      chan struct{}            // Channel to signal stopping the watcher
 }
 
 // TestScope creates a minimal BlueprintScope for testing purposes.
