@@ -6,7 +6,7 @@ blueprints:
     image: <image:tag>
     imagePullSecret: ${WORKSPACE_REGCRED}
     imagePullPolicy: Always
-
+    
     k8shelld: 
       image: ${WORKSPACE_REGISTRY}/k8shell-base/k8shelld:v0.10.1-35
       imagePullSecret: ${WORKSPACE_REGCRED}
