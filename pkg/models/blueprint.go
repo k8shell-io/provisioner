@@ -3,6 +3,7 @@ package models
 // Blueprint represents a single blueprint configuration
 type Blueprint struct {
 	Name              string              `yaml:"name" validate:"required,min=1,max=30"`
+	Template          string              `yaml:"template"`
 	Shell             string              `yaml:"shell" validate:"required"`
 	Sudo              bool                `yaml:"sudo" default:"false"`
 	Image             string              `yaml:"image" validate:"required"`
@@ -17,6 +18,7 @@ type Blueprint struct {
 	CredentialHelpers CredentialHelpers   `yaml:"credentialHelpers"`
 	Storages          map[string]Storage  `yaml:"storages" validate:"required,min=1,dive"`
 	InitScripts       []map[string]string `yaml:"initScripts,omitempty"`
+	ServiceAccount    string              `yaml:"serviceAccount,omitempty"`
 }
 
 // K8shelld represents k8shelld configuration

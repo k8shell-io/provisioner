@@ -1,6 +1,7 @@
 package blueprint
 
 import (
+	"bytes"
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
@@ -60,6 +61,7 @@ type LoadOptions struct {
 type BlueprintManager struct {
 	log           *zerolog.Logger
 	rawBlueprints map[string]*RawBlueprint
+	knownFields   bool
 	strategies    MergeStrategies
 	processor     *yamlconfig.Processor
 	watcher       *fsnotify.Watcher
@@ -111,6 +113,7 @@ func NewBlueprintManager(opts LoadOptions) (*BlueprintManager, error) {
 	manager := &BlueprintManager{
 		log:           log.NewLogger("blueprint"),
 		rawBlueprints: make(map[string]*RawBlueprint),
+		knownFields:   true,
 		strategies:    opts.Strategies,
 		processor:     yamlconfig.NewProcessor(yamlconfig.DefaultOptions()),
 		watchDir:      opts.Dir,
@@ -120,7 +123,7 @@ func NewBlueprintManager(opts LoadOptions) (*BlueprintManager, error) {
 	}
 
 	if err := manager.loadAndValidateBlueprints(); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("validation failed: %w", err)
 	}
 
 	if opts.EnableWatch {
@@ -157,11 +160,15 @@ func (bm *BlueprintManager) loadAndValidateBlueprints() error {
 		return fmt.Errorf("failed to resolve inheritance: %w", err)
 	}
 
-	if err := bm.validateAllBlueprints(); err != nil {
+	if errs := bm.validateAllBlueprints(); len(errs) > 0 {
 		bm.mu.Lock()
 		bm.rawBlueprints = originalBlueprints
 		bm.mu.Unlock()
-		return fmt.Errorf("blueprint validation failed: %w", err)
+		out := ""
+		for _, err := range errs {
+			out += fmt.Sprintf("%s\n", err.Error())
+		}
+		return fmt.Errorf("failed to validate blueprint:\n%s", out)
 	}
 
 	bm.mu.Lock()
@@ -172,7 +179,7 @@ func (bm *BlueprintManager) loadAndValidateBlueprints() error {
 }
 
 // validateAllBlueprints validates all loaded blueprints by checking CEL template syntax
-func (bm *BlueprintManager) validateAllBlueprints() error {
+func (bm *BlueprintManager) validateAllBlueprints() []error {
 	validationScope := TestScope()
 
 	var allErrors []error
@@ -195,11 +202,7 @@ func (bm *BlueprintManager) validateAllBlueprints() error {
 		}
 	}
 
-	if len(allErrors) > 0 {
-		return fmt.Errorf("validation errors found: %v", allErrors)
-	}
-
-	return nil
+	return allErrors
 }
 
 // setupWatcher initializes the file system watcher
@@ -314,14 +317,16 @@ func (bm *BlueprintManager) GetBlueprint(name string, scope *BlueprintScope) (*m
 		return nil, fmt.Errorf("failed to convert scope to map: %w", err)
 	}
 
-	doc, err := tmpl.Eval(mapScope, map[string]string{})
+	docBytes, err := tmpl.EvalToBytes(mapScope, map[string]string{})
 	if err != nil {
 		return nil, fmt.Errorf("error evaluating CEL template for %s: %w", name, err)
 	}
 
 	var bp models.Blueprint
-	if err := doc.Decode(&bp); err != nil {
-		return nil, fmt.Errorf("failed to decode evaluated result for %s: %w", name, err)
+	decoder := yaml.NewDecoder(bytes.NewReader(docBytes))
+	decoder.KnownFields(bm.knownFields)
+	if err := decoder.Decode(&bp); err != nil {
+		return nil, fmt.Errorf("%w", err)
 	}
 
 	return &bp, nil
