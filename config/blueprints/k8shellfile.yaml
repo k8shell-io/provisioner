@@ -7,7 +7,7 @@ blueprint:
   network:
     networkPolicy: workspace
   resources:
-    cpu: 8
+    cpu: 10
     memory: 8Gi
 
   initScripts:

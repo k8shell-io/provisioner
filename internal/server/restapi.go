@@ -109,6 +109,7 @@ func (a *RESTApiService) initializeRouter() *mux.Router {
 
 	// Define API endpoints
 	apiRouter.HandleFunc("/blueprints", a.GetBlueprints).Methods(http.MethodGet)
+	apiRouter.HandleFunc("/blueprints/{name}", a.GetBlueprint).Methods(http.MethodGet)
 	a.logRoutes(router)
 
 	router.NotFoundHandler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -192,6 +193,29 @@ func (a *RESTApiService) GetBlueprints(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Length", fmt.Sprintf("%d", len(data)))
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(data)
+}
+
+// GetBlueprint handles the GET request for a specific blueprint
+func (a *RESTApiService) GetBlueprint(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	name := vars["name"]
+	a.log.Info().Msgf("GetBlueprint called for %s", name)
+
+	blueprint, err := a.bpManager.GetBlueprint(name, blueprint.TestScope())
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Blueprint not found: %s", name), http.StatusNotFound)
+		return
+	}
+
+	data, err := json.Marshal(blueprint)
+	if err != nil {
+		http.Error(w, "Failed to marshal blueprint", http.StatusInternalServerError)
+		return
+	}
+
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(data)
