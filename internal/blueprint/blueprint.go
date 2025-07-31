@@ -138,42 +138,39 @@ func NewBlueprintManager(opts LoadOptions) (*BlueprintManager, error) {
 }
 
 // loadAndValidateBlueprints loads and validates all blueprints atomically
-func (bm *BlueprintManager) loadAndValidateBlueprints() error {
-	tempBlueprints := make(map[string]*RawBlueprint)
-
+func (bm *BlueprintManager) loadAndValidateBlueprints() (err error) {
 	bm.mu.Lock()
 	originalBlueprints := bm.rawBlueprints
-	bm.rawBlueprints = tempBlueprints
+	bm.rawBlueprints = make(map[string]*RawBlueprint)
 	bm.mu.Unlock()
 
-	if err := bm.loadRawBlueprints(bm.watchDir); err != nil {
-		bm.mu.Lock()
-		bm.rawBlueprints = originalBlueprints
-		bm.mu.Unlock()
+	defer func() {
+		if err != nil {
+			bm.log.Error().Err(err).Msg("Failed to load and validate blueprints")
+			bm.mu.Lock()
+			bm.rawBlueprints = originalBlueprints
+			bm.mu.Unlock()
+		} else {
+			bm.log.Info().Msg("Successfully loaded and validated blueprints")
+		}
+	}()
+
+	if err = bm.loadRawBlueprints(bm.watchDir); err != nil {
 		return fmt.Errorf("failed to load blueprints: %w", err)
 	}
 
-	if err := bm.resolveInheritance(); err != nil {
-		bm.mu.Lock()
-		bm.rawBlueprints = originalBlueprints
-		bm.mu.Unlock()
+	if err = bm.resolveInheritance(); err != nil {
 		return fmt.Errorf("failed to resolve inheritance: %w", err)
 	}
 
 	if errs := bm.validateAllBlueprints(); len(errs) > 0 {
-		bm.mu.Lock()
-		bm.rawBlueprints = originalBlueprints
-		bm.mu.Unlock()
 		out := ""
-		for _, err := range errs {
-			out += fmt.Sprintf("%s\n", err.Error())
+		for _, e := range errs {
+			out += fmt.Sprintf("%s\n", e.Error())
 		}
-		return fmt.Errorf("failed to validate blueprint:\n%s", out)
+		err = fmt.Errorf("failed to validate blueprint:\n%s", out)
+		return err
 	}
-
-	bm.mu.Lock()
-	bm.rawBlueprints = tempBlueprints
-	bm.mu.Unlock()
 
 	return nil
 }
