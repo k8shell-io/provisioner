@@ -1,0 +1,42 @@
+blueprints:
+  - name: sql
+    template: default
+    image: ${WORKSPACE_REGISTRY}/workspaces/awd:0.8-3.2
+    sudo: true
+
+    k8shelld:
+      ignoreOrphans:
+        - .*postgresql.*
+
+    portForwarding:
+      - 10.126.2.52:1521
+
+    storages:
+      home:
+        annotations:
+          zfs-csi.k8shell.io/squash: "no_root_squash"
+
+  - name: dev
+    template: default
+    image: ${WORKSPACE_REGISTRY}/workspaces/dev:0.8-1.1
+
+    sudo: true
+    network:
+      networkPolicy: system
+    serviceAccount: !cel |
+      user.username in ['alice', 'kuchajar', 'vitvatom']
+        ? "admin-sa"
+        : user.username in ['nvkptr']
+          ? "k8shell-proxy"
+          : "default"
+
+    resources:
+      cpu: 8
+      memory: 16Gi
+
+    credentialHelpers:
+      docker:
+        enabled: !cel "user.username in ['alice', 'kuchajar', 'vitvatom']"
+
+    docker:
+      enabled: true
