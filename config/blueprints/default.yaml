@@ -21,9 +21,6 @@ blueprints:
         organization: ksi.fit.cvut.cz
         commonName: ksi.fit.cvut.cz
 
-    env:
-      TEST: "test_value"
-
     portForwarding:
       - localnetworks:0
 
