@@ -204,16 +204,37 @@ func (a *RESTApiService) GetBlueprint(w http.ResponseWriter, r *http.Request) {
 	name := vars["name"]
 	a.log.Info().Msgf("GetBlueprint called for %s", name)
 
-	blueprint, err := a.bpManager.GetBlueprint(name, blueprint.TestScope())
-	if err != nil {
-		http.Error(w, fmt.Sprintf("Blueprint not found: %s", name), http.StatusNotFound)
-		return
+	var raw bool
+	qs := r.URL.Query()
+	if _raw, ok := qs["raw"]; ok {
+		raw = _raw[0] == "true"
 	}
 
-	data, err := json.Marshal(blueprint)
-	if err != nil {
-		http.Error(w, "Failed to marshal blueprint", http.StatusInternalServerError)
-		return
+	var data []byte
+	if !raw {
+		blueprint, err := a.bpManager.GetBlueprint(name, blueprint.TestScope())
+		if err != nil {
+			http.Error(w, fmt.Sprintf("Blueprint not found: %s", name), http.StatusNotFound)
+			return
+		}
+
+		data, err = json.Marshal(blueprint)
+		if err != nil {
+			http.Error(w, "Failed to marshal blueprint", http.StatusInternalServerError)
+			return
+		}
+	} else {
+		rawBp, err := a.bpManager.GetRawBlueprint(name)
+		if err != nil {
+			http.Error(w, fmt.Sprintf("Raw blueprint not found: %s", name), http.StatusNotFound)
+			return
+		}
+
+		data, err = json.Marshal(rawBp.Node)
+		if err != nil {
+			http.Error(w, "Failed to marshal raw blueprint", http.StatusInternalServerError)
+			return
+		}
 	}
 
 	w.Header().Set("Content-Type", "application/json")

@@ -329,6 +329,18 @@ func (bm *BlueprintManager) GetBlueprint(name string, scope *BlueprintScope) (*m
 	return &bp, nil
 }
 
+func (bm *BlueprintManager) GetRawBlueprint(name string) (*RawBlueprint, error) {
+	bm.mu.RLock()
+	defer bm.mu.RUnlock()
+
+	rawBp, exists := bm.rawBlueprints[name]
+	if !exists {
+		return nil, fmt.Errorf("blueprint %s not found", name)
+	}
+
+	return rawBp, nil
+}
+
 // ListBlueprintNames returns all available blueprint names.
 func (bm *BlueprintManager) ListBlueprintNames() []string {
 	bm.mu.RLock()
