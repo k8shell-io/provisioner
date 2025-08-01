@@ -21,6 +21,20 @@ type Blueprint struct {
 	ServiceAccount    string              `yaml:"serviceAccount,omitempty"`
 }
 
+// CustomBlueprint represents a custom blueprint configuration
+type CustomBlueprint struct {
+	Template       string              `yaml:"template"`
+	Shell          string              `yaml:"shell" validate:"required"`
+	Sudo           bool                `yaml:"sudo" default:"false"`
+	Image          string              `yaml:"image" validate:"required"`
+	Env            map[string]string   `yaml:"env,omitempty"`
+	PortForwarding []string            `yaml:"portForwarding,omitempty"`
+	Network        Network             `yaml:"network" validate:"required"`
+	Resources      Resources           `yaml:"resources" validate:"required"`
+	Storages       map[string]Storage  `yaml:"storages" validate:"required,min=1,dive"`
+	InitScripts    []map[string]string `yaml:"initScripts,omitempty"`
+}
+
 // K8shelld represents k8shelld configuration
 type K8shelld struct {
 	Image           string   `yaml:"image" validate:"required"`

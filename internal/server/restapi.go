@@ -15,6 +15,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"strings"
 	"time"
@@ -22,6 +23,7 @@ import (
 	"github.com/gorilla/mux"
 	"github.com/k8shell-io/provisioner/internal/blueprint"
 	"github.com/k8shell-io/provisioner/internal/log"
+	"github.com/k8shell-io/provisioner/pkg/models"
 	"github.com/rs/zerolog"
 	httpSwagger "github.com/swaggo/http-swagger"
 )
@@ -39,6 +41,11 @@ type responseRecorder struct {
 	http.ResponseWriter
 	statusCode int
 	body       bytes.Buffer
+}
+
+type BlueprintComposeRequest struct {
+	Blueprint models.CustomBlueprint   `json:"blueprint"`
+	Scope     blueprint.BlueprintScope `json:"scope"`
 }
 
 // WriteHeader captures the status code and forwards it to the original ResponseWriter
@@ -110,6 +117,7 @@ func (a *RESTApiService) initializeRouter() *mux.Router {
 	// Define API endpoints
 	apiRouter.HandleFunc("/blueprints", a.GetBlueprints).Methods(http.MethodGet)
 	apiRouter.HandleFunc("/blueprints/{name}", a.GetBlueprint).Methods(http.MethodGet)
+	apiRouter.HandleFunc("/blueprints/compose", a.ComposeBlueprint).Methods(http.MethodPost)
 	a.logRoutes(router)
 
 	router.NotFoundHandler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -175,7 +183,6 @@ func (a *RESTApiService) logRoutes(router *mux.Router) {
 
 // GetBlueprints handles the GET request for blueprints
 func (a *RESTApiService) GetBlueprints(w http.ResponseWriter, r *http.Request) {
-	a.log.Info().Msg("GetBlueprints called")
 	blueprints := a.bpManager.ListBlueprintNames()
 	if len(blueprints) == 0 {
 		http.Error(w, "No blueprints found", http.StatusNotFound)
@@ -202,7 +209,6 @@ func (a *RESTApiService) GetBlueprints(w http.ResponseWriter, r *http.Request) {
 func (a *RESTApiService) GetBlueprint(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
 	name := vars["name"]
-	a.log.Info().Msgf("GetBlueprint called for %s", name)
 
 	var raw bool
 	qs := r.URL.Query()
@@ -240,4 +246,60 @@ func (a *RESTApiService) GetBlueprint(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(data)
+}
+
+// ComposeBlueprint handles the POST request to compose a blueprint
+func (a *RESTApiService) ComposeBlueprint(w http.ResponseWriter, r *http.Request) {
+	contentType := r.Header.Get("Content-Type")
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		http.Error(w, "Failed to read request body", http.StatusBadRequest)
+		return
+	}
+
+	var blueprintYAML []byte
+	if strings.Contains(contentType, "text/yaml") {
+		blueprintYAML = body
+	} else {
+		http.Error(w, "Unsupported content type, expected text/yaml", http.StatusUnsupportedMediaType)
+		return
+	}
+
+	scope := blueprint.TestScope()
+	var composedJSON []byte
+
+	if scope == nil {
+		composedBlueprint, err := a.bpManager.Compose(blueprintYAML)
+		if err != nil {
+			a.log.Error().Err(err).Msg("Failed to compose blueprint")
+			http.Error(w, fmt.Sprintf("Failed to compose blueprint: %v", err), http.StatusBadRequest)
+			return
+		}
+
+		composedJSON, err = json.Marshal(composedBlueprint)
+		if err != nil {
+			a.log.Error().Err(err).Msg("Failed to marshal composed blueprint to JSON")
+			http.Error(w, "Failed to process composed blueprint", http.StatusInternalServerError)
+			return
+		}
+	} else {
+		bp, err := a.bpManager.ComposeWithScope(blueprintYAML, scope)
+		if err != nil {
+			a.log.Error().Err(err).Msg("Failed to compose blueprint with scope")
+			http.Error(w, fmt.Sprintf("Failed to compose blueprint with scope: %v", err), http.StatusBadRequest)
+			return
+		}
+
+		composedJSON, err = json.Marshal(bp)
+		if err != nil {
+			a.log.Error().Err(err).Msg("Failed to marshal composed blueprint with scope to JSON")
+			http.Error(w, "Failed to process composed blueprint with scope", http.StatusInternalServerError)
+			return
+		}
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(composedJSON)
+
 }
