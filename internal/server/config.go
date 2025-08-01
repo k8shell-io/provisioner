@@ -10,6 +10,7 @@ import (
 // Config represents the server configuration
 type Config struct {
 	Http       HttpConfig           `yaml:"http"`
+	Identity   IdentityConfig       `yaml:"identity"`
 	Blueprints BlueprintsFileConfig `yaml:"blueprints"`
 	BaseDir    string               `yaml:"baseDir"`
 }
@@ -18,6 +19,12 @@ type Config struct {
 type HttpConfig struct {
 	Port   int    `yaml:"port"`
 	APIKey string `yaml:"APIKey"`
+}
+
+type IdentityConfig struct {
+	BaseURL string `yaml:"baseURL"`
+	APIKey  string `yaml:"APIKey"`
+	Timeout int    `yaml:"timeout"`
 }
 
 // Blueprint represents a blueprint configuration

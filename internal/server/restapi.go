@@ -14,6 +14,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -21,6 +22,7 @@ import (
 	"time"
 
 	"github.com/gorilla/mux"
+	identity "github.com/k8shell-io/identity/pkg/client"
 	"github.com/k8shell-io/provisioner/internal/blueprint"
 	"github.com/k8shell-io/provisioner/internal/log"
 	"github.com/k8shell-io/provisioner/pkg/models"
@@ -30,9 +32,8 @@ import (
 
 // RESTApiService represents the REST API service for the K8Shell Provisioner server.
 type RESTApiService struct {
-	httpConfig HttpConfig
-	bpManager  *blueprint.BlueprintManager
-	log        *zerolog.Logger
+	server *Server
+	log    *zerolog.Logger
 }
 
 // responseRecorder is a wrapper for http.ResponseWriter
@@ -61,13 +62,12 @@ func (rec *responseRecorder) Write(data []byte) (int, error) {
 }
 
 // NewRESTAPI creates a new REST API service
-func NewRESTAPI(httpConfig HttpConfig, bpManager *blueprint.BlueprintManager) (*RESTApiService, error) {
+func NewRESTAPI(server *Server) (*RESTApiService, error) {
 	log := log.NewLogger("api")
 
 	return &RESTApiService{
-		httpConfig: httpConfig,
-		log:        log,
-		bpManager:  bpManager,
+		server: server,
+		log:    log,
 	}, nil
 }
 
@@ -84,7 +84,7 @@ func (a *RESTApiService) apiKeyMiddleware(next http.Handler) http.Handler {
 		}
 
 		providedKey := strings.TrimPrefix(authHeader, prefix)
-		expectedKey := a.httpConfig.APIKey
+		expectedKey := a.server.config.Http.APIKey
 
 		if providedKey != expectedKey {
 			http.Error(w, "Unauthorized: invalid API key", http.StatusUnauthorized)
@@ -101,7 +101,11 @@ func (a *RESTApiService) loggingMiddleware(next http.Handler) http.Handler {
 		a.log.Debug().Msgf("Request: method %s, path %s", r.Method, r.URL.Path)
 		rec := &responseRecorder{ResponseWriter: w, statusCode: http.StatusOK}
 		next.ServeHTTP(rec, r)
-		a.log.Debug().Msgf("Response: status %d, body: %s", rec.statusCode, rec.body.String())
+		if rec.statusCode >= 400 {
+			a.log.Error().Msgf("Response: status %d, %s", rec.statusCode, rec.body.String())
+		} else {
+			a.log.Debug().Msgf("Response: status %d, body: %s", rec.statusCode, rec.body.String()[:100])
+		}
 	})
 }
 
@@ -133,7 +137,7 @@ func (a *RESTApiService) initializeRouter() *mux.Router {
 func (a *RESTApiService) Serve(ctx context.Context) {
 	server := &http.Server{
 		Handler: a.initializeRouter(),
-		Addr:    fmt.Sprintf(":%d", a.httpConfig.Port),
+		Addr:    fmt.Sprintf(":%d", a.server.config.Http.Port),
 	}
 
 	idleConnsClosed := make(chan struct{})
@@ -183,7 +187,7 @@ func (a *RESTApiService) logRoutes(router *mux.Router) {
 
 // GetBlueprints handles the GET request for blueprints
 func (a *RESTApiService) GetBlueprints(w http.ResponseWriter, r *http.Request) {
-	blueprints := a.bpManager.ListBlueprintNames()
+	blueprints := a.server.bpManager.ListBlueprintNames()
 	if len(blueprints) == 0 {
 		http.Error(w, "No blueprints found", http.StatusNotFound)
 		return
@@ -218,7 +222,7 @@ func (a *RESTApiService) GetBlueprint(w http.ResponseWriter, r *http.Request) {
 
 	var data []byte
 	if !raw {
-		blueprint, err := a.bpManager.GetBlueprint(name, blueprint.TestScope())
+		blueprint, err := a.server.bpManager.GetBlueprint(name, blueprint.TestScope())
 		if err != nil {
 			http.Error(w, fmt.Sprintf("Blueprint not found: %s", name), http.StatusNotFound)
 			return
@@ -230,7 +234,7 @@ func (a *RESTApiService) GetBlueprint(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	} else {
-		rawBp, err := a.bpManager.GetRawBlueprint(name)
+		rawBp, err := a.server.bpManager.GetRawBlueprint(name)
 		if err != nil {
 			http.Error(w, fmt.Sprintf("Raw blueprint not found: %s", name), http.StatusNotFound)
 			return
@@ -265,37 +269,34 @@ func (a *RESTApiService) ComposeBlueprint(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	scope := blueprint.TestScope()
+	username := r.URL.Query().Get("username")
+	if username == "" {
+		http.Error(w, "Username is required", http.StatusBadRequest)
+		return
+	}
+
+	scope, errx := a.server.GetBlueprintScope(r.Context(), username, "", "")
+	if errx != nil {
+		var eresp identity.ErrorResponse
+		if errors.As(errx, &eresp) {
+			http.Error(w, eresp.Msg, eresp.Status)
+			return
+		}
+		http.Error(w, fmt.Sprintf("Failed to get user: %v", errx), http.StatusInternalServerError)
+		return
+	}
+
 	var composedJSON []byte
+	bp, err := a.server.bpManager.ComposeWithScope(blueprintYAML, scope)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Failed to compose blueprint with scope: %v", err), http.StatusBadRequest)
+		return
+	}
 
-	if scope == nil {
-		composedBlueprint, err := a.bpManager.Compose(blueprintYAML)
-		if err != nil {
-			a.log.Error().Err(err).Msg("Failed to compose blueprint")
-			http.Error(w, fmt.Sprintf("Failed to compose blueprint: %v", err), http.StatusBadRequest)
-			return
-		}
-
-		composedJSON, err = json.Marshal(composedBlueprint)
-		if err != nil {
-			a.log.Error().Err(err).Msg("Failed to marshal composed blueprint to JSON")
-			http.Error(w, "Failed to process composed blueprint", http.StatusInternalServerError)
-			return
-		}
-	} else {
-		bp, err := a.bpManager.ComposeWithScope(blueprintYAML, scope)
-		if err != nil {
-			a.log.Error().Err(err).Msg("Failed to compose blueprint with scope")
-			http.Error(w, fmt.Sprintf("Failed to compose blueprint with scope: %v", err), http.StatusBadRequest)
-			return
-		}
-
-		composedJSON, err = json.Marshal(bp)
-		if err != nil {
-			a.log.Error().Err(err).Msg("Failed to marshal composed blueprint with scope to JSON")
-			http.Error(w, "Failed to process composed blueprint with scope", http.StatusInternalServerError)
-			return
-		}
+	composedJSON, err = json.Marshal(bp)
+	if err != nil {
+		http.Error(w, "Failed to process composed blueprint with scope", http.StatusInternalServerError)
+		return
 	}
 
 	w.Header().Set("Content-Type", "application/json")

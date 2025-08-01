@@ -81,7 +81,7 @@ blueprints:
         enabled: true
         storageClass: ${WORKSPACE_STORAGE_CLASS}
         size: 10Gi
-        path: /home/{username}
+        path: !cel "'/home/' + user.username"
         readonly: False      
         annotations:
           zfs-csi.k8shell.io/volume-name: !cel "blueprint + '/' + user.username"

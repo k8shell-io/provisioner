@@ -5,6 +5,13 @@ http:
   port: 9201
   APIKey: !file ${SECRET_FILES}/provisioner_key
 
+# Identity service configuration
+identity:
+  baseURL: http://10.42.2.77:9090
+  APIKey: !file ${SECRET_FILES}/identity_key
+  timeout: 1000 
+
+# Blueprints configuration
 blueprints:
   directory: blueprints
 
