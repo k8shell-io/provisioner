@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io/fs"
 	"path/filepath"
@@ -46,6 +47,8 @@ func (bs *BlueprintScope) ToMap() (map[string]any, error) {
 
 	return result, nil
 }
+
+var ErrBlueprintNotFound = errors.New("blueprint not found")
 
 // MergeStrategies allow custom list merging strategies per dotted path.
 type MergeStrategies map[string]func(dst, src []interface{}) []interface{}
@@ -607,7 +610,7 @@ func (bm *BlueprintManager) resolveRawTemplate(bpName string, visited map[string
 
 	bp, found := bm.rawBlueprints[bpName]
 	if !found {
-		return nil, fmt.Errorf("blueprint %s not found", bpName)
+		return nil, fmt.Errorf("blueprint '%s' not found: %w", bpName, ErrBlueprintNotFound)
 	}
 
 	if bp.Template == "" {
@@ -616,13 +619,16 @@ func (bm *BlueprintManager) resolveRawTemplate(bpName string, visited map[string
 
 	parent, err := bm.resolveRawTemplate(bp.Template, visited)
 	if err != nil {
+		if errors.Is(err, ErrBlueprintNotFound) {
+			return nil, fmt.Errorf("cannot find template '%s' for '%s'", bp.Template, bpName)
+		}
 		return nil, err
 	}
 
 	// Merge YAML nodes
 	mergedNode, err := bm.mergeYAMLNodes(parent.Node, bp.Node)
 	if err != nil {
-		return nil, fmt.Errorf("failed to merge templates for %s: %w", bpName, err)
+		return nil, fmt.Errorf("failed to merge templates for '%s': %w", bpName, err)
 	}
 
 	return &RawBlueprint{
