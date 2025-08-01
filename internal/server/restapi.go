@@ -261,14 +261,22 @@ func (a *RESTApiService) ComposeBlueprint(w http.ResponseWriter, r *http.Request
 		return
 	}
 
+	username := r.URL.Query().Get("username")
+	if username == "" {
+		http.Error(w, "Username is required", http.StatusBadRequest)
+		return
+	}
+
 	var blueprintYAML []byte
 	if strings.Contains(contentType, "text/yaml") || strings.Contains(contentType, "application/x-yaml") {
 		blueprintYAML = body
 	} else {
-		http.Error(w, "Unsupported content type, expected text/yaml or application/x-yaml", http.StatusUnsupportedMediaType)
+		http.Error(w, "Unsupported content type, expected text/yaml or application/x-yaml",
+			http.StatusUnsupportedMediaType)
 		return
 	}
 
+	// Validate the custom blueprint YAML
 	validationErrors := models.ValidateCustomBlueprint(blueprintYAML)
 	if len(validationErrors) > 0 {
 		http.Error(w, fmt.Sprintf("Blueprint validation failed: %s", strings.Join(validationErrors, "; ")),
@@ -276,12 +284,7 @@ func (a *RESTApiService) ComposeBlueprint(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	username := r.URL.Query().Get("username")
-	if username == "" {
-		http.Error(w, "Username is required", http.StatusBadRequest)
-		return
-	}
-
+	// Get the user's blueprint scope
 	scope, errx := a.server.GetBlueprintScope(r.Context(), username, "", "")
 	if errx != nil {
 		var eresp identity.ErrorResponse
@@ -293,13 +296,14 @@ func (a *RESTApiService) ComposeBlueprint(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	var composedJSON []byte
+	// compose and convert to json
 	bp, err := a.server.bpManager.ComposeWithScope(blueprintYAML, scope)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("Failed to compose blueprint with scope: %v", err), http.StatusBadRequest)
 		return
 	}
 
+	var composedJSON []byte
 	composedJSON, err = json.Marshal(bp)
 	if err != nil {
 		http.Error(w, "Failed to process composed blueprint with scope", http.StatusInternalServerError)
