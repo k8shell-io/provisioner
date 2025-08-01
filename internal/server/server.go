@@ -58,6 +58,8 @@ func NewServer(configFile string) (*Server, error) {
 
 func (s *Server) GetBlueprintScope(ctx context.Context, username string, repoName string,
 	repoOwner string) (*blueprint.BlueprintScope, error) {
+	s.log.Debug().Msgf("Getting blueprint scope for user: %s, repo: %s, owner: %s",
+		username, repoName, repoOwner)
 	user, err := s.Identity.GetUser(ctx, username)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get user: %w", err)
