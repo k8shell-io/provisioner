@@ -121,6 +121,7 @@ func (a *RESTApiService) initializeRouter() *mux.Router {
 	// Define API endpoints
 	apiRouter.HandleFunc("/blueprints", a.GetBlueprints).Methods(http.MethodGet)
 	apiRouter.HandleFunc("/blueprints/{name}", a.GetBlueprint).Methods(http.MethodGet)
+	apiRouter.HandleFunc("/blueprints/{name}/raw", a.GetRawBlueprint).Methods(http.MethodGet)
 	apiRouter.HandleFunc("/blueprints/compose", a.ComposeBlueprint).Methods(http.MethodPost)
 	a.logRoutes(router)
 
@@ -214,37 +215,58 @@ func (a *RESTApiService) GetBlueprint(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
 	name := vars["name"]
 
-	var raw bool
-	qs := r.URL.Query()
-	if _raw, ok := qs["raw"]; ok {
-		raw = _raw[0] == "true"
+	username := r.URL.Query().Get("username")
+	if username == "" {
+		http.Error(w, "Username is required", http.StatusBadRequest)
+		return
+	}
+
+	// Get the user's blueprint scope
+	scope, errx := a.server.GetBlueprintScope(r.Context(), username, "", "")
+	if errx != nil {
+		var eresp identity.ErrorResponse
+		if errors.As(errx, &eresp) {
+			http.Error(w, eresp.Msg, eresp.Status)
+			return
+		}
+		http.Error(w, fmt.Sprintf("Failed to get user: %v", errx), http.StatusInternalServerError)
+		return
 	}
 
 	var data []byte
-	if !raw {
-		blueprint, err := a.server.bpManager.GetBlueprint(name, blueprint.TestScope())
-		if err != nil {
-			http.Error(w, fmt.Sprintf("Blueprint not found: %s", name), http.StatusNotFound)
-			return
-		}
+	blueprint, err := a.server.bpManager.GetBlueprint(name, scope)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Blueprint not found: %s", name), http.StatusNotFound)
+		return
+	}
 
-		data, err = json.Marshal(blueprint)
-		if err != nil {
-			http.Error(w, "Failed to marshal blueprint", http.StatusInternalServerError)
-			return
-		}
-	} else {
-		rawBp, err := a.server.bpManager.GetRawBlueprint(name)
-		if err != nil {
-			http.Error(w, fmt.Sprintf("Raw blueprint not found: %s", name), http.StatusNotFound)
-			return
-		}
+	data, err = json.Marshal(blueprint)
+	if err != nil {
+		http.Error(w, "Failed to marshal blueprint", http.StatusInternalServerError)
+		return
+	}
 
-		data, err = json.Marshal(rawBp)
-		if err != nil {
-			http.Error(w, "Failed to marshal raw blueprint", http.StatusInternalServerError)
-			return
-		}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(data)
+}
+
+// GetBlueprint handles the GET request for a specific blueprint
+func (a *RESTApiService) GetRawBlueprint(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	name := vars["name"]
+
+	var data []byte
+	rawBp, err := a.server.bpManager.GetRawBlueprint(name)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Raw blueprint not found: %s", name), http.StatusNotFound)
+		return
+	}
+
+	data, err = json.Marshal(rawBp)
+	if err != nil {
+		http.Error(w, "Failed to marshal raw blueprint", http.StatusInternalServerError)
+		return
 	}
 
 	w.Header().Set("Content-Type", "application/json")
