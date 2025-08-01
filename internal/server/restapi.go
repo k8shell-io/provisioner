@@ -230,7 +230,7 @@ func (a *RESTApiService) GetBlueprint(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		data, err = json.Marshal(rawBp.Node)
+		data, err = json.Marshal(rawBp)
 		if err != nil {
 			http.Error(w, "Failed to marshal raw blueprint", http.StatusInternalServerError)
 			return

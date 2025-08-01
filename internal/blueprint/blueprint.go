@@ -329,7 +329,7 @@ func (bm *BlueprintManager) GetBlueprint(name string, scope *BlueprintScope) (*m
 	return &bp, nil
 }
 
-func (bm *BlueprintManager) GetRawBlueprint(name string) (*RawBlueprint, error) {
+func (bm *BlueprintManager) GetRawBlueprint(name string) (interface{}, error) {
 	bm.mu.RLock()
 	defer bm.mu.RUnlock()
 
@@ -338,7 +338,51 @@ func (bm *BlueprintManager) GetRawBlueprint(name string) (*RawBlueprint, error) 
 		return nil, fmt.Errorf("blueprint %s not found", name)
 	}
 
-	return rawBp, nil
+	clonedNode := bm.cloneAndProcessCELNodes(rawBp.Node)
+
+	var temp interface{}
+	if err := clonedNode.Decode(&temp); err != nil {
+		return nil, fmt.Errorf("failed to decode raw blueprint: %w", err)
+	}
+
+	return temp, nil
+}
+
+// cloneAndProcessCELNodes recursively clones YAML nodes and adds cel:: prefix to !!cel tagged values
+func (bm *BlueprintManager) cloneAndProcessCELNodes(node *yaml.Node) *yaml.Node {
+	if node == nil {
+		return nil
+	}
+
+	cloned := &yaml.Node{
+		Kind:        node.Kind,
+		Style:       node.Style,
+		Tag:         node.Tag,
+		Value:       node.Value,
+		Anchor:      node.Anchor,
+		Alias:       node.Alias,
+		HeadComment: node.HeadComment,
+		LineComment: node.LineComment,
+		FootComment: node.FootComment,
+		Line:        node.Line,
+		Column:      node.Column,
+	}
+
+	if node.Tag == "!cel" {
+		if node.Kind == yaml.ScalarNode {
+			cloned.Tag = "!!str"
+			cloned.Value = "!cel:" + node.Value
+		}
+	}
+
+	if len(node.Content) > 0 {
+		cloned.Content = make([]*yaml.Node, len(node.Content))
+		for i, child := range node.Content {
+			cloned.Content[i] = bm.cloneAndProcessCELNodes(child)
+		}
+	}
+
+	return cloned
 }
 
 // ListBlueprintNames returns all available blueprint names.
