@@ -262,10 +262,17 @@ func (a *RESTApiService) ComposeBlueprint(w http.ResponseWriter, r *http.Request
 	}
 
 	var blueprintYAML []byte
-	if strings.Contains(contentType, "text/yaml") {
+	if strings.Contains(contentType, "text/yaml") || strings.Contains(contentType, "application/x-yaml") {
 		blueprintYAML = body
 	} else {
-		http.Error(w, "Unsupported content type, expected text/yaml", http.StatusUnsupportedMediaType)
+		http.Error(w, "Unsupported content type, expected text/yaml or application/x-yaml", http.StatusUnsupportedMediaType)
+		return
+	}
+
+	validationErrors := models.ValidateCustomBlueprint(blueprintYAML)
+	if len(validationErrors) > 0 {
+		http.Error(w, fmt.Sprintf("Blueprint validation failed: %s", strings.Join(validationErrors, "; ")),
+			http.StatusBadRequest)
 		return
 	}
 

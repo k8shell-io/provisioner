@@ -1,5 +1,13 @@
 package models
 
+import (
+	"bytes"
+	"fmt"
+
+	"github.com/go-playground/validator/v10"
+	"gopkg.in/yaml.v3"
+)
+
 // Blueprint represents a single blueprint configuration
 type Blueprint struct {
 	Name              string              `yaml:"name" validate:"required,min=1,max=30"`
@@ -23,15 +31,16 @@ type Blueprint struct {
 
 // CustomBlueprint represents a custom blueprint configuration
 type CustomBlueprint struct {
-	Template       string              `yaml:"template"`
-	Shell          string              `yaml:"shell" validate:"required"`
-	Sudo           bool                `yaml:"sudo" default:"false"`
-	Image          string              `yaml:"image" validate:"required"`
+	Name           string              `yaml:"name,omitempty"`
+	Template       string              `yaml:"template" validate:"required"`
+	Shell          string              `yaml:"shell,omitempty"`
+	Sudo           bool                `yaml:"sudo,omitempty"`
+	Image          string              `yaml:"image,omitempty"`
 	Env            map[string]string   `yaml:"env,omitempty"`
 	PortForwarding []string            `yaml:"portForwarding,omitempty"`
-	Network        Network             `yaml:"network" validate:"required"`
-	Resources      Resources           `yaml:"resources" validate:"required"`
-	Storages       map[string]Storage  `yaml:"storages" validate:"required,min=1,dive"`
+	Network        Network             `yaml:"network,omitempty"`
+	Resources      Resources           `yaml:"resources,omitempty"`
+	Storages       map[string]Storage  `yaml:"storages,omitempty"`
 	InitScripts    []map[string]string `yaml:"initScripts,omitempty"`
 }
 
@@ -114,4 +123,47 @@ type Repo struct {
 // Validate validates the blueprint and returns user-friendly errors
 func (b *Blueprint) Validate() Validator {
 	return NewValidator(b)
+}
+
+func ValidateCustomBlueprint(blueprintYAML []byte) []string {
+	var fullYAML map[string]interface{}
+	if err := yaml.Unmarshal(blueprintYAML, &fullYAML); err != nil {
+		return []string{
+			fmt.Sprintf("Invalid YAML format: %v", err),
+		}
+	}
+
+	var blueprintData, exists = fullYAML["blueprint"]
+	if !exists {
+		return []string{
+			"Blueprint data is missing in the YAML",
+		}
+	}
+
+	blueprintOnlyYAML, err := yaml.Marshal(blueprintData)
+	if err != nil {
+		return []string{
+			fmt.Sprintf("Failed to process blueprint data: %v", err),
+		}
+	}
+
+	var customBp CustomBlueprint
+	decoder := yaml.NewDecoder(bytes.NewReader(blueprintOnlyYAML))
+	decoder.KnownFields(true)
+	if err := decoder.Decode(&customBp); err != nil {
+		return []string{
+			fmt.Sprintf("Failed to decode blueprint: %v", err),
+		}
+	}
+
+	validate := validator.New()
+	if err := validate.Struct(customBp); err != nil {
+		var validationErrors []string
+		for _, err := range err.(validator.ValidationErrors) {
+			validationErrors = append(validationErrors,
+				fmt.Sprintf("Field '%s' failed validation: %s", err.Field(), err.Tag()))
+		}
+		return validationErrors
+	}
+	return nil
 }
