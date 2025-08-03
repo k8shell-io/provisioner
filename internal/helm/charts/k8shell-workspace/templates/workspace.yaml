@@ -196,24 +196,24 @@ spec:
         path: __init_{{ printf "%02d" (add $index 1) }}_{{ $key | replace "&" "__bg" | replace "@" "__flag" }}
           {{- end }}
         {{- end }}
-  {{- range $storage := .Values.storages }}
+  {{- range $storageName, $storage := .Values.storages }}
   {{- if $storage.enabled }}
-  - name: storage-{{ $storage.name }}
+  - name: storage-{{ $storageName }}
     {{- if $storage.memory }}
     emptyDir:
       medium: Memory
       sizeLimit: {{ $storage.size }}
     {{- else }}
-    persistentVolumeClaim:    
-      claimName: pvc-{{ $.Values.__workspace__ }}-{{ $storage.name }}
+    persistentVolumeClaim:
+      claimName: pvc-{{ $.Values.__workspace__ }}-{{ $storageName }}
     {{- end }}
   {{- end }}
   {{- end }}
-  {{- range $storage := .Values.docker.storages }}
+  {{- range $storageName, $storage := .Values.docker.storages }}
   {{- if $storage.enabled }}
-  - name: storage-docker-{{ $storage.name }}
-    persistentVolumeClaim:    
-      claimName: pvc-{{ $.Values.__workspace__ }}-docker-{{ $storage.name }}
+  - name: storage-docker-{{ $storageName }}
+    persistentVolumeClaim:
+      claimName: pvc-{{ $.Values.__workspace__ }}-docker-{{ $storageName }}
   {{- end }}
   {{- end }}
   {{- if .Values.extFiles }}

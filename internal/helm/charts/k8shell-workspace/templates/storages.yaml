@@ -1,12 +1,12 @@
-{{- range $storage := .Values.storages }}
+{{- range $storageName, $storage := .Values.storages }}
 {{- if and $storage.enabled (not $storage.memory) }}
 ---
-  {{- include "pvc-template" (dict "storage" $storage "pvcPrefix" "" "ctx" $ ) }}
+  {{- include "pvc-template" (dict "name" $storageName "storage" $storage "pvcPrefix" "" "ctx" $ ) }}
 {{- end }}
 {{- end }}
-{{- range $storage := .Values.docker.storages }}
+{{- range $storageName, $storage := .Values.docker.storages }}
 {{- if $storage.enabled }}
 ---
-  {{- include "pvc-template" (dict "storage" $storage "pvcPrefix" "docker-" "ctx" $ ) }}
+  {{- include "pvc-template" (dict "name" $storageName "storage" $storage "pvcPrefix" "docker-" "ctx" $ ) }}
 {{- end }}
 {{- end }}

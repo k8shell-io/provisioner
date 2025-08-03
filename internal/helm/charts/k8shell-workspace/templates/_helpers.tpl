@@ -39,7 +39,7 @@ apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
   namespace: "{{ .ctx.Values.__namespace__ }}"
-  name: "pvc-{{ .ctx.Values.__workspace__ }}-{{ .pvcPrefix }}{{ .storage.name }}"
+  name: "pvc-{{ .ctx.Values.__workspace__ }}-{{ .pvcPrefix }}{{ .name }}"
   {{- if .storage.annotations }}
   annotations:
   {{- range $key, $value := .storage.annotations }}
