@@ -1,0 +1,31 @@
+{{- if .Values.extFiles }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Values.__workspace__ }}-main-ext-files
+  namespace: {{ .Values.__namespace__ }}
+  labels:
+    {{- include "workspace.labels" . | nindent 4 }}  
+    type: main-ext-files
+data:
+{{- range $path, $content := .Values.extFiles }}
+  {{ $path | replace "/" "__" | quote }}: |
+{{ $content | indent 4 }}
+{{- end }}
+{{- end }}
+{{- if .Values.docker.extFiles }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Values.__workspace__ }}-docker-ext-files
+  namespace: {{ .Values.__namespace__ }}
+  labels:
+    {{ include "workspace.labels" . | nindent 4 }}  
+    type: docker-ext-files
+data:
+{{- range $path, $content := .Values.docker.extFiles }}
+  {{ $path | replace "/" "__" | quote }}: |
+{{ $content | indent 4 }}
+{{- end }}
+{{- end }}

@@ -29,9 +29,9 @@ type RawBlueprint struct {
 }
 
 type BlueprintScope struct {
-	Blueprint string        `yaml:"blueprint"`
-	User      identity.User `yaml:"user"`
-	Repo      models.Repo   `yaml:"repo"`
+	Blueprint string         `yaml:"blueprint"`
+	User      *identity.User `yaml:"user"`
+	Repo      models.Repo    `yaml:"repo"`
 }
 
 func (bs *BlueprintScope) ToMap() (map[string]any, error) {
@@ -80,7 +80,7 @@ type BlueprintManager struct {
 func TestScope() *BlueprintScope {
 	return &BlueprintScope{
 		Blueprint: "testblueprint",
-		User: identity.User{
+		User: &identity.User{
 			Username:     "testuser",
 			IsValid:      true,
 			ExpiresAt:    time.Now().Add(24 * time.Hour),

@@ -1,0 +1,11 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Values.__workspace__ }}-k8shelld-config
+  namespace: {{ .Values.__namespace__ }}
+  labels:
+    {{- include "workspace.labels" . | nindent 4 }}  
+    type: config-init
+data:
+  config.yaml: |
+    {{ .Values.__k8shelldconfig__ }} 

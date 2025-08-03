@@ -1,0 +1,12 @@
+{{- range $storage := .Values.storages }}
+{{- if and $storage.enabled (not $storage.memory) }}
+---
+  {{- include "pvc-template" (dict "storage" $storage "pvcPrefix" "" "ctx" $ ) }}
+{{- end }}
+{{- end }}
+{{- range $storage := .Values.docker.storages }}
+{{- if $storage.enabled }}
+---
+  {{- include "pvc-template" (dict "storage" $storage "pvcPrefix" "docker-" "ctx" $ ) }}
+{{- end }}
+{{- end }}

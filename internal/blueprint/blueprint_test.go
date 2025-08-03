@@ -39,7 +39,7 @@ func setupTestEnvironment(t *testing.T) func() {
 // createTestScope creates a test scope with user data
 func createTestScope(username string, roles []identity.Role) *blueprint.BlueprintScope {
 	scope := blueprint.TestScope()
-	scope.User = identity.User{
+	scope.User = &identity.User{
 		Username: username,
 		Roles:    roles,
 	}

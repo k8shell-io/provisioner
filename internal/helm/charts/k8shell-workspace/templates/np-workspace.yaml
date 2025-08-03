@@ -1,0 +1,44 @@
+{{- if eq .Values.networkPolicy "workspace" }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: np-{{ .Values.__workspace__ }}-workspace
+  namespace: {{ .Values.__namespace__ }}
+  labels:
+    {{- include "workspace.labels" . | nindent 4 }}  
+spec:
+  podSelector:
+    matchLabels:
+      app: k8shell-workspace
+      org: {{ .Values.__organization__ }}
+      workspace: {{ .Values.__workspace__ }}
+  policyTypes:
+    - Ingress
+    - Egress
+
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app: k8shell-workspace
+              org: {{ .Values.__organization__ }}
+              blueprint: {{ .Values.__blueprint__ }}
+        - podSelector:
+            matchLabels:
+              app: k8shell-proxy 
+  egress:
+{{- if .Values.allow_egress }}
+{{- range $cidr := .Values.allow_egress }}
+    - to:
+        - ipBlock:
+            cidr: {{ $cidr }}
+{{- end }}
+{{- end }}
+    - to:
+        - podSelector:
+            matchLabels:
+              app: k8shell-workspace
+              org: {{ .Values.__organization__ }}
+              blueprint: {{ .Values.__blueprint__ }}
+{{ include "default.egress" . | nindent 4 }}  
+{{- end }}

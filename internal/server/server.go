@@ -8,6 +8,7 @@ import (
 
 	identity "github.com/k8shell-io/identity/pkg/client"
 	"github.com/k8shell-io/provisioner/internal/blueprint"
+	"github.com/k8shell-io/provisioner/internal/helm"
 	"github.com/k8shell-io/provisioner/internal/log"
 	"github.com/k8shell-io/provisioner/pkg/models"
 	"github.com/rs/zerolog"
@@ -19,6 +20,7 @@ type Server struct {
 	Identity       *identity.Client
 	RESTApiService *RESTApiService
 	bpManager      *blueprint.BlueprintManager
+	helm           *helm.Client
 }
 
 func NewServer(configFile string) (*Server, error) {
@@ -53,6 +55,12 @@ func NewServer(configFile string) (*Server, error) {
 		return nil, fmt.Errorf("failed to create REST API service: %w", err)
 	}
 
+	helm, err := helm.NewClient()
+	if err != nil {
+		return nil, fmt.Errorf("failed to create Helm client: %w", err)
+	}
+	server.helm = helm
+
 	return server, nil
 }
 
@@ -73,7 +81,7 @@ func (s *Server) GetBlueprintScope(ctx context.Context, username string, repoNam
 	}
 
 	scope := &blueprint.BlueprintScope{
-		User: *user,
+		User: user,
 		Repo: models.Repo{
 			Name:  repo,
 			Owner: owner,

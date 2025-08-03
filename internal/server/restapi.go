@@ -25,6 +25,7 @@ import (
 	identity "github.com/k8shell-io/identity/pkg/client"
 	"github.com/k8shell-io/provisioner/internal/blueprint"
 	"github.com/k8shell-io/provisioner/internal/log"
+	"github.com/k8shell-io/provisioner/internal/workspace"
 	"github.com/k8shell-io/provisioner/pkg/models"
 	"github.com/rs/zerolog"
 	httpSwagger "github.com/swaggo/http-swagger"
@@ -118,11 +119,14 @@ func (a *RESTApiService) initializeRouter() *mux.Router {
 	apiRouter.Use(a.apiKeyMiddleware)
 	apiRouter.Use(a.loggingMiddleware)
 
-	// Define API endpoints
+	// Blueprint routes
 	apiRouter.HandleFunc("/blueprints", a.GetBlueprints).Methods(http.MethodGet)
 	apiRouter.HandleFunc("/blueprints/{name}", a.GetBlueprint).Methods(http.MethodGet)
 	apiRouter.HandleFunc("/blueprints/{name}/raw", a.GetRawBlueprint).Methods(http.MethodGet)
 	apiRouter.HandleFunc("/blueprints/compose", a.ComposeBlueprint).Methods(http.MethodPost)
+
+	// Workspace routes
+	apiRouter.HandleFunc("/workspaces/template", a.TemplateWorkspace).Methods(http.MethodPost)
 	a.logRoutes(router)
 
 	router.NotFoundHandler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -336,4 +340,55 @@ func (a *RESTApiService) ComposeBlueprint(w http.ResponseWriter, r *http.Request
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(composedJSON)
 
+}
+
+// TemplateWorkspace handles POST /api/v1/workspaces/template
+func (a *RESTApiService) TemplateWorkspace(w http.ResponseWriter, r *http.Request) {
+	username := r.URL.Query().Get("username")
+	blueprintName := r.URL.Query().Get("blueprint")
+
+	if username == "" {
+		http.Error(w, "username query parameter is required", http.StatusBadRequest)
+		return
+	}
+
+	if blueprintName == "" {
+		http.Error(w, "blueprint query parameter is required", http.StatusBadRequest)
+		return
+	}
+
+	// Get the user's blueprint scope
+	scope, errx := a.server.GetBlueprintScope(r.Context(), username, "", "")
+	if errx != nil {
+		var eresp identity.ErrorResponse
+		if errors.As(errx, &eresp) {
+			http.Error(w, eresp.Msg, eresp.Status)
+			return
+		}
+		http.Error(w, fmt.Sprintf("Failed to get user: %v", errx), http.StatusInternalServerError)
+		return
+	}
+
+	blueprint, err := a.server.bpManager.GetBlueprint(blueprintName, scope)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Blueprint not found: %s", blueprintName), http.StatusNotFound)
+		return
+	}
+
+	ws, err := workspace.NewWorkspace(blueprint, scope.User, a.server.helm)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Failed to create workspace: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	renderedManifests, err := ws.Template(r.Context())
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Failed to render workspace templates: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	// Return rendered YAML manifests
+	w.Header().Set("Content-Type", "application/x-yaml")
+	w.WriteHeader(http.StatusOK)
+	w.Write([]byte(renderedManifests))
 }

@@ -1,0 +1,49 @@
+{{- if eq .Values.networkPolicy "system" }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: np-{{ .Values.__workspace__ }}
+  namespace: {{ .Values.__namespace__ }}
+  labels:
+    {{- include "workspace.labels" . | nindent 4 }}  
+spec:
+  podSelector:
+    matchLabels:
+      app: k8shell-workspace
+      org: {{ .Values.__organization__ }}
+      workspace: {{ .Values.__workspace__ }}
+  policyTypes:
+    - Ingress
+    - Egress
+
+  ingress:
+    - from:
+        - namespaceSelector: {}
+        - ipBlock:
+            cidr: 0.0.0.0/0
+  egress:
+    - to:
+        - namespaceSelector: {}
+        - ipBlock:
+            cidr: 0.0.0.0/0
+---
+{{- if .Capabilities.APIVersions.Has "cilium.io/v2/CiliumNetworkPolicy" }}
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: cilium-np-{{ .Values.__workspace__ }}
+  namespace: {{ .Values.__namespace__ }}
+spec:
+  endpointSelector:
+    matchLabels:
+      app: k8shell-workspace
+      org: {{ .Values.__organization__ }}
+      workspace: {{ .Values.__workspace__ }}
+  egress:
+    - toEntities:
+        - world
+        - cluster # this allows to access kubernetes control plane services
+  egressDeny:
+    - {}
+{{- end }}
+{{- end }}

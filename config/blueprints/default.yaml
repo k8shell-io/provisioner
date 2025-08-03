@@ -9,7 +9,6 @@ blueprints:
     
     k8shelld: 
       image: ${WORKSPACE_REGISTRY}/k8shell-base/k8shelld:v0.10.1-35
-      imagePullSecret: ${WORKSPACE_REGCRED}
       imagePullPolicy: Always
       encryptConfig: !cel "!(user.roles.exists(r, r in ['org-admin', 'admin', 'workspace-admin']))"
       ignoreOrphans:
@@ -43,7 +42,7 @@ blueprints:
 
       # group id used in the dind image to create the docker socket; when the dind image is rootless
       # the actual group id will be 100000 + group_id - 1 where 100000 is subordinate group id
-      group_id: 999
+      groupId: 999
 
       # subordinate group id used in the dind image; 
       # this should be set to 100000 when the dind image is rootless otehrwise it should be set to 0

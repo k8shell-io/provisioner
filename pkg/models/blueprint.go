@@ -47,7 +47,6 @@ type CustomBlueprint struct {
 // K8shelld represents k8shelld configuration
 type K8shelld struct {
 	Image           string   `yaml:"image" validate:"required"`
-	ImagePullSecret string   `yaml:"imagePullSecret,omitempty"`
 	ImagePullPolicy string   `yaml:"imagePullPolicy,omitempty" validate:"omitempty,oneof=Always Never IfNotPresent"`
 	EncryptConfig   bool     `yaml:"encryptConfig,omitempty"`
 	IgnoreOrphans   []string `yaml:"ignoreOrphans,omitempty"`
@@ -80,7 +79,7 @@ type Docker struct {
 	Enabled        bool              `yaml:"enabled"`
 	Image          string            `yaml:"image" validate:"required_if=Enabled true"`
 	Resources      Resources         `yaml:"resources" validate:"required_if=Enabled true"`
-	GroupID        int               `yaml:"group_id" validate:"min=0,max=65535"`
+	GroupID        int               `yaml:"groupId" validate:"min=0,max=65535"`
 	SubGID         int               `yaml:"subgid" validate:"min=0"`
 	ParentStorages bool              `yaml:"parentStorages"`
 	ExtFiles       map[string]string `yaml:"extFiles,omitempty"`
@@ -123,6 +122,21 @@ type Repo struct {
 // Validate validates the blueprint and returns user-friendly errors
 func (b *Blueprint) Validate() Validator {
 	return NewValidator(b)
+}
+
+// Values converts the Blueprint to Helm values
+func (b *Blueprint) Values() (map[string]interface{}, error) {
+	yamlBytes, err := yaml.Marshal(b)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal blueprint to YAML: %w", err)
+	}
+
+	var values map[string]interface{}
+	if err := yaml.Unmarshal(yamlBytes, &values); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal YAML to map: %w", err)
+	}
+
+	return values, nil
 }
 
 func ValidateCustomBlueprint(blueprintYAML []byte) []string {

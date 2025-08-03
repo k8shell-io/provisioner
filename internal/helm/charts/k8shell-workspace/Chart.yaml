@@ -1,0 +1,5 @@
+apiVersion: v2
+name: k8shell-workspace
+description: k8shell workspace chart
+version: 1.0.0
+appVersion: 0.0.0
