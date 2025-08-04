@@ -3,10 +3,6 @@ blueprint:
   template: default
   image: ${WORKSPACE_REGISTRY}/workspaces/dev:0.8-1.9
 
-  credentialHelpers:
-    docker:
-      enabled: true
-
   docker:
     enabled: true
 

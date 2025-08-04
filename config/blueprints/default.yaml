@@ -56,21 +56,6 @@ blueprints:
         # the private CA certificate so that docker pull, push works
         /etc/ssl/certs/private-ca.pem: !file private-ca.pem
 
-    credentialHelpers:
-      docker:
-        enabled: false
-        servers:
-        - address: ${WORKSPACE_REGISTRY}
-          username: ${WORKSPACE_REGISTRY_USERNAME}
-          password: ${WORKSPACE_REGISTRY_PASSWORD}
-
-      # git:
-      #   enabled: false
-      #   servers:
-      #   - address: github.com
-      #     username: none
-      #     password: gh_12345
-
     # list of storages in the workspace
     storages:
       home:

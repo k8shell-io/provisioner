@@ -10,23 +10,22 @@ import (
 
 // Blueprint represents a single blueprint configuration
 type Blueprint struct {
-	Name              string              `yaml:"name" validate:"required,min=1,max=30"`
-	Template          string              `yaml:"template"`
-	Shell             string              `yaml:"shell" validate:"required"`
-	Sudo              bool                `yaml:"sudo" default:"false"`
-	Image             string              `yaml:"image" validate:"required"`
-	ImagePullSecret   string              `yaml:"imagePullSecret,omitempty"`
-	ImagePullPolicy   string              `yaml:"imagePullPolicy,omitempty" validate:"omitempty,oneof=Always Never IfNotPresent"`
-	K8shelld          K8shelld            `yaml:"k8shelld" validate:"required"`
-	Env               map[string]string   `yaml:"env,omitempty"`
-	PortForwarding    []string            `yaml:"portForwarding,omitempty"`
-	Network           Network             `yaml:"network" validate:"required"`
-	Resources         Resources           `yaml:"resources" validate:"required"`
-	Docker            Docker              `yaml:"docker" validate:"required"`
-	CredentialHelpers CredentialHelpers   `yaml:"credentialHelpers"`
-	Storages          map[string]Storage  `yaml:"storages" validate:"required,min=1,dive"`
-	InitScripts       []map[string]string `yaml:"initScripts,omitempty"`
-	ServiceAccount    string              `yaml:"serviceAccount,omitempty"`
+	Name            string              `yaml:"name" validate:"required,min=1,max=30"`
+	Template        string              `yaml:"template"`
+	Shell           string              `yaml:"shell" validate:"required"`
+	Sudo            bool                `yaml:"sudo" default:"false"`
+	Image           string              `yaml:"image" validate:"required"`
+	ImagePullSecret string              `yaml:"imagePullSecret,omitempty"`
+	ImagePullPolicy string              `yaml:"imagePullPolicy,omitempty" validate:"omitempty,oneof=Always Never IfNotPresent"`
+	K8shelld        K8shelld            `yaml:"k8shelld" validate:"required"`
+	Env             map[string]string   `yaml:"env,omitempty"`
+	PortForwarding  []string            `yaml:"portForwarding,omitempty"`
+	Network         Network             `yaml:"network" validate:"required"`
+	Resources       Resources           `yaml:"resources" validate:"required"`
+	Docker          Docker              `yaml:"docker" validate:"required"`
+	Storages        map[string]Storage  `yaml:"storages" validate:"required,min=1,dive"`
+	InitScripts     []map[string]string `yaml:"initScripts,omitempty"`
+	ServiceAccount  string              `yaml:"serviceAccount,omitempty"`
 }
 
 // CustomBlueprint represents a custom blueprint configuration
@@ -83,25 +82,6 @@ type Docker struct {
 	SubGID         int               `yaml:"subgid" validate:"min=0"`
 	ParentStorages bool              `yaml:"parentStorages"`
 	ExtFiles       map[string]string `yaml:"extFiles,omitempty"`
-}
-
-// CredentialHelpers represents credential helper configuration
-type CredentialHelpers struct {
-	Docker ServerCredentials `yaml:"docker,omitempty"`
-	Git    ServerCredentials `yaml:"git,omitempty"`
-}
-
-// ServerCredentials represents server credential configuration
-type ServerCredentials struct {
-	Enabled bool     `yaml:"enabled"`
-	Servers []Server `yaml:"servers,omitempty" validate:"dive"`
-}
-
-// Server represents a server configuration
-type Server struct {
-	Address  string `yaml:"address" validate:"required"`
-	Username string `yaml:"username" validate:"required"`
-	Password string `yaml:"password" validate:"required"`
 }
 
 // Storage represents storage configuration

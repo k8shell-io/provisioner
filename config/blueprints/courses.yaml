@@ -34,9 +34,5 @@ blueprints:
       cpu: 8
       memory: 16Gi
 
-    credentialHelpers:
-      docker:
-        enabled: !cel "user.username in ['alice', 'kuchajar', 'vitvatom']"
-
     docker:
       enabled: true
