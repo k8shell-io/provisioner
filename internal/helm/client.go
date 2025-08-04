@@ -207,14 +207,15 @@ func (c *Client) GetRelease(releaseName, namespace string) (*release.Release, er
 }
 
 // Uninstall removes a Helm release from a specific namespace
-func (c *Client) Uninstall(releaseName, namespace string, wait bool) error {
+func (c *Client) Uninstall(releaseName, namespace string, timeout int) error {
 	actionConfig, err := c.createActionConfig(namespace)
 	if err != nil {
 		return err
 	}
 
 	uninstall := action.NewUninstall(actionConfig)
-	uninstall.Wait = wait
+	uninstall.Wait = true
+	uninstall.Timeout = time.Duration(timeout) * time.Second
 	_, err = uninstall.Run(releaseName)
 	if err != nil {
 		return fmt.Errorf("failed to uninstall release %s from namespace %s: %w", releaseName, namespace, err)

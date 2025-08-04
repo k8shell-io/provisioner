@@ -158,14 +158,133 @@ func (w *Workspace) GetStatus(ctx context.Context) (*WorkspaceStatus, error) {
 		PodIP:   pod.Status.PodIP,
 	}
 
-	for _, condition := range pod.Status.Conditions {
-		if condition.Status == corev1.ConditionFalse && condition.Message != "" {
-			status.Message = condition.Message
-			break
+	status.Message = w.getPodStatusMessage(pod)
+	return status, nil
+}
+
+// getPodStatusMessage extracts detailed status information from pod
+func (w *Workspace) getPodStatusMessage(pod *corev1.Pod) string {
+	phase := pod.Status.Phase
+
+	switch phase {
+	case corev1.PodPending:
+		return w.getPendingMessage(pod)
+	case corev1.PodRunning:
+		return w.getRunningMessage(pod)
+	case corev1.PodFailed:
+		return w.getFailedMessage(pod)
+	case corev1.PodSucceeded:
+		return "Pod completed successfully"
+	default:
+		return string(phase)
+	}
+}
+
+// getPendingMessage gets detailed message for pending pods
+func (w *Workspace) getPendingMessage(pod *corev1.Pod) string {
+	for _, containerStatus := range pod.Status.ContainerStatuses {
+		if containerStatus.State.Waiting != nil {
+			waiting := containerStatus.State.Waiting
+			switch waiting.Reason {
+			case "ImagePullBackOff":
+				return fmt.Sprintf("Image pull failed: %s", waiting.Message)
+			case "ErrImagePull":
+				return fmt.Sprintf("Error pulling image: %s", waiting.Message)
+			case "ContainerCreating":
+				return "Container is being created"
+			case "PodInitializing":
+				return "Pod is initializing"
+			default:
+				if waiting.Message != "" {
+					return fmt.Sprintf("%s: %s", waiting.Reason, waiting.Message)
+				}
+				return waiting.Reason
+			}
 		}
 	}
 
-	return status, nil
+	// Check init container statuses
+	for _, containerStatus := range pod.Status.InitContainerStatuses {
+		if containerStatus.State.Waiting != nil {
+			waiting := containerStatus.State.Waiting
+			if waiting.Message != "" {
+				return fmt.Sprintf("Init container %s: %s", waiting.Reason, waiting.Message)
+			}
+			return fmt.Sprintf("Init container: %s", waiting.Reason)
+		}
+	}
+
+	// Check pod conditions for scheduling issues
+	for _, condition := range pod.Status.Conditions {
+		if condition.Type == corev1.PodScheduled && condition.Status == corev1.ConditionFalse {
+			return fmt.Sprintf("Scheduling failed: %s", condition.Message)
+		}
+		if condition.Status == corev1.ConditionFalse && condition.Message != "" {
+			return fmt.Sprintf("%s: %s", condition.Type, condition.Message)
+		}
+	}
+
+	// Fallback to pod status reason/message
+	if pod.Status.Reason != "" {
+		if pod.Status.Message != "" {
+			return fmt.Sprintf("%s: %s", pod.Status.Reason, pod.Status.Message)
+		}
+		return pod.Status.Reason
+	}
+
+	return "Pod is pending"
+}
+
+// getRunningMessage gets message for running pods
+func (w *Workspace) getRunningMessage(pod *corev1.Pod) string {
+	// Check if all containers are ready
+	readyCount := 0
+	totalCount := len(pod.Status.ContainerStatuses)
+
+	for _, containerStatus := range pod.Status.ContainerStatuses {
+		if containerStatus.Ready {
+			readyCount++
+		} else if containerStatus.State.Waiting != nil {
+			waiting := containerStatus.State.Waiting
+			return fmt.Sprintf("Container not ready: %s", waiting.Reason)
+		} else if containerStatus.State.Terminated != nil {
+			terminated := containerStatus.State.Terminated
+			return fmt.Sprintf("Container terminated: %s", terminated.Reason)
+		}
+	}
+
+	if readyCount == totalCount {
+		return "All containers are ready"
+	}
+
+	return fmt.Sprintf("Containers ready: %d/%d", readyCount, totalCount)
+}
+
+// getFailedMessage gets message for failed pods
+func (w *Workspace) getFailedMessage(pod *corev1.Pod) string {
+	// Check container statuses for failure details
+	for _, containerStatus := range pod.Status.ContainerStatuses {
+		if containerStatus.State.Terminated != nil {
+			terminated := containerStatus.State.Terminated
+			if terminated.Message != "" {
+				return fmt.Sprintf("Container failed: %s - %s", terminated.Reason, terminated.Message)
+			}
+			return fmt.Sprintf("Container failed: %s (exit code: %d)", terminated.Reason, terminated.ExitCode)
+		}
+	}
+
+	// Check pod conditions
+	for _, condition := range pod.Status.Conditions {
+		if condition.Status == corev1.ConditionFalse && condition.Message != "" {
+			return condition.Message
+		}
+	}
+
+	if pod.Status.Message != "" {
+		return pod.Status.Message
+	}
+
+	return "Pod failed"
 }
 
 func (w *Workspace) IsInstalled(ctx context.Context) (bool, error) {

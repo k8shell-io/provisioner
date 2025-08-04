@@ -23,14 +23,14 @@ func (e EventMessage) String() string {
 }
 
 type ProvisionOptions struct {
-	Timeout  time.Duration
+	Timeout  int
 	Messages chan EventMessage
 }
 
 func (w *Workspace) Provision(ctx context.Context, opts *ProvisionOptions) (*WorkspaceStatus, error) {
 	if opts == nil {
 		opts = &ProvisionOptions{
-			Timeout:  5 * time.Minute,
+			Timeout:  20,
 			Messages: nil,
 		}
 	}
@@ -56,8 +56,15 @@ func (w *Workspace) Provision(ctx context.Context, opts *ProvisionOptions) (*Wor
 			return status, nil
 		}
 
+		// if status.Status == "Pending" {
+		// 	w.log.Info().Msgf("Workspace %s is pending, checking conditions", w.Name())
+		// 	if status.Message != "" {
+		// 		return status, nil
+		// 	}
+		// }
+
 		w.log.Info().Msgf("Workspace %s already exists but is not running, attempting to reinstall", w.Name())
-		if err := w.client.Uninstall(w.Name(), w.Namespace(), true); err != nil {
+		if err := w.client.Uninstall(w.Name(), w.Namespace(), int(opts.Timeout)); err != nil {
 			return nil, fmt.Errorf("failed to delete workspace: %w", err)
 		}
 	}
@@ -68,7 +75,7 @@ func (w *Workspace) Provision(ctx context.Context, opts *ProvisionOptions) (*Wor
 		Namespace:   w.Namespace(),
 		Values:      values,
 		Wait:        false,
-		Timeout:     int(opts.Timeout.Seconds()),
+		Timeout:     opts.Timeout,
 		Labels:      w.Labels(),
 		AppVersion:  w.getK8shelldVersion(),
 	})
@@ -90,12 +97,12 @@ func (w *Workspace) Provision(ctx context.Context, opts *ProvisionOptions) (*Wor
 	return nil, fmt.Errorf("workspace failed to reach running state: %s", status.Status)
 }
 
-// waitForPodRunning waits for the workspace pod to be in running state
+// waitForPodRunning with quick failure detection
 func (w *Workspace) waitForPodRunning(ctx context.Context, startTime time.Time,
 	opts *ProvisionOptions) (*WorkspaceStatus, error) {
 
 	podName := w.Name()
-	timeout := time.NewTimer(opts.Timeout)
+	timeout := time.NewTimer(time.Duration(opts.Timeout) * time.Second)
 	defer timeout.Stop()
 
 	eventStop := make(chan struct{})
@@ -130,7 +137,7 @@ func (w *Workspace) waitForPodRunning(ctx context.Context, startTime time.Time,
 
 			case "Pending":
 				// Check if we've been pending too long
-				if time.Since(startTime) > opts.Timeout {
+				if time.Since(startTime) > time.Duration(opts.Timeout)*time.Second {
 					return status, fmt.Errorf("pod %s has been pending for too long: %s",
 						podName, status.Message)
 				}

@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -401,6 +402,17 @@ func (a *RESTApiService) ProvisionWorkspace(w http.ResponseWriter, r *http.Reque
 	blueprintName := r.URL.Query().Get("blueprint")
 	stream := r.URL.Query().Get("stream") == "true"
 
+	timeoutStr := r.URL.Query().Get("timeout")
+	timeout := 20
+	if timeoutStr != "" {
+		var err error
+		timeout, err = strconv.Atoi(timeoutStr)
+		if err != nil || timeout <= 0 {
+			http.Error(w, "Invalid timeout value", http.StatusBadRequest)
+			return
+		}
+	}
+
 	if username == "" {
 		http.Error(w, "username query parameter is required", http.StatusBadRequest)
 		return
@@ -435,14 +447,15 @@ func (a *RESTApiService) ProvisionWorkspace(w http.ResponseWriter, r *http.Reque
 	}
 
 	if stream {
-		a.provisionWithStreaming(w, r, ws)
+		a.provisionWithStreaming(w, r, ws, timeout)
 	} else {
-		a.provisionSync(w, r, ws)
+		a.provisionSync(w, r, ws, timeout)
 	}
 }
 
 // provisionWithStreaming handles workspace provisioning with streaming updates
-func (a *RESTApiService) provisionWithStreaming(w http.ResponseWriter, r *http.Request, ws *workspace.Workspace) {
+func (a *RESTApiService) provisionWithStreaming(w http.ResponseWriter, r *http.Request,
+	ws *workspace.Workspace, timeout int) {
 	w.Header().Set("Content-Type", "application/x-ndjson")
 	w.Header().Set("Transfer-Encoding", "chunked")
 	w.Header().Set("Cache-Control", "no-cache")
@@ -472,7 +485,7 @@ func (a *RESTApiService) provisionWithStreaming(w http.ResponseWriter, r *http.R
 		defer close(errorChan)
 
 		status, err := ws.Provision(r.Context(), &workspace.ProvisionOptions{
-			Timeout:  20 * time.Second,
+			Timeout:  timeout,
 			Messages: messages,
 		})
 
@@ -508,7 +521,7 @@ func (a *RESTApiService) provisionWithStreaming(w http.ResponseWriter, r *http.R
 		case status := <-done:
 			if status != nil {
 				final := map[string]interface{}{
-					"type":    "complete",
+					"type":    "status",
 					"status":  status.Status,
 					"message": status.Message,
 					"podIP":   status.PodIP,
@@ -535,9 +548,10 @@ func (a *RESTApiService) provisionWithStreaming(w http.ResponseWriter, r *http.R
 }
 
 // provisionSync handles synchronous workspace provisioning
-func (a *RESTApiService) provisionSync(w http.ResponseWriter, r *http.Request, ws *workspace.Workspace) {
+func (a *RESTApiService) provisionSync(w http.ResponseWriter, r *http.Request,
+	ws *workspace.Workspace, timeout int) {
 	status, err := ws.Provision(r.Context(), &workspace.ProvisionOptions{
-		Timeout:  20 * time.Second,
+		Timeout:  timeout,
 		Messages: nil,
 	})
 	if err != nil {
