@@ -105,9 +105,9 @@ spec:
       - name: main-volume
         mountPath: /usr/local/k8shell/system
         readOnly: true
-      {{- range $storage := .Values.storages }}
+      {{- range $storageName, $storage := .Values.storages }}
       {{- if $storage.enabled }}
-      - name: storage-{{ $storage.name }}
+      - name: storage-{{ $storageName }}
         mountPath: {{ $storage.path }}
         readOnly: {{ $storage.readonly }}
       {{- end }}
@@ -141,17 +141,17 @@ spec:
         - name: docker-sock
           mountPath: /var/run/docker
       {{- if .Values.docker.parentStorages }}    
-      {{- range $storage := .Values.storages }}
+      {{- range $storageName, $storage := .Values.storages }}
       {{- if $storage.enabled }}
-        - name: storage-{{ $storage.name }}
+        - name: storage-{{ $storageName }}
           mountPath: {{ $storage.path }}
           readOnly: {{ $storage.readonly }}
       {{- end }}
       {{- end }}
       {{- end }}
-      {{- range $storage := .Values.docker.storages }}
+      {{- range $storageName, $storage := .Values.docker.storages }}
       {{- if $storage.enabled }}
-        - name: storage-docker-{{ $storage.name }}
+        - name: storage-docker-{{ $storageName }}
           mountPath: {{ $storage.path }}
           readOnly: {{ $storage.readonly }}
       {{- end }}

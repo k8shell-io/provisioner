@@ -2,11 +2,11 @@
 
 {{/* labels for helm resources */}}
 {{- define "workspace.labels" -}}
-app: k8shell-workspace
-org: "{{ .Values.__organization__ }}"
-blueprint: "{{ .Values.__blueprint__ }}"
-workspace: "{{ .Values.__workspace__ }}"
-username: "{{ .Values.__username__ }}"
+k8shell.io/app: k8shell-workspace
+k8shell.io/organization: "{{ .Values.__organization__ }}"
+k8shell.io/blueprint: "{{ .Values.__blueprint__ }}"
+k8shell.io/workspace: "{{ .Values.__workspace__ }}"
+k8shell.io/username: "{{ .Values.__username__ }}"
 {{- end -}}
 
 {{/* default networkpolicy egress rules */}}
@@ -49,8 +49,8 @@ metadata:
   labels:
     {{ include "workspace.labels" .ctx | nindent 4 }}
 spec:
-  {{ if .storage.storage_class }}
-  storageClassName: {{ .storage.storage_class }}
+  {{ if .storage.storageClass }}
+  storageClassName: {{ .storage.storageClass }}
   {{ end }}
   accessModes:
     - ReadWriteMany

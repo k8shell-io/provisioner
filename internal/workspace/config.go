@@ -175,8 +175,8 @@ func (w *Workspace) generateSelfSignedCert(hostname string) (keyPEM, certPEM str
 	}
 	template.SerialNumber = serialNumber
 
-	if hostname != "" && w.namespace != "" {
-		template.DNSNames = []string{fmt.Sprintf("%s.%s", hostname, w.namespace)}
+	if hostname != "" && w.Namespace() != "" {
+		template.DNSNames = []string{fmt.Sprintf("%s.%s", hostname, w.Namespace())}
 	}
 
 	certBytes, err := x509.CreateCertificate(rand.Reader, &template, &template, &privateKey.PublicKey, privateKey)

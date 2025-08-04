@@ -117,7 +117,7 @@ func (a *RESTApiService) initializeRouter() *mux.Router {
 	// api router with API key middleware
 	apiRouter := router.PathPrefix("/api/v1").Subrouter()
 	apiRouter.Use(a.apiKeyMiddleware)
-	apiRouter.Use(a.loggingMiddleware)
+	// apiRouter.Use(a.loggingMiddleware)
 
 	// Blueprint routes
 	apiRouter.HandleFunc("/blueprints", a.GetBlueprints).Methods(http.MethodGet)
@@ -127,6 +127,8 @@ func (a *RESTApiService) initializeRouter() *mux.Router {
 
 	// Workspace routes
 	apiRouter.HandleFunc("/workspaces/template", a.TemplateWorkspace).Methods(http.MethodPost)
+	apiRouter.HandleFunc("/workspaces", a.ProvisionWorkspace).Methods(http.MethodPost)
+
 	a.logRoutes(router)
 
 	router.NotFoundHandler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -391,4 +393,172 @@ func (a *RESTApiService) TemplateWorkspace(w http.ResponseWriter, r *http.Reques
 	w.Header().Set("Content-Type", "application/x-yaml")
 	w.WriteHeader(http.StatusOK)
 	w.Write([]byte(renderedManifests))
+}
+
+// ProvisionWorkspace handles POST /api/v1/workspaces
+func (a *RESTApiService) ProvisionWorkspace(w http.ResponseWriter, r *http.Request) {
+	username := r.URL.Query().Get("username")
+	blueprintName := r.URL.Query().Get("blueprint")
+	stream := r.URL.Query().Get("stream") == "true"
+
+	if username == "" {
+		http.Error(w, "username query parameter is required", http.StatusBadRequest)
+		return
+	}
+
+	if blueprintName == "" {
+		http.Error(w, "blueprint query parameter is required", http.StatusBadRequest)
+		return
+	}
+
+	scope, errx := a.server.GetBlueprintScope(r.Context(), username, "", "")
+	if errx != nil {
+		var eresp identity.ErrorResponse
+		if errors.As(errx, &eresp) {
+			http.Error(w, eresp.Msg, eresp.Status)
+			return
+		}
+		http.Error(w, fmt.Sprintf("Failed to get user: %v", errx), http.StatusInternalServerError)
+		return
+	}
+
+	blueprint, err := a.server.bpManager.GetBlueprint(blueprintName, scope)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Blueprint not found: %s", blueprintName), http.StatusNotFound)
+		return
+	}
+
+	ws, err := workspace.NewWorkspace(blueprint, scope.User, a.server.helm)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Failed to create workspace: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	if stream {
+		a.provisionWithStreaming(w, r, ws)
+	} else {
+		a.provisionSync(w, r, ws)
+	}
+}
+
+// provisionWithStreaming handles workspace provisioning with streaming updates
+func (a *RESTApiService) provisionWithStreaming(w http.ResponseWriter, r *http.Request, ws *workspace.Workspace) {
+	w.Header().Set("Content-Type", "application/x-ndjson")
+	w.Header().Set("Transfer-Encoding", "chunked")
+	w.Header().Set("Cache-Control", "no-cache")
+
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		http.Error(w, "Streaming not supported", http.StatusInternalServerError)
+		return
+	}
+
+	w.WriteHeader(http.StatusOK)
+
+	messages := make(chan workspace.EventMessage, 100)
+	initial := map[string]interface{}{
+		"type":    "started",
+		"message": "Starting workspace provisioning...",
+	}
+	data, _ := json.Marshal(initial)
+	fmt.Fprintf(w, "%s\n", data)
+	flusher.Flush()
+
+	done := make(chan *workspace.WorkspaceStatus)
+	errorChan := make(chan error)
+
+	go func() {
+		defer close(done)
+		defer close(errorChan)
+
+		status, err := ws.Provision(r.Context(), &workspace.ProvisionOptions{
+			Timeout:  20 * time.Second,
+			Messages: messages,
+		})
+
+		if err != nil {
+			errorChan <- err
+			return
+		}
+
+		done <- status
+	}()
+
+	// Stream events
+	for {
+		select {
+		case <-r.Context().Done():
+			return
+
+		case msg, ok := <-messages:
+			if !ok {
+				continue
+			}
+
+			event := map[string]interface{}{
+				"type":       "event",
+				"timestamp":  msg.Timestamp,
+				"objectName": msg.ObjectName,
+				"message":    msg.Message,
+			}
+			data, _ := json.Marshal(event)
+			fmt.Fprintf(w, "%s\n", data)
+			flusher.Flush()
+
+		case status := <-done:
+			if status != nil {
+				final := map[string]interface{}{
+					"type":    "complete",
+					"status":  status.Status,
+					"message": status.Message,
+					"podIP":   status.PodIP,
+				}
+				data, _ := json.Marshal(final)
+				fmt.Fprintf(w, "%s\n", data)
+				flusher.Flush()
+			}
+			return
+
+		case err := <-errorChan:
+			if err != nil {
+				errEvent := map[string]interface{}{
+					"type":  "error",
+					"error": err.Error(),
+				}
+				data, _ := json.Marshal(errEvent)
+				fmt.Fprintf(w, "%s\n", data)
+				flusher.Flush()
+			}
+			return
+		}
+	}
+}
+
+// provisionSync handles synchronous workspace provisioning
+func (a *RESTApiService) provisionSync(w http.ResponseWriter, r *http.Request, ws *workspace.Workspace) {
+	status, err := ws.Provision(r.Context(), &workspace.ProvisionOptions{
+		Timeout:  20 * time.Second,
+		Messages: nil,
+	})
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Failed to provision workspace: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusCreated)
+	response := map[string]interface{}{
+		"status":  status.Status,
+		"message": status.Message,
+		"podIP":   status.PodIP,
+	}
+
+	data, err := json.Marshal(response)
+	if err != nil {
+		http.Error(w, "Failed to marshal response", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Length", fmt.Sprintf("%d", len(data)))
+	_, _ = w.Write(data)
 }

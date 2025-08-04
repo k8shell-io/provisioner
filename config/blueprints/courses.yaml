@@ -23,12 +23,12 @@ blueprints:
     sudo: true
     network:
       networkPolicy: system
-    serviceAccount: !cel |
-      user.username in ['alice', 'kuchajar', 'vitvatom']
-        ? "admin-sa"
-        : user.username in ['nvkptr']
-          ? "k8shell-proxy"
-          : "default"
+    # serviceAccount: !cel |
+    #   user.username in ['alice', 'kuchajar', 'vitvatom']
+    #     ? "admin-sa"
+    #     : user.username in ['nvkptr']
+    #       ? "k8shell-proxy"
+    #       : "default"
 
     resources:
       cpu: 8
