@@ -11,7 +11,6 @@ package server
 // @name Authorization
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -22,28 +21,22 @@ import (
 	"strings"
 	"time"
 
-	"github.com/gorilla/mux"
+	"github.com/gin-gonic/gin"
 	identity "github.com/k8shell-io/identity/pkg/client"
 	"github.com/k8shell-io/provisioner/internal/blueprint"
 	"github.com/k8shell-io/provisioner/internal/log"
 	"github.com/k8shell-io/provisioner/internal/workspace"
 	"github.com/k8shell-io/provisioner/pkg/models"
 	"github.com/rs/zerolog"
-	httpSwagger "github.com/swaggo/http-swagger"
+	swaggerFiles "github.com/swaggo/files"
+	ginSwagger "github.com/swaggo/gin-swagger"
 )
 
 // RESTApiService represents the REST API service for the K8Shell Provisioner server.
 type RESTApiService struct {
 	server *Server
 	log    *zerolog.Logger
-}
-
-// responseRecorder is a wrapper for http.ResponseWriter
-// to capture the status code and response body.
-type responseRecorder struct {
-	http.ResponseWriter
-	statusCode int
-	body       bytes.Buffer
+	engine *gin.Engine
 }
 
 type BlueprintComposeRequest struct {
@@ -51,37 +44,33 @@ type BlueprintComposeRequest struct {
 	Scope     blueprint.BlueprintScope `json:"scope"`
 }
 
-// WriteHeader captures the status code and forwards it to the original ResponseWriter
-func (rec *responseRecorder) WriteHeader(code int) {
-	rec.statusCode = code
-	rec.ResponseWriter.WriteHeader(code)
-}
-
-// Write captures the response body and writes it to the original ResponseWriter
-func (rec *responseRecorder) Write(data []byte) (int, error) {
-	rec.body.Write(data)
-	return rec.ResponseWriter.Write(data)
-}
-
 // NewRESTAPI creates a new REST API service
 func NewRESTAPI(server *Server) (*RESTApiService, error) {
 	log := log.NewLogger("api")
 
+	gin.SetMode(gin.ReleaseMode)
+
+	engine := gin.New()
+	engine.Use(gin.Recovery())
+
 	return &RESTApiService{
 		server: server,
 		log:    log,
+		engine: engine,
 	}, nil
 }
 
 // apiKeyMiddleware checks for the presence of a valid API key in the request header
-// and allows access to the API endpoints only if the key matches the configured one.
-func (a *RESTApiService) apiKeyMiddleware(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		authHeader := r.Header.Get("Authorization")
+func (a *RESTApiService) apiKeyMiddleware() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		authHeader := c.GetHeader("Authorization")
 		const prefix = "Bearer "
 
 		if !strings.HasPrefix(authHeader, prefix) {
-			http.Error(w, "Unauthorized: missing or malformed Authorization header", http.StatusUnauthorized)
+			c.JSON(http.StatusUnauthorized, gin.H{
+				"error": "Unauthorized: missing or malformed Authorization header",
+			})
+			c.Abort()
 			return
 		}
 
@@ -89,62 +78,94 @@ func (a *RESTApiService) apiKeyMiddleware(next http.Handler) http.Handler {
 		expectedKey := a.server.config.Http.APIKey
 
 		if providedKey != expectedKey {
-			http.Error(w, "Unauthorized: invalid API key", http.StatusUnauthorized)
+			c.JSON(http.StatusUnauthorized, gin.H{
+				"error": "Unauthorized: invalid API key",
+			})
+			c.Abort()
 			return
 		}
 
-		next.ServeHTTP(w, r)
-	})
+		c.Next()
+	}
 }
 
-// Middleware to log requests and responses
-func (a *RESTApiService) loggingMiddleware(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		a.log.Debug().Msgf("Request: method %s, path %s", r.Method, r.URL.Path)
-		rec := &responseRecorder{ResponseWriter: w, statusCode: http.StatusOK}
-		next.ServeHTTP(rec, r)
-		if rec.statusCode >= 400 {
-			a.log.Error().Msgf("Response: status %d, %s", rec.statusCode, rec.body.String())
+// loggingMiddleware logs requests and responses
+func (a *RESTApiService) loggingMiddleware() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		start := time.Now()
+		path := c.Request.URL.Path
+		method := c.Request.Method
+
+		a.log.Debug().Msgf("Request: method %s, path %s", method, path)
+
+		c.Next()
+
+		latency := time.Since(start)
+		statusCode := c.Writer.Status()
+
+		if statusCode >= 400 {
+			a.log.Error().Msgf("Response: status %d, method %s, path %s, latency %s",
+				statusCode, method, path, latency)
 		} else {
-			a.log.Debug().Msgf("Response: status %d, body: %s", rec.statusCode, rec.body.String()[:100])
+			a.log.Debug().Msgf("Response: status %d, method %s, path %s, latency %s",
+				statusCode, method, path, latency)
 		}
-	})
+	}
 }
 
-// Initialize the router
-func (a *RESTApiService) initializeRouter() *mux.Router {
-	router := mux.NewRouter()
+// initializeRouter sets up all routes
+func (a *RESTApiService) initializeRouter() {
+	a.engine.Use(a.loggingMiddleware())
 
-	// api router with API key middleware
-	apiRouter := router.PathPrefix("/api/v1").Subrouter()
-	apiRouter.Use(a.apiKeyMiddleware)
-	// apiRouter.Use(a.loggingMiddleware)
+	// API routes with authentication
+	api := a.engine.Group("/api/v1")
+	api.Use(a.apiKeyMiddleware())
+	{
+		// Blueprint routes
+		blueprints := api.Group("/blueprints")
+		{
+			blueprints.GET("", a.GetBlueprints)
+			blueprints.GET("/:name", a.GetBlueprint)
+			blueprints.GET("/:name/raw", a.GetRawBlueprint)
+			blueprints.POST("/compose", a.ComposeBlueprint)
+		}
 
-	// Blueprint routes
-	apiRouter.HandleFunc("/blueprints", a.GetBlueprints).Methods(http.MethodGet)
-	apiRouter.HandleFunc("/blueprints/{name}", a.GetBlueprint).Methods(http.MethodGet)
-	apiRouter.HandleFunc("/blueprints/{name}/raw", a.GetRawBlueprint).Methods(http.MethodGet)
-	apiRouter.HandleFunc("/blueprints/compose", a.ComposeBlueprint).Methods(http.MethodPost)
+		// Workspace routes
+		workspaces := api.Group("/workspaces")
+		{
+			workspaces.POST("/template", a.TemplateWorkspace)
+			workspaces.POST("", a.ProvisionWorkspace)
+		}
+	}
 
-	// Workspace routes
-	apiRouter.HandleFunc("/workspaces/template", a.TemplateWorkspace).Methods(http.MethodPost)
-	apiRouter.HandleFunc("/workspaces", a.ProvisionWorkspace).Methods(http.MethodPost)
+	// Swagger documentation (no auth required)
+	a.engine.GET("/swagger/*any", ginSwagger.WrapHandler(swaggerFiles.Handler))
 
-	a.logRoutes(router)
-
-	router.NotFoundHandler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		a.log.Debug().Msgf("404 Not Found: %s %s", r.Method, r.URL.Path)
-		http.Error(w, "404 route not found", http.StatusNotFound)
+	// 404 handler
+	a.engine.NoRoute(func(c *gin.Context) {
+		a.log.Debug().Msgf("404 Not Found: %s %s", c.Request.Method, c.Request.URL.Path)
+		c.JSON(http.StatusNotFound, gin.H{
+			"error": "404 route not found",
+		})
 	})
 
-	router.PathPrefix("/swagger/").Handler(httpSwagger.WrapHandler)
-
-	return router
+	a.logRoutes()
 }
 
+// logRoutes logs all registered routes
+func (a *RESTApiService) logRoutes() {
+	routes := a.engine.Routes()
+	for _, route := range routes {
+		a.log.Debug().Msgf("Route: %s %s", route.Method, route.Path)
+	}
+}
+
+// Serve starts the HTTP server
 func (a *RESTApiService) Serve(ctx context.Context) {
+	a.initializeRouter()
+
 	server := &http.Server{
-		Handler: a.initializeRouter(),
+		Handler: a.engine,
 		Addr:    fmt.Sprintf(":%d", a.server.config.Http.Port),
 	}
 
@@ -171,128 +192,98 @@ func (a *RESTApiService) Serve(ctx context.Context) {
 	<-idleConnsClosed
 }
 
-// logRoutes logs all registered routes in the router
-func (a *RESTApiService) logRoutes(router *mux.Router) {
-	err := router.Walk(func(route *mux.Route, router *mux.Router, ancestors []*mux.Route) error {
-		path, err := route.GetPathTemplate()
-		if err != nil {
-			path = "<undefined>"
-		}
-
-		methods, err := route.GetMethods()
-		if err != nil {
-			methods = []string{"<any>"}
-		}
-
-		a.log.Debug().Msgf("Route: %s Methods: %v", path, methods)
-		return nil
-	})
-
-	if err != nil {
-		a.log.Error().Msgf("Error walking routes: %v", err)
-	}
-}
-
 // GetBlueprints handles the GET request for blueprints
-func (a *RESTApiService) GetBlueprints(w http.ResponseWriter, r *http.Request) {
+func (a *RESTApiService) GetBlueprints(c *gin.Context) {
 	blueprints := a.server.bpManager.ListBlueprintNames()
 	if len(blueprints) == 0 {
-		http.Error(w, "No blueprints found", http.StatusNotFound)
+		c.JSON(http.StatusNotFound, gin.H{
+			"error": "No blueprints found",
+		})
 		return
-	}
-	w.Header().Set("Content-Type", "application/json")
-	response := map[string]interface{}{}
-	for _, bp := range blueprints {
-		response[bp] = map[string]string{"name": bp, "url": fmt.Sprintf("/api/v1/blueprints/%s", bp)}
 	}
 
-	data, err := json.Marshal(response)
-	if err != nil {
-		http.Error(w, "Failed to marshal response", http.StatusInternalServerError)
-		return
+	response := gin.H{}
+	for _, bp := range blueprints {
+		response[bp] = gin.H{
+			"name": bp,
+			"url":  fmt.Sprintf("/api/v1/blueprints/%s", bp),
+		}
 	}
-	w.Header().Set("Content-Length", fmt.Sprintf("%d", len(data)))
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	_, _ = w.Write(data)
+
+	c.JSON(http.StatusOK, response)
 }
 
 // GetBlueprint handles the GET request for a specific blueprint
-func (a *RESTApiService) GetBlueprint(w http.ResponseWriter, r *http.Request) {
-	vars := mux.Vars(r)
-	name := vars["name"]
+func (a *RESTApiService) GetBlueprint(c *gin.Context) {
+	name := c.Param("name")
+	username := c.Query("username")
 
-	username := r.URL.Query().Get("username")
 	if username == "" {
-		http.Error(w, "Username is required", http.StatusBadRequest)
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": "Username is required",
+		})
 		return
 	}
 
 	// Get the user's blueprint scope
-	scope, errx := a.server.GetBlueprintScope(r.Context(), username, "", "")
+	scope, errx := a.server.GetBlueprintScope(c.Request.Context(), username, "", "")
 	if errx != nil {
 		var eresp identity.ErrorResponse
 		if errors.As(errx, &eresp) {
-			http.Error(w, eresp.Msg, eresp.Status)
+			c.JSON(eresp.Status, gin.H{
+				"error": eresp.Msg,
+			})
 			return
 		}
-		http.Error(w, fmt.Sprintf("Failed to get user: %v", errx), http.StatusInternalServerError)
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": fmt.Sprintf("Failed to get user: %v", errx),
+		})
 		return
 	}
 
-	var data []byte
 	blueprint, err := a.server.bpManager.GetBlueprint(name, scope)
 	if err != nil {
-		http.Error(w, fmt.Sprintf("Blueprint not found: %s", name), http.StatusNotFound)
+		c.JSON(http.StatusNotFound, gin.H{
+			"error": fmt.Sprintf("Blueprint not found: %s", name),
+		})
 		return
 	}
 
-	data, err = json.Marshal(blueprint)
-	if err != nil {
-		http.Error(w, "Failed to marshal blueprint", http.StatusInternalServerError)
-		return
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	_, _ = w.Write(data)
+	c.JSON(http.StatusOK, blueprint)
 }
 
-// GetBlueprint handles the GET request for a specific blueprint
-func (a *RESTApiService) GetRawBlueprint(w http.ResponseWriter, r *http.Request) {
-	vars := mux.Vars(r)
-	name := vars["name"]
+// GetRawBlueprint handles the GET request for a specific raw blueprint
+func (a *RESTApiService) GetRawBlueprint(c *gin.Context) {
+	name := c.Param("name")
 
-	var data []byte
 	rawBp, err := a.server.bpManager.GetRawBlueprint(name)
 	if err != nil {
-		http.Error(w, fmt.Sprintf("Raw blueprint not found: %s", name), http.StatusNotFound)
+		c.JSON(http.StatusNotFound, gin.H{
+			"error": fmt.Sprintf("Raw blueprint not found: %s", name),
+		})
 		return
 	}
 
-	data, err = json.Marshal(rawBp)
-	if err != nil {
-		http.Error(w, "Failed to marshal raw blueprint", http.StatusInternalServerError)
-		return
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	_, _ = w.Write(data)
+	c.JSON(http.StatusOK, rawBp)
 }
 
 // ComposeBlueprint handles the POST request to compose a blueprint
-func (a *RESTApiService) ComposeBlueprint(w http.ResponseWriter, r *http.Request) {
-	contentType := r.Header.Get("Content-Type")
-	body, err := io.ReadAll(r.Body)
-	if err != nil {
-		http.Error(w, "Failed to read request body", http.StatusBadRequest)
+func (a *RESTApiService) ComposeBlueprint(c *gin.Context) {
+	contentType := c.GetHeader("Content-Type")
+	username := c.Query("username")
+
+	if username == "" {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": "Username is required",
+		})
 		return
 	}
 
-	username := r.URL.Query().Get("username")
-	if username == "" {
-		http.Error(w, "Username is required", http.StatusBadRequest)
+	body, err := io.ReadAll(c.Request.Body)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": "Failed to read request body",
+		})
 		return
 	}
 
@@ -300,181 +291,209 @@ func (a *RESTApiService) ComposeBlueprint(w http.ResponseWriter, r *http.Request
 	if strings.Contains(contentType, "text/yaml") || strings.Contains(contentType, "application/x-yaml") {
 		blueprintYAML = body
 	} else {
-		http.Error(w, "Unsupported content type, expected text/yaml or application/x-yaml",
-			http.StatusUnsupportedMediaType)
+		c.JSON(http.StatusUnsupportedMediaType, gin.H{
+			"error": "Unsupported content type, expected text/yaml or application/x-yaml",
+		})
 		return
 	}
 
 	// Validate the custom blueprint YAML
 	validationErrors := models.ValidateCustomBlueprint(blueprintYAML)
 	if len(validationErrors) > 0 {
-		http.Error(w, fmt.Sprintf("Blueprint validation failed: %s", strings.Join(validationErrors, "; ")),
-			http.StatusBadRequest)
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": fmt.Sprintf("Blueprint validation failed: %s", strings.Join(validationErrors, "; ")),
+		})
 		return
 	}
 
 	// Get the user's blueprint scope
-	scope, errx := a.server.GetBlueprintScope(r.Context(), username, "", "")
+	scope, errx := a.server.GetBlueprintScope(c.Request.Context(), username, "", "")
 	if errx != nil {
 		var eresp identity.ErrorResponse
 		if errors.As(errx, &eresp) {
-			http.Error(w, eresp.Msg, eresp.Status)
+			c.JSON(eresp.Status, gin.H{
+				"error": eresp.Msg,
+			})
 			return
 		}
-		http.Error(w, fmt.Sprintf("Failed to get user: %v", errx), http.StatusInternalServerError)
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": fmt.Sprintf("Failed to get user: %v", errx),
+		})
 		return
 	}
 
-	// compose and convert to json
+	// Compose and convert to json
 	bp, err := a.server.bpManager.ComposeWithScope(blueprintYAML, scope)
 	if err != nil {
-		http.Error(w, fmt.Sprintf("Failed to compose blueprint with scope: %v", err), http.StatusBadRequest)
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": fmt.Sprintf("Failed to compose blueprint with scope: %v", err),
+		})
 		return
 	}
 
-	var composedJSON []byte
-	composedJSON, err = json.Marshal(bp)
-	if err != nil {
-		http.Error(w, "Failed to process composed blueprint with scope", http.StatusInternalServerError)
-		return
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	_, _ = w.Write(composedJSON)
-
+	c.JSON(http.StatusOK, bp)
 }
 
 // TemplateWorkspace handles POST /api/v1/workspaces/template
-func (a *RESTApiService) TemplateWorkspace(w http.ResponseWriter, r *http.Request) {
-	username := r.URL.Query().Get("username")
-	blueprintName := r.URL.Query().Get("blueprint")
+func (a *RESTApiService) TemplateWorkspace(c *gin.Context) {
+	username := c.Query("username")
+	blueprintName := c.Query("blueprint")
 
 	if username == "" {
-		http.Error(w, "username query parameter is required", http.StatusBadRequest)
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": "username query parameter is required",
+		})
 		return
 	}
 
 	if blueprintName == "" {
-		http.Error(w, "blueprint query parameter is required", http.StatusBadRequest)
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": "blueprint query parameter is required",
+		})
 		return
 	}
 
 	// Get the user's blueprint scope
-	scope, errx := a.server.GetBlueprintScope(r.Context(), username, "", "")
+	scope, errx := a.server.GetBlueprintScope(c.Request.Context(), username, "", "")
 	if errx != nil {
 		var eresp identity.ErrorResponse
 		if errors.As(errx, &eresp) {
-			http.Error(w, eresp.Msg, eresp.Status)
+			c.JSON(eresp.Status, gin.H{
+				"error": eresp.Msg,
+			})
 			return
 		}
-		http.Error(w, fmt.Sprintf("Failed to get user: %v", errx), http.StatusInternalServerError)
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": fmt.Sprintf("Failed to get user: %v", errx),
+		})
 		return
 	}
 
 	blueprint, err := a.server.bpManager.GetBlueprint(blueprintName, scope)
 	if err != nil {
-		http.Error(w, fmt.Sprintf("Blueprint not found: %s", blueprintName), http.StatusNotFound)
+		c.JSON(http.StatusNotFound, gin.H{
+			"error": fmt.Sprintf("Blueprint not found: %s", blueprintName),
+		})
 		return
 	}
 
 	ws, err := workspace.NewWorkspace(blueprint, scope.User, a.server.helm)
 	if err != nil {
-		http.Error(w, fmt.Sprintf("Failed to create workspace: %v", err), http.StatusInternalServerError)
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": fmt.Sprintf("Failed to create workspace: %v", err),
+		})
 		return
 	}
 
-	renderedManifests, err := ws.Template(r.Context())
+	renderedManifests, err := ws.Template(c.Request.Context())
 	if err != nil {
-		http.Error(w, fmt.Sprintf("Failed to render workspace templates: %v", err), http.StatusInternalServerError)
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": fmt.Sprintf("Failed to render workspace templates: %v", err),
+		})
 		return
 	}
 
 	// Return rendered YAML manifests
-	w.Header().Set("Content-Type", "application/x-yaml")
-	w.WriteHeader(http.StatusOK)
-	w.Write([]byte(renderedManifests))
+	c.Data(http.StatusOK, "application/x-yaml", []byte(renderedManifests))
 }
 
 // ProvisionWorkspace handles POST /api/v1/workspaces
-func (a *RESTApiService) ProvisionWorkspace(w http.ResponseWriter, r *http.Request) {
-	username := r.URL.Query().Get("username")
-	blueprintName := r.URL.Query().Get("blueprint")
-	stream := r.URL.Query().Get("stream") == "true"
+func (a *RESTApiService) ProvisionWorkspace(c *gin.Context) {
+	username := c.Query("username")
+	blueprintName := c.Query("blueprint")
+	stream := c.Query("stream") == "true"
+	timeoutStr := c.Query("timeout")
 
-	timeoutStr := r.URL.Query().Get("timeout")
 	timeout := 20
 	if timeoutStr != "" {
 		var err error
 		timeout, err = strconv.Atoi(timeoutStr)
 		if err != nil || timeout <= 0 {
-			http.Error(w, "Invalid timeout value", http.StatusBadRequest)
+			c.JSON(http.StatusBadRequest, gin.H{
+				"error": "Invalid timeout value",
+			})
 			return
 		}
 	}
 
 	if username == "" {
-		http.Error(w, "username query parameter is required", http.StatusBadRequest)
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": "username query parameter is required",
+		})
 		return
 	}
 
 	if blueprintName == "" {
-		http.Error(w, "blueprint query parameter is required", http.StatusBadRequest)
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": "blueprint query parameter is required",
+		})
 		return
 	}
 
-	scope, errx := a.server.GetBlueprintScope(r.Context(), username, "", "")
+	scope, errx := a.server.GetBlueprintScope(c.Request.Context(), username, "", "")
 	if errx != nil {
 		var eresp identity.ErrorResponse
 		if errors.As(errx, &eresp) {
-			http.Error(w, eresp.Msg, eresp.Status)
+			c.JSON(eresp.Status, gin.H{
+				"error": eresp.Msg,
+			})
 			return
 		}
-		http.Error(w, fmt.Sprintf("Failed to get user: %v", errx), http.StatusInternalServerError)
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": fmt.Sprintf("Failed to get user: %v", errx),
+		})
 		return
 	}
 
 	blueprint, err := a.server.bpManager.GetBlueprint(blueprintName, scope)
 	if err != nil {
-		http.Error(w, fmt.Sprintf("Blueprint not found: %s", blueprintName), http.StatusNotFound)
+		c.JSON(http.StatusNotFound, gin.H{
+			"error": fmt.Sprintf("Blueprint not found: %s", blueprintName),
+		})
 		return
 	}
 
 	ws, err := workspace.NewWorkspace(blueprint, scope.User, a.server.helm)
 	if err != nil {
-		http.Error(w, fmt.Sprintf("Failed to create workspace: %v", err), http.StatusInternalServerError)
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": fmt.Sprintf("Failed to create workspace: %v", err),
+		})
 		return
 	}
 
 	if stream {
-		a.provisionWithStreaming(w, r, ws, timeout)
+		a.provisionWithStreaming(c, ws, timeout)
 	} else {
-		a.provisionSync(w, r, ws, timeout)
+		a.provisionSync(c, ws, timeout)
 	}
 }
 
 // provisionWithStreaming handles workspace provisioning with streaming updates
-func (a *RESTApiService) provisionWithStreaming(w http.ResponseWriter, r *http.Request,
-	ws *workspace.Workspace, timeout int) {
-	w.Header().Set("Content-Type", "application/x-ndjson")
-	w.Header().Set("Transfer-Encoding", "chunked")
-	w.Header().Set("Cache-Control", "no-cache")
+func (a *RESTApiService) provisionWithStreaming(c *gin.Context, ws *workspace.Workspace, timeout int) {
+	c.Header("Content-Type", "application/x-ndjson")
+	c.Header("Transfer-Encoding", "chunked")
+	c.Header("Cache-Control", "no-cache")
 
-	flusher, ok := w.(http.Flusher)
+	// Check if streaming is supported
+	flusher, ok := c.Writer.(http.Flusher)
 	if !ok {
-		http.Error(w, "Streaming not supported", http.StatusInternalServerError)
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": "Streaming not supported",
+		})
 		return
 	}
 
-	w.WriteHeader(http.StatusOK)
+	c.Status(http.StatusOK)
 
 	messages := make(chan workspace.EventMessage, 100)
-	initial := map[string]interface{}{
+
+	// Send initial message
+	initial := gin.H{
 		"type":    "started",
 		"message": "Starting workspace provisioning...",
 	}
 	data, _ := json.Marshal(initial)
-	fmt.Fprintf(w, "%s\n", data)
+	c.Writer.Write([]byte(fmt.Sprintf("%s\n", data)))
 	flusher.Flush()
 
 	done := make(chan *workspace.WorkspaceStatus)
@@ -484,7 +503,7 @@ func (a *RESTApiService) provisionWithStreaming(w http.ResponseWriter, r *http.R
 		defer close(done)
 		defer close(errorChan)
 
-		status, err := ws.Provision(r.Context(), &workspace.ProvisionOptions{
+		status, err := ws.Provision(c.Request.Context(), &workspace.ProvisionOptions{
 			Timeout:  timeout,
 			Messages: messages,
 		})
@@ -500,7 +519,7 @@ func (a *RESTApiService) provisionWithStreaming(w http.ResponseWriter, r *http.R
 	// Stream events
 	for {
 		select {
-		case <-r.Context().Done():
+		case <-c.Request.Context().Done():
 			return
 
 		case msg, ok := <-messages:
@@ -508,38 +527,38 @@ func (a *RESTApiService) provisionWithStreaming(w http.ResponseWriter, r *http.R
 				continue
 			}
 
-			event := map[string]interface{}{
+			event := gin.H{
 				"type":       "event",
 				"timestamp":  msg.Timestamp,
 				"objectName": msg.ObjectName,
 				"message":    msg.Message,
 			}
 			data, _ := json.Marshal(event)
-			fmt.Fprintf(w, "%s\n", data)
+			c.Writer.Write([]byte(fmt.Sprintf("%s\n", data)))
 			flusher.Flush()
 
 		case status := <-done:
 			if status != nil {
-				final := map[string]interface{}{
+				final := gin.H{
 					"type":    "status",
 					"status":  status.Status,
 					"message": status.Message,
 					"podIP":   status.PodIP,
 				}
 				data, _ := json.Marshal(final)
-				fmt.Fprintf(w, "%s\n", data)
+				c.Writer.Write([]byte(fmt.Sprintf("%s\n", data)))
 				flusher.Flush()
 			}
 			return
 
 		case err := <-errorChan:
 			if err != nil {
-				errEvent := map[string]interface{}{
+				errEvent := gin.H{
 					"type":  "error",
 					"error": err.Error(),
 				}
 				data, _ := json.Marshal(errEvent)
-				fmt.Fprintf(w, "%s\n", data)
+				c.Writer.Write([]byte(fmt.Sprintf("%s\n", data)))
 				flusher.Flush()
 			}
 			return
@@ -548,31 +567,21 @@ func (a *RESTApiService) provisionWithStreaming(w http.ResponseWriter, r *http.R
 }
 
 // provisionSync handles synchronous workspace provisioning
-func (a *RESTApiService) provisionSync(w http.ResponseWriter, r *http.Request,
-	ws *workspace.Workspace, timeout int) {
-	status, err := ws.Provision(r.Context(), &workspace.ProvisionOptions{
+func (a *RESTApiService) provisionSync(c *gin.Context, ws *workspace.Workspace, timeout int) {
+	status, err := ws.Provision(c.Request.Context(), &workspace.ProvisionOptions{
 		Timeout:  timeout,
 		Messages: nil,
 	})
 	if err != nil {
-		http.Error(w, fmt.Sprintf("Failed to provision workspace: %v", err), http.StatusInternalServerError)
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": fmt.Sprintf("Failed to provision workspace: %v", err),
+		})
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusCreated)
-	response := map[string]interface{}{
+	c.JSON(http.StatusCreated, gin.H{
 		"status":  status.Status,
 		"message": status.Message,
 		"podIP":   status.PodIP,
-	}
-
-	data, err := json.Marshal(response)
-	if err != nil {
-		http.Error(w, "Failed to marshal response", http.StatusInternalServerError)
-		return
-	}
-
-	w.Header().Set("Content-Length", fmt.Sprintf("%d", len(data)))
-	_, _ = w.Write(data)
+	})
 }
