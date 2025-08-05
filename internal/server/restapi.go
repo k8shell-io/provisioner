@@ -3,7 +3,7 @@
 package server
 
 // @title        K8shell Provisioner API
-// @version      1.1
+// @version      1.0
 // @description  This is the API documentation for the K8shell provisioner service.
 //
 // @securityDefinitions.apikey BearerAuth
@@ -23,6 +23,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	identity "github.com/k8shell-io/identity/pkg/client"
+	_ "github.com/k8shell-io/provisioner/docs"
 	"github.com/k8shell-io/provisioner/internal/blueprint"
 	"github.com/k8shell-io/provisioner/internal/log"
 	"github.com/k8shell-io/provisioner/internal/workspace"
@@ -39,9 +40,42 @@ type RESTApiService struct {
 	engine *gin.Engine
 }
 
+// BlueprintComposeRequest represents the request body for blueprint composition
 type BlueprintComposeRequest struct {
 	Blueprint models.CustomBlueprint   `json:"blueprint"`
 	Scope     blueprint.BlueprintScope `json:"scope"`
+}
+
+// ErrorResponse represents an error response
+type ErrorResponse struct {
+	Error string `json:"error" example:"Error message"`
+}
+
+// BlueprintListResponse represents the response for listing blueprints
+type BlueprintListResponse map[string]BlueprintInfo
+
+// BlueprintInfo represents blueprint information in the list
+type BlueprintInfo struct {
+	Name string `json:"name" example:"dev"`
+	URL  string `json:"url" example:"/api/v1/blueprints/dev"`
+}
+
+// WorkspaceStatusResponse represents the response for workspace operations
+type WorkspaceStatusResponse struct {
+	Status  string `json:"status" example:"Running"`
+	Message string `json:"message" example:"Workspace is running"`
+	PodIP   string `json:"podIP" example:"10.42.0.123"`
+}
+
+// StreamEventResponse represents a streaming event response
+type StreamEventResponse struct {
+	Type       string `json:"type" example:"event"`
+	Timestamp  string `json:"timestamp,omitempty" example:"2025-08-05T10:30:00Z"`
+	ObjectName string `json:"objectName,omitempty" example:"dev-user123"`
+	Message    string `json:"message,omitempty" example:"Pod is starting"`
+	Status     string `json:"status,omitempty" example:"Running"`
+	PodIP      string `json:"podIP,omitempty" example:"10.42.0.123"`
+	Error      string `json:"error,omitempty" example:"Failed to provision workspace"`
 }
 
 // NewRESTAPI creates a new REST API service
@@ -193,6 +227,16 @@ func (a *RESTApiService) Serve(ctx context.Context) {
 }
 
 // GetBlueprints handles the GET request for blueprints
+// @Summary      List available blueprints
+// @Description  Get a list of all available blueprint names
+// @Tags         blueprints
+// @Accept       json
+// @Produce      json
+// @Security     BearerAuth
+// @Success      200  {object}  BlueprintListResponse  "List of available blueprints"
+// @Failure      404  {object}  ErrorResponse          "No blueprints found"
+// @Failure      401  {object}  ErrorResponse          "Unauthorized"
+// @Router       /api/v1/blueprints [get]
 func (a *RESTApiService) GetBlueprints(c *gin.Context) {
 	blueprints := a.server.bpManager.ListBlueprintNames()
 	if len(blueprints) == 0 {
@@ -214,6 +258,20 @@ func (a *RESTApiService) GetBlueprints(c *gin.Context) {
 }
 
 // GetBlueprint handles the GET request for a specific blueprint
+// @Summary      Get a specific blueprint
+// @Description  Get a blueprint by name with user scope applied
+// @Tags         blueprints
+// @Accept       json
+// @Produce      json
+// @Security     BearerAuth
+// @Param        name      path    string  true   "Blueprint name"
+// @Param        username  query   string  true   "Username for scope resolution"
+// @Success      200       {object}  models.Blueprint  "Blueprint details"
+// @Failure      400       {object}  ErrorResponse     "Bad request - missing username"
+// @Failure      404       {object}  ErrorResponse     "Blueprint not found"
+// @Failure      401       {object}  ErrorResponse     "Unauthorized"
+// @Failure      500       {object}  ErrorResponse     "Internal server error"
+// @Router       /api/v1/blueprints/{name} [get]
 func (a *RESTApiService) GetBlueprint(c *gin.Context) {
 	name := c.Param("name")
 	username := c.Query("username")
@@ -253,6 +311,17 @@ func (a *RESTApiService) GetBlueprint(c *gin.Context) {
 }
 
 // GetRawBlueprint handles the GET request for a specific raw blueprint
+// @Summary      Get raw blueprint
+// @Description  Get the raw blueprint configuration without scope processing
+// @Tags         blueprints
+// @Accept       json
+// @Produce      json
+// @Security     BearerAuth
+// @Param        name  path    string  true  "Blueprint name"
+// @Success      200   {object}  object  "Raw blueprint configuration"
+// @Failure      404   {object}  ErrorResponse        	 "Blueprint not found"
+// @Failure      401   {object}  ErrorResponse        	 "Unauthorized"
+// @Router       /api/v1/blueprints/{name}/raw [get]
 func (a *RESTApiService) GetRawBlueprint(c *gin.Context) {
 	name := c.Param("name")
 
@@ -268,6 +337,20 @@ func (a *RESTApiService) GetRawBlueprint(c *gin.Context) {
 }
 
 // ComposeBlueprint handles the POST request to compose a blueprint
+// @Summary      Compose a custom blueprint
+// @Description  Compose a custom blueprint YAML with user scope
+// @Tags         blueprints
+// @Accept       text/yaml,application/x-yaml
+// @Produce      json
+// @Security     BearerAuth
+// @Param        username  query   string  true   "Username for scope resolution"
+// @Param        blueprint body    string  true   "Custom blueprint YAML"
+// @Success      200       {object}  models.Blueprint  "Composed blueprint"
+// @Failure      400       {object}  ErrorResponse     "Bad request - validation failed"
+// @Failure      415       {object}  ErrorResponse     "Unsupported media type"
+// @Failure      401       {object}  ErrorResponse     "Unauthorized"
+// @Failure      500       {object}  ErrorResponse     "Internal server error"
+// @Router       /api/v1/blueprints/compose [post]
 func (a *RESTApiService) ComposeBlueprint(c *gin.Context) {
 	contentType := c.GetHeader("Content-Type")
 	username := c.Query("username")
@@ -373,7 +456,23 @@ func (a *RESTApiService) resolveBlueprintFromRequest(c *gin.Context, scope *blue
 	}
 }
 
-// Updated TemplateWorkspace using the helper
+// TemplateWorkspace renders workspace templates
+// @Summary      Template workspace
+// @Description  Generate Kubernetes manifests for a workspace without provisioning
+// @Tags         workspaces
+// @Accept       text/yaml,application/x-yaml
+// @Produce      text/yaml
+// @Security     BearerAuth
+// @Param        username   query   string  true   "Username for scope resolution"
+// @Param        blueprint  query   string  false  "Blueprint name (required if no payload)"
+// @Param        blueprint  body    string  false  "Custom blueprint YAML (alternative to query parameter)"
+// @Success      200        {string}  string       "Rendered Kubernetes manifests in YAML format"
+// @Failure      400        {object}  ErrorResponse  "Bad request - missing parameters or validation failed"
+// @Failure      404        {object}  ErrorResponse  "Blueprint not found"
+// @Failure      415        {object}  ErrorResponse  "Unsupported media type"
+// @Failure      401        {object}  ErrorResponse  "Unauthorized"
+// @Failure      500        {object}  ErrorResponse  "Internal server error"
+// @Router       /api/v1/workspaces/template [post]
 func (a *RESTApiService) TemplateWorkspace(c *gin.Context) {
 	username := c.Query("username")
 
@@ -442,7 +541,26 @@ func (a *RESTApiService) TemplateWorkspace(c *gin.Context) {
 	c.Data(http.StatusOK, "application/x-yaml", []byte(renderedManifests))
 }
 
-// ProvisionWorkspace handles the POST request to provision a workspace
+// ProvisionWorkspace provisions a new workspace
+// @Summary      Provision workspace
+// @Description  Create and deploy a new workspace to Kubernetes
+// @Tags         workspaces
+// @Accept       text/yaml,application/x-yaml
+// @Produce      json,application/x-ndjson
+// @Security     BearerAuth
+// @Param        username   query   string  true   "Username for scope resolution"
+// @Param        blueprint  query   string  false  "Blueprint name (required if no payload)"
+// @Param        timeout    query   int     false  "Timeout in seconds (default: 20)"
+// @Param        stream     query   bool    false  "Enable streaming updates (default: false)"
+// @Param        blueprint  body    string  false  "Custom blueprint YAML (alternative to query parameter)"
+// @Success      200        {object}  StreamEventResponse     "Streaming events (when stream=true)"
+// @Success      201        {object}  WorkspaceStatusResponse "Workspace status (when stream=false)"
+// @Failure      400        {object}  ErrorResponse           "Bad request - missing parameters or validation failed"
+// @Failure      404        {object}  ErrorResponse           "Blueprint not found"
+// @Failure      415        {object}  ErrorResponse           "Unsupported media type"
+// @Failure      401        {object}  ErrorResponse           "Unauthorized"
+// @Failure      500        {object}  ErrorResponse           "Internal server error"
+// @Router       /api/v1/workspaces [post]
 func (a *RESTApiService) ProvisionWorkspace(c *gin.Context) {
 	username := c.Query("username")
 	stream := c.Query("stream") == "true"
