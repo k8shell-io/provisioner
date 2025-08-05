@@ -1,0 +1,17 @@
+# default chart workspace values
+
+# the following values are set in k8shell-proxy automatically according to the user settings
+
+# __user__          : user object
+# __workspace__     : workspace name (blueprint.name + "-" + username)
+# __blueprint__     : blueprint name
+# __username__       : username of the user
+# __organization__   : organization name
+# __tlscrt__         : TLS certificate (PEM format, base64 encoded)
+# __tlskey__         : TLS private key (PEM format, base64 encoded)
+# __a1key__          : access key to access k8shelld GRPC API (base64 encoded)
+# __a2key__          : access key to access k8shell API server from the workspace (base64 encoded)
+# __k8shelldconfig__ : k8shelld configuration YAML (encrypted with a1key, base64 encoded)
+
+# additional values will be set in the blueprint as blueprint object
+# see blueprints.yaml for more details

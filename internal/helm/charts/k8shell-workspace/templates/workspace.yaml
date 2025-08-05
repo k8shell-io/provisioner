@@ -1,0 +1,273 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: {{ .Values.__workspace__ }}
+  namespace: {{ .Release.Namespace }} 
+  labels:
+    {{- include "workspace.labels" . | nindent 4 }}  
+spec:
+  {{ if .Values.__registry__.regcred }}
+  imagePullSecrets:
+  - name: {{ .Values.__registry__.regcred }}
+  {{ end }}  
+  {{ if .Values.serviceAccount }}
+  serviceAccountName: {{ .Values.serviceAccount }}
+  {{ end }}
+  initContainers:
+    #### init container to initialize the workspace
+    - name: init-base
+      image: {{ include "workspace.k8shelldImage" . }}
+      imagePullPolicy: {{ .Values.k8shelld.imagePullPolicy }}
+      securityContext:
+        runAsUser: 0
+        runAsGroup: 0
+      command: ["/bin/sh", "-c", "/k8shell/dist/scripts/init-base" ]
+      volumeMounts:
+        - name: bin-volume
+          mountPath: /usr/local/bin
+
+  containers:
+    #### main container
+    - name: k8shell-main
+      image: {{ include "workspace.mainImage" . }}
+      securityContext:
+        runAsUser: 0
+        runAsGroup: 0
+      command: ["/usr/local/bin/k8shelld"] 
+      imagePullPolicy: {{ .Values.imagePullPolicy }}
+      resizePolicy:
+      - resourceName: cpu
+        restartPolicy: NotRequired
+      - resourceName: memory
+        restartPolicy: NotRequired      
+
+      {{- if .Values.resources }}
+      resources:
+        requests:
+          cpu: "0.1"
+          memory: "128Mi"
+        limits:
+          {{- if .Values.resources.cpu }}
+          cpu: {{ .Values.resources.cpu }}
+          {{- end }}
+          {{- if .Values.resources.memory }}
+          memory: {{ .Values.resources.memory }}
+          {{- end }}
+      {{- end }}
+
+      env:
+      - name: IMAGE
+        value:  {{ include "workspace.mainImage" . }}
+      - name: WORKSPACE
+        value: {{ .Values.__workspace__ }}
+      - name: BLUEPRINT
+        value: {{ .Values.__blueprint__ }}
+      - name: A1K
+        valueFrom:
+          secretKeyRef:
+            name: {{ .Values.__workspace__ }}-access-keys
+            key: a1key
+      - name: A2K
+        valueFrom:
+          secretKeyRef:
+            name: {{ .Values.__workspace__ }}-access-keys
+            key: a2key        
+      {{- if .Values.docker.enabled }}
+      - name: DOCKER_HOST
+        value: unix:///var/run/docker/docker.sock
+      {{- end }}
+      
+      volumeMounts:
+      - name: bin-volume
+        mountPath: /usr/local/bin/k8shelld
+        subPath: k8shelld
+        readOnly: true
+      - name: bin-volume
+        mountPath: /usr/local/bin/kbox
+        subPath: kbox
+        readOnly: true
+      - name: bin-volume
+        mountPath: /usr/local/bin/sftp
+        subPath: sftp
+        readOnly: true
+      - name: config-volume
+        mountPath: /etc/k8shell/config.yaml
+        subPath: config.yaml
+        readOnly: true
+      - name: tls-volume
+        mountPath: /etc/k8shell/server.crt
+        subPath: tls.crt      
+        readOnly: true
+      - name: tls-volume
+        mountPath: /etc/k8shell/server.key
+        subPath: tls.key
+        readOnly: true
+      - name: main-volume
+        mountPath: /usr/local/k8shell/system
+        readOnly: true
+      {{- range $storageName, $storage := .Values.storages }}
+      {{- if $storage.enabled }}
+      - name: storage-{{ $storageName }}
+        mountPath: {{ $storage.path }}
+        readOnly: {{ $storage.readonly }}
+      {{- end }}
+      {{- end }}
+      {{- if .Values.extFiles }}
+      {{- range $path, $content := .Values.extFiles }}
+      - name: main-ext-files-volume
+        mountPath: {{ $path }}
+        subPath: {{ $path | replace "/" "__" }}
+      {{- end }}
+      {{- end }}
+      {{- if .Values.docker.enabled }}
+      - name: docker-sock
+        mountPath: /var/run/docker
+      {{- end }}
+
+    #### docker container
+    {{- if .Values.docker.enabled }}
+    - name: k8shell-docker
+      image: {{ .Values.docker.image }}
+      securityContext:
+        privileged: true
+      args:
+        - dockerd
+        - --host=unix:///var/run/docker/docker.sock
+        - --group=$(DOCKER_GROUP_GID)
+      env:
+        - name: DOCKER_GROUP_GID
+          value: "{{ .Values.docker.group_id }}"
+      volumeMounts:
+        - name: docker-sock
+          mountPath: /var/run/docker
+      {{- if .Values.__registry__.certCA }}
+        - name: docker-ca-cert
+          mountPath: /etc/ssl/certs/registry-ca.pem
+          subPath: registry-ca.pem
+      {{- end }}
+
+      {{- if .Values.docker.parentStorages }}    
+      {{- range $storageName, $storage := .Values.storages }}
+      {{- if $storage.enabled }}
+        - name: storage-{{ $storageName }}
+          mountPath: {{ $storage.path }}
+          readOnly: {{ $storage.readonly }}
+      {{- end }}
+      {{- end }}
+      {{- end }}
+      {{- range $storageName, $storage := .Values.docker.storages }}
+      {{- if $storage.enabled }}
+        - name: storage-docker-{{ $storageName }}
+          mountPath: {{ $storage.path }}
+          readOnly: {{ $storage.readonly }}
+      {{- end }}
+      {{- end }}
+      {{- if .Values.docker.extFiles }}
+      {{- range $path, $content := .Values.docker.ext_files }}
+        - name: docker-ext-files-volume
+          mountPath: {{ $path }}
+          subPath: {{ $path | replace "/" "__" }}
+      {{- end }}
+      {{- end }}
+    {{- end }}
+
+  ####  list of volumes to mount into the containers
+  volumes:
+  - name: bin-volume
+    emptyDir: {}
+  - name: config-volume
+    configMap:
+      name: {{ .Values.__workspace__ }}-k8shelld-config
+      items:
+      - key: config.yaml
+        path: config.yaml
+  - name: access-keys-volume
+    secret:
+      secretName: {{ .Values.__workspace__ }}-access-keys
+      items:
+      - key: a1key
+        path: a1key
+      - key: a2key
+        path: a2key
+  - name: main-volume
+    configMap:
+      name: {{ .Values.__workspace__ }}-files
+      defaultMode: 0777
+      items:
+      - key: README
+        path: README
+        {{- range $index, $script := .Values.initScripts }}
+          {{- range $key, $value := $script }}
+      - key: __init_{{ printf "%02d" (add $index 1) }}_{{ $key | replace "&" "__bg" | replace "@" "__flag" }}
+        path: __init_{{ printf "%02d" (add $index 1) }}_{{ $key | replace "&" "__bg" | replace "@" "__flag" }}
+          {{- end }}
+        {{- end }}
+  {{- range $storageName, $storage := .Values.storages }}
+  {{- if $storage.enabled }}
+  - name: storage-{{ $storageName }}
+    {{- if $storage.memory }}
+    emptyDir:
+      medium: Memory
+      sizeLimit: {{ $storage.size }}
+    {{- else }}
+    persistentVolumeClaim:
+      claimName: pvc-{{ $.Values.__workspace__ }}-{{ $storageName }}
+    {{- end }}
+  {{- end }}
+  {{- end }}
+  {{- range $storageName, $storage := .Values.docker.storages }}
+  {{- if $storage.enabled }}
+  - name: storage-docker-{{ $storageName }}
+    persistentVolumeClaim:
+      claimName: pvc-{{ $.Values.__workspace__ }}-docker-{{ $storageName }}
+  {{- end }}
+  {{- end }}
+  {{- if .Values.extFiles }}
+  - name: main-ext-files-volume
+    configMap:
+      name: {{ .Values.__workspace__ }}-main-ext-files
+      items:
+        {{- range $path, $content := .Values.extFiles }}
+        - key: {{ $path | replace "/" "__" | quote }}
+          path: {{ $path | replace "/" "__" }}
+        {{- end }}
+  {{- end }}
+  {{- if .Values.docker.enabled }}
+  - name: docker-sock
+    emptyDir: {}  
+  {{- if .Values.docker.extFiles }}
+  - name: dockker-ext-files-volume
+    configMap:
+      name: {{ .Values.__workspace__ }}-docker-ext-files
+      items:
+        {{- range $path, $content := .Values.docker.extFiles }}
+        - key: {{ $path | replace "/" "__" | quote }}
+          path: {{ $path | replace "/" "__" }}
+        {{- end }}
+  {{- end }}
+  {{- end }}
+  - name: tls-volume
+    secret:
+      secretName: {{ .Values.__workspace__ }}-tls
+  {{- if .Values.__registry__.certCA }}
+  - name: docker-ca-cert
+    configMap:
+      name: registryca
+      items:
+        - key: registry-ca.pem
+          path: registry-ca.pem
+  {{- end }}
+
+  {{- if .Values.affinity }}
+  affinity:
+    nodeAffinity:
+      requiredDuringSchedulingIgnoredDuringExecution:
+        nodeSelectorTerms:
+        - matchExpressions:
+          - key: kubernetes.io/hostname
+            operator: In
+            values:
+            {{- toYaml .Values.affinity | nindent 12 }}
+  {{- end }}
+
+  enableServiceLinks: false

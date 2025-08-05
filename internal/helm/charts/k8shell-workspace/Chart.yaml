@@ -1,0 +1,9 @@
+apiVersion: v2
+name: k8shell-workspace
+description: k8shell workspace chart
+version: 1.0.0
+appVersion: 0.0.0 # This is set dynamically in the provisioner from the k8shelld image tag
+
+annotations:
+  "app.kubernetes.io/managed-by": "k8shell"
+  "k8shell.io/component": "workspace"

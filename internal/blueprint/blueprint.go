@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io/fs"
 	"path/filepath"
@@ -28,9 +29,9 @@ type RawBlueprint struct {
 }
 
 type BlueprintScope struct {
-	Blueprint string        `yaml:"blueprint"`
-	User      identity.User `yaml:"user"`
-	Repo      models.Repo   `yaml:"repo"`
+	Blueprint string         `yaml:"blueprint"`
+	User      *identity.User `yaml:"user"`
+	Repo      models.Repo    `yaml:"repo"`
 }
 
 func (bs *BlueprintScope) ToMap() (map[string]any, error) {
@@ -46,6 +47,8 @@ func (bs *BlueprintScope) ToMap() (map[string]any, error) {
 
 	return result, nil
 }
+
+var ErrBlueprintNotFound = errors.New("blueprint not found")
 
 // MergeStrategies allow custom list merging strategies per dotted path.
 type MergeStrategies map[string]func(dst, src []interface{}) []interface{}
@@ -77,7 +80,7 @@ type BlueprintManager struct {
 func TestScope() *BlueprintScope {
 	return &BlueprintScope{
 		Blueprint: "testblueprint",
-		User: identity.User{
+		User: &identity.User{
 			Username:     "testuser",
 			IsValid:      true,
 			ExpiresAt:    time.Now().Add(24 * time.Hour),
@@ -202,93 +205,6 @@ func (bm *BlueprintManager) validateAllBlueprints() []error {
 	return allErrors
 }
 
-// setupWatcher initializes the file system watcher
-func (bm *BlueprintManager) setupWatcher() error {
-	watcher, err := fsnotify.NewWatcher()
-	if err != nil {
-		return err
-	}
-
-	bm.watcher = watcher
-
-	err = filepath.WalkDir(bm.watchDir, func(path string, d fs.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		if d.IsDir() {
-			return bm.watcher.Add(path)
-		}
-		return nil
-	})
-
-	if err != nil {
-		bm.watcher.Close()
-		return err
-	}
-
-	go bm.watchLoop()
-
-	return nil
-}
-
-// watchLoop handles file system events
-func (bm *BlueprintManager) watchLoop() {
-	for {
-		select {
-		case event, ok := <-bm.watcher.Events:
-			if !ok {
-				return
-			}
-
-			if !isYAMLFile(event.Name) {
-				continue
-			}
-
-			switch {
-			case event.Op&fsnotify.Write == fsnotify.Write,
-				event.Op&fsnotify.Create == fsnotify.Create,
-				event.Op&fsnotify.Remove == fsnotify.Remove,
-				event.Op&fsnotify.Rename == fsnotify.Rename:
-				bm.scheduleReload()
-			}
-
-		case err, ok := <-bm.watcher.Errors:
-			if !ok {
-				return
-			}
-			fmt.Printf("Watcher error: %v\n", err)
-
-		case <-bm.stopChan:
-			return
-		}
-	}
-}
-
-// scheduleReload debounces multiple file changes and schedules a reload
-func (bm *BlueprintManager) scheduleReload() {
-	bm.mu.Lock()
-	defer bm.mu.Unlock()
-
-	if bm.reloadTimer != nil {
-		bm.reloadTimer.Stop()
-	}
-
-	bm.reloadTimer = time.AfterFunc(bm.reloadDelay, func() {
-		bm.log.Info().Msg("Reloading blueprints due to file changes")
-		if err := bm.loadAndValidateBlueprints(); err != nil {
-			bm.log.Error().Err(err).Msg("Failed to reload blueprints")
-		} else {
-			bm.log.Info().Msg("Blueprints reloaded successfully")
-		}
-	})
-}
-
-// isYAMLFile checks if a file has a YAML extension
-func isYAMLFile(filename string) bool {
-	ext := filepath.Ext(filename)
-	return ext == ".yaml" || ext == ".yml"
-}
-
 // GetBlueprint evaluates CEL expressions for a specific blueprint with given scope.
 func (bm *BlueprintManager) GetBlueprint(name string, scope *BlueprintScope) (*models.Blueprint, error) {
 	if scope == nil {
@@ -329,6 +245,25 @@ func (bm *BlueprintManager) GetBlueprint(name string, scope *BlueprintScope) (*m
 	return &bp, nil
 }
 
+func (bm *BlueprintManager) GetRawBlueprint(name string) (interface{}, error) {
+	bm.mu.RLock()
+	defer bm.mu.RUnlock()
+
+	rawBp, exists := bm.rawBlueprints[name]
+	if !exists {
+		return nil, fmt.Errorf("blueprint %s not found", name)
+	}
+
+	clonedNode := bm.cloneAndProcessCELNodes(rawBp.Node)
+
+	var temp interface{}
+	if err := clonedNode.Decode(&temp); err != nil {
+		return nil, fmt.Errorf("failed to decode raw blueprint: %w", err)
+	}
+
+	return temp, nil
+}
+
 // ListBlueprintNames returns all available blueprint names.
 func (bm *BlueprintManager) ListBlueprintNames() []string {
 	bm.mu.RLock()
@@ -360,28 +295,6 @@ func (bm *BlueprintManager) GetAllBlueprints(scope *BlueprintScope) (map[string]
 	}
 
 	return result, nil
-}
-
-// Close stops the file watcher and cleans up resources
-func (bm *BlueprintManager) Close() error {
-	if !bm.watchEnabled {
-		return nil
-	}
-
-	close(bm.stopChan)
-
-	bm.mu.Lock()
-	if bm.reloadTimer != nil {
-		bm.reloadTimer.Stop()
-	}
-	bm.mu.Unlock()
-
-	if bm.watcher != nil {
-		return bm.watcher.Close()
-	}
-
-	bm.log.Info().Msg("Blueprint manager closed")
-	return nil
 }
 
 // loadRawBlueprints loads raw blueprints from YAML files.
@@ -467,7 +380,7 @@ func (bm *BlueprintManager) extractFromSequence(root *yaml.Node, path string) er
 }
 
 // extractSingleRawBlueprint extracts a single raw blueprint.
-func (bm *BlueprintManager) extractSingleRawBlueprint(node *yaml.Node, path string) error {
+func (bm *BlueprintManager) extractSingleRawBlueprint(node *yaml.Node, _ string) error {
 	var bpData map[string]interface{}
 	if err := node.Decode(&bpData); err != nil {
 		bpData = make(map[string]interface{})
@@ -524,173 +437,44 @@ func (bm *BlueprintManager) extractMultipleRawBlueprints(node *yaml.Node, path s
 	return nil
 }
 
-// resolveInheritance resolves template inheritance at YAML level.
-func (bm *BlueprintManager) resolveInheritance() error {
-	resolved := make(map[string]*RawBlueprint)
+// cloneAndProcessCELNodes recursively clones YAML nodes and adds cel:: prefix to !!cel tagged values
+func (bm *BlueprintManager) cloneAndProcessCELNodes(node *yaml.Node) *yaml.Node {
+	if node == nil {
+		return nil
+	}
 
-	for name := range bm.rawBlueprints {
-		if _, exists := resolved[name]; !exists {
-			resolvedBp, err := bm.resolveRawTemplate(name, map[string]bool{})
-			if err != nil {
-				return err
-			}
-			resolved[name] = resolvedBp
+	cloned := &yaml.Node{
+		Kind:        node.Kind,
+		Style:       node.Style,
+		Tag:         node.Tag,
+		Value:       node.Value,
+		Anchor:      node.Anchor,
+		Alias:       node.Alias,
+		HeadComment: node.HeadComment,
+		LineComment: node.LineComment,
+		FootComment: node.FootComment,
+		Line:        node.Line,
+		Column:      node.Column,
+	}
+
+	if node.Tag == "!cel" {
+		if node.Kind == yaml.ScalarNode {
+			cloned.Tag = "!!str"
+			cloned.Value = "!cel:" + node.Value
 		}
 	}
 
-	bm.rawBlueprints = resolved
-	return nil
+	if len(node.Content) > 0 {
+		cloned.Content = make([]*yaml.Node, len(node.Content))
+		for i, child := range node.Content {
+			cloned.Content[i] = bm.cloneAndProcessCELNodes(child)
+		}
+	}
+
+	return cloned
 }
 
-// resolveRawTemplate recursively resolves template inheritance at YAML level.
-func (bm *BlueprintManager) resolveRawTemplate(bpName string, visited map[string]bool) (*RawBlueprint, error) {
-	if visited[bpName] {
-		return nil, fmt.Errorf("circular template reference: %s", bpName)
-	}
-	visited[bpName] = true
-
-	bp, found := bm.rawBlueprints[bpName]
-	if !found {
-		return nil, fmt.Errorf("blueprint %s not found", bpName)
-	}
-
-	if bp.Template == "" {
-		return bp, nil
-	}
-
-	parent, err := bm.resolveRawTemplate(bp.Template, visited)
-	if err != nil {
-		return nil, err
-	}
-
-	// Merge YAML nodes
-	mergedNode, err := bm.mergeYAMLNodes(parent.Node, bp.Node)
-	if err != nil {
-		return nil, fmt.Errorf("failed to merge templates for %s: %w", bpName, err)
-	}
-
-	return &RawBlueprint{
-		Name:     bp.Name,
-		Template: "",
-		Node:     mergedNode,
-	}, nil
-}
-
-// mergeYAMLNodes merges two YAML nodes, preserving CEL expressions.
-func (bm *BlueprintManager) mergeYAMLNodes(parent, child *yaml.Node) (*yaml.Node, error) {
-	// Instead of decoding to maps (which loses tags), we need to merge at the node level
-	return bm.mergeYAMLNodesWithTags(parent, child)
-}
-
-// mergeYAMLNodesWithTags merges YAML nodes while preserving all tags
-func (bm *BlueprintManager) mergeYAMLNodesWithTags(parent, child *yaml.Node) (*yaml.Node, error) {
-	if child.Kind != yaml.MappingNode {
-		return child, nil
-	}
-
-	if parent.Kind != yaml.MappingNode {
-		return child, nil
-	}
-
-	result := &yaml.Node{
-		Kind:    yaml.MappingNode,
-		Tag:     "!!map",
-		Content: make([]*yaml.Node, 0),
-	}
-
-	parentKeys := make(map[string]*yaml.Node)
-	for i := 0; i < len(parent.Content); i += 2 {
-		if i+1 < len(parent.Content) {
-			key := parent.Content[i].Value
-			value := parent.Content[i+1]
-			parentKeys[key] = value
-		}
-	}
-
-	processedKeys := make(map[string]bool)
-
-	for i := 0; i < len(child.Content); i += 2 {
-		if i+1 < len(child.Content) {
-			keyNode := child.Content[i]
-			valueNode := child.Content[i+1]
-			key := keyNode.Value
-
-			if parentValue, exists := parentKeys[key]; exists {
-				mergedValue, err := bm.mergeValueNodes(parentValue, valueNode, key)
-				if err != nil {
-					return nil, err
-				}
-				result.Content = append(result.Content, keyNode, mergedValue)
-			} else {
-				result.Content = append(result.Content, keyNode, valueNode)
-			}
-			processedKeys[key] = true
-		}
-	}
-
-	for i := 0; i < len(parent.Content); i += 2 {
-		if i+1 < len(parent.Content) {
-			keyNode := parent.Content[i]
-			valueNode := parent.Content[i+1]
-			key := keyNode.Value
-
-			if !processedKeys[key] {
-				result.Content = append(result.Content, keyNode, valueNode)
-			}
-		}
-	}
-
-	return result, nil
-}
-
-// mergeValueNodes merges two value nodes based on their types and merge strategies
-func (bm *BlueprintManager) mergeValueNodes(parentValue, childValue *yaml.Node, key string) (*yaml.Node, error) {
-	if parentValue.Kind == yaml.MappingNode && childValue.Kind == yaml.MappingNode {
-		return bm.mergeYAMLNodesWithTags(parentValue, childValue)
-	}
-
-	if parentValue.Kind == yaml.SequenceNode && childValue.Kind == yaml.SequenceNode {
-		return bm.mergeSequenceNodes(parentValue, childValue, key)
-	}
-
-	return childValue, nil
-}
-
-// mergeSequenceNodes merges two sequence nodes based on the configured strategy
-func (bm *BlueprintManager) mergeSequenceNodes(parentSeq, childSeq *yaml.Node, key string) (*yaml.Node, error) {
-	if strategy, exists := bm.strategies[key]; exists {
-		var parentList, childList []interface{}
-
-		if err := parentSeq.Decode(&parentList); err != nil {
-			return nil, fmt.Errorf("failed to decode parent sequence for key %s: %w", key, err)
-		}
-
-		if err := childSeq.Decode(&childList); err != nil {
-			return nil, fmt.Errorf("failed to decode child sequence for key %s: %w", key, err)
-		}
-
-		mergedList := strategy(parentList, childList)
-
-		var resultNode yaml.Node
-		if err := resultNode.Encode(mergedList); err != nil {
-			return nil, fmt.Errorf("failed to encode merged sequence for key %s: %w", key, err)
-		}
-
-		return &resultNode, nil
-	}
-
-	// Default strategy: append child items to parent items
-	result := &yaml.Node{
-		Kind:    yaml.SequenceNode,
-		Tag:     "!!seq",
-		Content: make([]*yaml.Node, 0),
-	}
-
-	result.Content = append(result.Content, parentSeq.Content...)
-	result.Content = append(result.Content, childSeq.Content...)
-
-	return result, nil
-}
+//** helper functions **//
 
 // generateRandomName creates a random name with the given prefix.
 func generateRandomName(prefix string) string {
@@ -699,4 +483,10 @@ func generateRandomName(prefix string) string {
 		return prefix + "-xxxx"
 	}
 	return fmt.Sprintf("%s-%s", prefix, hex.EncodeToString(b))
+}
+
+// isYAMLFile checks if a file has a YAML extension
+func isYAMLFile(filename string) bool {
+	ext := filepath.Ext(filename)
+	return ext == ".yaml" || ext == ".yml"
 }

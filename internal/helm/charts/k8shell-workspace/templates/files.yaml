@@ -1,0 +1,18 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Values.__workspace__ }}-files
+  namespace: {{ .Release.Namespace }} 
+  labels:
+    {{- include "workspace.labels" . | nindent 4 }}  
+    type: system
+data:
+  README: |
+    # k8shell system files
+    # This directory contains the system files for the k8shell workspace.
+  {{- range $index, $script := .Values.initScripts }}
+    {{- range $key, $value := $script }}
+  __init_{{ printf "%02d" (add $index 1) }}_{{ $key | replace "&" "__bg" | replace "@" "__flag" }}: |
+{{ $value | indent 4 }}
+    {{- end }}
+  {{- end }}

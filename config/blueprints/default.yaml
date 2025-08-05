@@ -4,12 +4,10 @@ blueprints:
     sudo: false
 
     image: <image:tag>
-    imagePullSecret: ${WORKSPACE_REGCRED}
     imagePullPolicy: Always
     
     k8shelld: 
-      image: ${WORKSPACE_REGISTRY}/k8shell-base/k8shelld:v0.10.1-35
-      imagePullSecret: ${WORKSPACE_REGCRED}
+      image: k8shell-base/k8shelld:v0.10.1-35
       imagePullPolicy: Always
       encryptConfig: !cel "!(user.roles.exists(r, r in ['org-admin', 'admin', 'workspace-admin']))"
       ignoreOrphans:
@@ -20,9 +18,6 @@ blueprints:
         locality: Prague
         organization: ksi.fit.cvut.cz
         commonName: ksi.fit.cvut.cz
-
-    env:
-      TEST: "test_value"
 
     portForwarding:
       - localnetworks:0
@@ -46,7 +41,7 @@ blueprints:
 
       # group id used in the dind image to create the docker socket; when the dind image is rootless
       # the actual group id will be 100000 + group_id - 1 where 100000 is subordinate group id
-      group_id: 999
+      groupId: 999
 
       # subordinate group id used in the dind image; 
       # this should be set to 100000 when the dind image is rootless otehrwise it should be set to 0
@@ -56,32 +51,13 @@ blueprints:
       # use the same volumes as in the main workspace
       parentStorages: true
 
-      extFiles:
-        # the private CA certificate so that docker pull, push works
-        /etc/ssl/certs/private-ca.pem: !file private-ca.pem
-
-    credentialHelpers:
-      docker:
-        enabled: false
-        servers:
-        - address: ${WORKSPACE_REGISTRY}
-          username: ${WORKSPACE_REGISTRY_USERNAME}
-          password: ${WORKSPACE_REGISTRY_PASSWORD}
-
-      # git:
-      #   enabled: false
-      #   servers:
-      #   - address: github.com
-      #     username: none
-      #     password: gh_12345
-
     # list of storages in the workspace
     storages:
       home:
         enabled: true
         storageClass: ${WORKSPACE_STORAGE_CLASS}
         size: 10Gi
-        path: /home/{username}
+        path: !cel "'/home/' + user.username"
         readonly: False      
         annotations:
           zfs-csi.k8shell.io/volume-name: !cel "blueprint + '/' + user.username"
