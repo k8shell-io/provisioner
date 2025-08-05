@@ -1,4 +1,4 @@
-# K8Shell Provisioner
+# k8shell Provisioner
 
 A Kubernetes-native workspace provisioner service that dynamically creates and manages development environments using custom blueprints.
 
@@ -18,4 +18,3 @@ A Kubernetes-native workspace provisioner service that dynamically creates and m
 ---
 
 **Made with ❤️ by the k8shell team**
-    
