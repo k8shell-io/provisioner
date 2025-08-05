@@ -3,7 +3,6 @@
 # the following values are set in k8shell-proxy automatically according to the user settings
 
 # __user__          : user object
-# __namespace__     : name of the namespace where the workspace is deployed
 # __workspace__     : workspace name (blueprint.name + "-" + username)
 # __blueprint__     : blueprint name
 # __username__       : username of the user

@@ -3,7 +3,6 @@ apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
   name: np-{{ .Values.__workspace__ }}-isolated
-  namespace: {{ .Values.__namespace__ }}
   labels:
     {{- include "workspace.labels" . | nindent 4 }}  
 spec:

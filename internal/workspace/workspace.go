@@ -105,7 +105,7 @@ func (w *Workspace) Values() (map[string]interface{}, error) {
 	}
 
 	values["__user__"] = userValues
-	values["__namespace__"] = w.Namespace()
+	values["__username__"] = w.user.Username
 	values["__workspace__"] = w.Name()
 	values["__blueprint__"] = w.blueprint.Name
 	values["__username__"] = w.user.Username
