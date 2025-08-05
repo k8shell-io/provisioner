@@ -334,10 +334,48 @@ func (a *RESTApiService) ComposeBlueprint(c *gin.Context) {
 	c.JSON(http.StatusOK, bp)
 }
 
-// TemplateWorkspace handles POST /api/v1/workspaces/template
+// resolveBlueprintFromRequest resolves blueprint either from query parameter or request payload
+func (a *RESTApiService) resolveBlueprintFromRequest(c *gin.Context, scope *blueprint.BlueprintScope) (*models.Blueprint, error) {
+	blueprintName := c.Query("blueprint")
+
+	// Check if request has body
+	if c.Request.ContentLength > 0 {
+		if blueprintName != "" {
+			return nil, fmt.Errorf("cannot use both blueprint query parameter and request payload")
+		}
+
+		contentType := c.GetHeader("Content-Type")
+
+		body, err := io.ReadAll(c.Request.Body)
+		if err != nil {
+			return nil, fmt.Errorf("failed to read request body: %w", err)
+		}
+
+		var blueprintYAML []byte
+		if strings.Contains(contentType, "text/yaml") || strings.Contains(contentType, "application/x-yaml") {
+			blueprintYAML = body
+		} else {
+			return nil, fmt.Errorf("unsupported content type, expected text/yaml or application/x-yaml")
+		}
+
+		validationErrors := models.ValidateCustomBlueprint(blueprintYAML)
+		if len(validationErrors) > 0 {
+			return nil, fmt.Errorf("blueprint validation failed: %s", strings.Join(validationErrors, "; "))
+		}
+
+		return a.server.bpManager.ComposeWithScope(blueprintYAML, scope)
+	} else {
+		if blueprintName == "" {
+			return nil, fmt.Errorf("blueprint query parameter is required when no payload is provided")
+		}
+
+		return a.server.bpManager.GetBlueprint(blueprintName, scope)
+	}
+}
+
+// Updated TemplateWorkspace using the helper
 func (a *RESTApiService) TemplateWorkspace(c *gin.Context) {
 	username := c.Query("username")
-	blueprintName := c.Query("blueprint")
 
 	if username == "" {
 		c.JSON(http.StatusBadRequest, gin.H{
@@ -346,14 +384,6 @@ func (a *RESTApiService) TemplateWorkspace(c *gin.Context) {
 		return
 	}
 
-	if blueprintName == "" {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"error": "blueprint query parameter is required",
-		})
-		return
-	}
-
-	// Get the user's blueprint scope
 	scope, errx := a.server.GetBlueprintScope(c.Request.Context(), username, "", "")
 	if errx != nil {
 		var eresp identity.ErrorResponse
@@ -369,11 +399,27 @@ func (a *RESTApiService) TemplateWorkspace(c *gin.Context) {
 		return
 	}
 
-	blueprint, err := a.server.bpManager.GetBlueprint(blueprintName, scope)
+	blueprint, err := a.resolveBlueprintFromRequest(c, scope)
 	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{
-			"error": fmt.Sprintf("Blueprint not found: %s", blueprintName),
-		})
+		if strings.Contains(err.Error(), "cannot use both") ||
+			strings.Contains(err.Error(), "required when no payload") ||
+			strings.Contains(err.Error(), "validation failed") {
+			c.JSON(http.StatusBadRequest, gin.H{
+				"error": err.Error(),
+			})
+		} else if strings.Contains(err.Error(), "not found") {
+			c.JSON(http.StatusNotFound, gin.H{
+				"error": err.Error(),
+			})
+		} else if strings.Contains(err.Error(), "unsupported content type") {
+			c.JSON(http.StatusUnsupportedMediaType, gin.H{
+				"error": err.Error(),
+			})
+		} else {
+			c.JSON(http.StatusInternalServerError, gin.H{
+				"error": err.Error(),
+			})
+		}
 		return
 	}
 
@@ -393,14 +439,12 @@ func (a *RESTApiService) TemplateWorkspace(c *gin.Context) {
 		return
 	}
 
-	// Return rendered YAML manifests
 	c.Data(http.StatusOK, "application/x-yaml", []byte(renderedManifests))
 }
 
-// ProvisionWorkspace handles POST /api/v1/workspaces
+// ProvisionWorkspace handles the POST request to provision a workspace
 func (a *RESTApiService) ProvisionWorkspace(c *gin.Context) {
 	username := c.Query("username")
-	blueprintName := c.Query("blueprint")
 	stream := c.Query("stream") == "true"
 	timeoutStr := c.Query("timeout")
 
@@ -423,13 +467,6 @@ func (a *RESTApiService) ProvisionWorkspace(c *gin.Context) {
 		return
 	}
 
-	if blueprintName == "" {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"error": "blueprint query parameter is required",
-		})
-		return
-	}
-
 	scope, errx := a.server.GetBlueprintScope(c.Request.Context(), username, "", "")
 	if errx != nil {
 		var eresp identity.ErrorResponse
@@ -445,11 +482,27 @@ func (a *RESTApiService) ProvisionWorkspace(c *gin.Context) {
 		return
 	}
 
-	blueprint, err := a.server.bpManager.GetBlueprint(blueprintName, scope)
+	blueprint, err := a.resolveBlueprintFromRequest(c, scope)
 	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{
-			"error": fmt.Sprintf("Blueprint not found: %s", blueprintName),
-		})
+		if strings.Contains(err.Error(), "cannot use both") ||
+			strings.Contains(err.Error(), "required when no payload") ||
+			strings.Contains(err.Error(), "validation failed") {
+			c.JSON(http.StatusBadRequest, gin.H{
+				"error": err.Error(),
+			})
+		} else if strings.Contains(err.Error(), "not found") {
+			c.JSON(http.StatusNotFound, gin.H{
+				"error": err.Error(),
+			})
+		} else if strings.Contains(err.Error(), "unsupported content type") {
+			c.JSON(http.StatusUnsupportedMediaType, gin.H{
+				"error": err.Error(),
+			})
+		} else {
+			c.JSON(http.StatusInternalServerError, gin.H{
+				"error": err.Error(),
+			})
+		}
 		return
 	}
 
