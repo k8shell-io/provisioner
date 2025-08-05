@@ -3,6 +3,7 @@ apiVersion: v1
 kind: ConfigMap
 metadata:
   name: {{ .Values.__workspace__ }}-main-ext-files
+  namespace: {{ .Release.Namespace }} 
   labels:
     {{- include "workspace.labels" . | nindent 4 }}  
     type: main-ext-files
@@ -18,6 +19,7 @@ apiVersion: v1
 kind: ConfigMap
 metadata:
   name: {{ .Values.__workspace__ }}-docker-ext-files
+  namespace: {{ .Release.Namespace }} 
   labels:
     {{ include "workspace.labels" . | nindent 4 }}  
     type: docker-ext-files

@@ -3,6 +3,7 @@ apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
   name: np-{{ .Values.__workspace__ }}
+  namespace: {{ .Release.Namespace }} 
   labels:
     {{- include "workspace.labels" . | nindent 4 }}  
 spec:
@@ -31,6 +32,7 @@ apiVersion: cilium.io/v2
 kind: CiliumNetworkPolicy
 metadata:
   name: cilium-np-{{ .Values.__workspace__ }}
+  namespace: {{ .Release.Namespace }} 
 spec:
   endpointSelector:
     matchLabels:
