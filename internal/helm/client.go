@@ -167,7 +167,6 @@ func (c *Client) Template(ctx context.Context, chartName string, opts InstallOpt
 		return "", fmt.Errorf("chart %s not found", chartName)
 	}
 
-	c.log.Debug().Msgf("Rendering chart %s with values: %v", chartName, opts.Values)
 	release, err := install.RunWithContext(ctx, chart, opts.Values)
 	if err != nil {
 		return "", fmt.Errorf("failed to render chart: %w", err)
@@ -207,7 +206,6 @@ func (c *Client) Install(ctx context.Context, chartName string, opts InstallOpti
 		chart.Metadata.AppVersion = opts.AppVersion
 	}
 
-	c.log.Debug().Msgf("Installing chart %s with values: %v", chartName, opts.Values)
 	_, err = install.RunWithContext(ctx, chart, opts.Values)
 	if err != nil {
 		return fmt.Errorf("failed to install chart: %w", err)

@@ -23,24 +23,24 @@ func (e EventMessage) String() string {
 }
 
 type ProvisionOptions struct {
-	Timeout  int
-	Messages chan EventMessage
+	Timeout     int
+	Messages    chan EventMessage
+	LockTimeout int
 }
 
 func (w *Workspace) Provision(ctx context.Context, opts *ProvisionOptions) (*WorkspaceStatus, error) {
 	if opts == nil {
 		opts = &ProvisionOptions{
-			Timeout:  20,
-			Messages: nil,
+			Timeout:     20,
+			Messages:    nil,
+			LockTimeout: 30,
 		}
 	}
 
-	values, err := w.Values()
-	if err != nil {
-		return nil, err
+	if opts.LockTimeout == 0 {
+		opts.LockTimeout = 30
 	}
 
-	// Check if workspace already exists
 	exists, err := w.IsInstalled(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("failed to check if workspace exists: %w", err)
@@ -53,20 +53,73 @@ func (w *Workspace) Provision(ctx context.Context, opts *ProvisionOptions) (*Wor
 		}
 
 		if status.Status == "Running" {
+			w.log.Info().Msgf("Workspace %s is already running, no provisioning needed", w.Name())
 			return status, nil
 		}
 
-		// if status.Status == "Pending" {
-		// 	w.log.Info().Msgf("Workspace %s is pending, checking conditions", w.Name())
-		// 	if status.Message != "" {
-		// 		return status, nil
-		// 	}
-		// }
+		w.log.Info().Msgf("Workspace %s exists but is not running (%s), need to provision", w.Name(), status.Status)
+	} else {
+		w.log.Info().Msgf("Workspace %s does not exist, need to provision", w.Name())
+	}
 
-		w.log.Info().Msgf("Workspace %s already exists but is not running, attempting to reinstall", w.Name())
+	return w.provisionWithLock(ctx, opts)
+}
+
+func (w *Workspace) provisionWithLock(ctx context.Context, opts *ProvisionOptions) (*WorkspaceStatus, error) {
+	workspaceLock := NewWorkspaceLock(w.client.GetKubeClient(), w.client.TargetNamespace(), w.Name())
+
+	w.log.Info().Msgf("Acquiring lock for workspace %s provisioning", w.Name())
+	lockCtx, cancel := context.WithTimeout(ctx, time.Duration(opts.LockTimeout)*time.Second)
+	defer cancel()
+
+	acquired, err := workspaceLock.Acquire(lockCtx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to acquire lock for workspace %s: %w", w.Name(), err)
+	}
+
+	if !acquired {
+		return nil, fmt.Errorf("timeout acquiring lock for workspace %s after %d seconds", w.Name(), opts.LockTimeout)
+	}
+
+	defer func() {
+		if releaseErr := workspaceLock.Release(context.Background()); releaseErr != nil {
+			w.log.Error().Err(releaseErr).Msgf("Failed to release lock for workspace %s", w.Name())
+		} else {
+			w.log.Info().Msgf("Released lock for workspace %s", w.Name())
+		}
+	}()
+
+	w.log.Info().Msgf("Acquired lock for workspace %s", w.Name())
+
+	exists, err := w.IsInstalled(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to recheck if workspace exists: %w", err)
+	}
+
+	if exists {
+		status, err := w.GetStatus(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("failed to recheck workspace status: %w", err)
+		}
+
+		if status.Status == "Running" {
+			w.log.Info().Msgf("Workspace %s is now running (completed by another instance while waiting for lock)", w.Name())
+			return status, nil
+		}
+
+		w.log.Info().Msgf("Workspace %s still not running after acquiring lock, proceeding with reinstall", w.Name())
 		if err := w.client.Uninstall(w.Name(), int(opts.Timeout)); err != nil {
 			return nil, fmt.Errorf("failed to delete workspace: %w", err)
 		}
+	}
+
+	return w.doInstallation(ctx, opts)
+}
+
+func (w *Workspace) doInstallation(ctx context.Context, opts *ProvisionOptions) (*WorkspaceStatus, error) {
+	values, err := w.Values()
+	if err != nil {
+		return nil, err
 	}
 
 	startTime := time.Now()
@@ -91,10 +144,8 @@ func (w *Workspace) Provision(ctx context.Context, opts *ProvisionOptions) (*Wor
 	if status.Status == "Running" {
 		status.ProvisionTime = time.Since(startTime)
 		w.log.Info().Msgf("Workspace %s is now running, provisioned in %s", w.Name(), status.ProvisionTime)
-		return status, nil
 	}
-
-	return nil, fmt.Errorf("workspace failed to reach running state: %s", status.Status)
+	return status, nil
 }
 
 // waitForPodRunning with quick failure detection
