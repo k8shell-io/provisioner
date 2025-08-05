@@ -1,7 +1,7 @@
 blueprints:
   - name: sql
     template: default
-    image: ${WORKSPACE_REGISTRY}/workspaces/awd:0.8-3.2
+    image: workspaces/awd:0.8-3.2
     sudo: true
 
     k8shelld:
@@ -18,7 +18,7 @@ blueprints:
 
   - name: dev
     template: default
-    image: ${WORKSPACE_REGISTRY}/workspaces/dev:0.8-1.1
+    image: workspaces/dev:0.8-1.1
 
     sudo: true
     network:

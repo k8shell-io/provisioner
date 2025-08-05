@@ -174,7 +174,7 @@ func (w *Workspace) generateKeyCert() (keyPEM, certPEM string, err error) {
 		return "", "", fmt.Errorf("failed to generate serial number: %w", err)
 	}
 	template.SerialNumber = serialNumber
-	template.DNSNames = []string{fmt.Sprintf("%s.%s", w.Name(), w.Namespace())}
+	template.DNSNames = []string{fmt.Sprintf("%s.%s", w.Name(), w.client.TargetNamespace())}
 
 	certBytes, err := x509.CreateCertificate(rand.Reader, &template, &template, &privateKey.PublicKey, privateKey)
 	if err != nil {

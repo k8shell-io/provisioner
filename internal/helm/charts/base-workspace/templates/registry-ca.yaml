@@ -1,0 +1,10 @@
+{{ if .Values.__registry__.certCA }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: registryca
+  namespace: {{ .Release.Namespace }}
+data:
+  registry-ca.pem: |
+    {{ .Values.__registry__.certCA | b64enc | quote }}
+{{ end }}

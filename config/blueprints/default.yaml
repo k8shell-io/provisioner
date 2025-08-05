@@ -4,11 +4,10 @@ blueprints:
     sudo: false
 
     image: <image:tag>
-    imagePullSecret: ${WORKSPACE_REGCRED}
     imagePullPolicy: Always
     
     k8shelld: 
-      image: ${WORKSPACE_REGISTRY}/k8shell-base/k8shelld:v0.10.1-35
+      image: k8shell-base/k8shelld:v0.10.1-35
       imagePullPolicy: Always
       encryptConfig: !cel "!(user.roles.exists(r, r in ['org-admin', 'admin', 'workspace-admin']))"
       ignoreOrphans:
@@ -51,10 +50,6 @@ blueprints:
 
       # use the same volumes as in the main workspace
       parentStorages: true
-
-      extFiles:
-        # the private CA certificate so that docker pull, push works
-        /etc/ssl/certs/private-ca.pem: !file private-ca.pem
 
     # list of storages in the workspace
     storages:

@@ -47,18 +47,13 @@ func (w *Workspace) Name() string {
 	return w.blueprint.Name + "-" + w.user.Username
 }
 
-// Namespace returns the namespace where the workspace is deployed
-func (w *Workspace) Namespace() string {
-	return fmt.Sprintf("workspaces-%s", w.user.Organization)
-}
-
 func (w *Workspace) Labels() map[string]string {
 	return map[string]string{
-		"app.kubernetes.io/name":       "k8shell-workspace",
+		"app.kubernetes.io/name":       helm.WORKSPACE_CHART_NAME,
 		"app.kubernetes.io/instance":   w.Name(),
 		"app.kubernetes.io/version":    "1.0.0",
 		"app.kubernetes.io/managed-by": "k8shell-provisioner",
-		"k8shell.io/app":               "k8shell-workspace",
+		"k8shell.io/app":               helm.WORKSPACE_CHART_NAME,
 		"k8shell.io/username":          w.user.Username,
 		"k8shell.io/blueprint":         w.blueprint.Name,
 		"k8shell.io/organization":      w.user.Organization,
@@ -112,6 +107,7 @@ func (w *Workspace) Values() (map[string]interface{}, error) {
 	values["__tlskey__"] = key
 	values["__a1key__"] = a1key
 	values["__a2key__"] = a2key
+	values["__registry__"] = w.client.Registry.ToValues()
 
 	config, err := w.k8shelldConfig(w.blueprint.K8shelld.EncryptConfig, a1key, values)
 	if err != nil {
@@ -130,7 +126,6 @@ func (w *Workspace) Template(ctx context.Context) (string, error) {
 	}
 	out, err := w.client.Template(ctx, helm.WORKSPACE_CHART_NAME, helm.InstallOptions{
 		ReleaseName: w.blueprint.Name,
-		Namespace:   w.Namespace(),
 		Values:      values,
 	})
 	if err != nil {
@@ -143,7 +138,7 @@ func (w *Workspace) Template(ctx context.Context) (string, error) {
 func (w *Workspace) GetStatus(ctx context.Context) (*WorkspaceStatus, error) {
 	podName := w.Name()
 
-	pod, err := w.client.GetKubeClient().CoreV1().Pods(w.Namespace()).Get(ctx, podName, metav1.GetOptions{})
+	pod, err := w.client.GetKubeClient().CoreV1().Pods(w.client.TargetNamespace()).Get(ctx, podName, metav1.GetOptions{})
 	if err != nil {
 		return &WorkspaceStatus{
 			Status: "NotFound",
@@ -286,7 +281,7 @@ func (w *Workspace) getFailedMessage(pod *corev1.Pod) string {
 }
 
 func (w *Workspace) IsInstalled(ctx context.Context) (bool, error) {
-	_, err := w.client.GetRelease(w.Name(), w.Namespace())
+	_, err := w.client.GetRelease(w.Name())
 	if err != nil {
 		if strings.Contains(err.Error(), "not found") || strings.Contains(err.Error(), "release: not found") {
 			return false, nil

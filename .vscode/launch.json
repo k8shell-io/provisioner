@@ -13,11 +13,10 @@
             "program": "cmd/provisioner/main.go", // Path to your Go file or main package
             "env": {
                 "SECRET_FILES": "/opt/shared/provisioner/secrets",
-                "WORKSPACE_REGCRED": "regcred",
                 "WORKSPACE_REGISTRY": "fitcr.ksi.in.fit.cvut.cz",
-                "WORKSPACE_REGISTRY_USERNAME": "admin",
-                "WORKSPACE_REGISTRY_PASSWORD": "Harbor94ek1",
                 "WORKSPACE_STORAGE_CLASS": "zfs-csi-k8shell-test",
+                "HELM_DEBUG": "true",
+                "HELM_DEBUG_MANIFEST": "true",
             },
             "cwd": "${workspaceFolder}",
             "args": [

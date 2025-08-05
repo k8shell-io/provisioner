@@ -6,9 +6,9 @@ metadata:
   labels:
     {{- include "workspace.labels" . | nindent 4 }}  
 spec:
-  {{ if .Values.imagePullSecret }}
+  {{ if .Values.__registry__.regcred }}
   imagePullSecrets:
-  - name: {{ .Values.imagePullSecret }}
+  - name: {{ .Values.__registry__.regcred }}
   {{ end }}  
   {{ if .Values.serviceAccount }}
   serviceAccountName: {{ .Values.serviceAccount }}
@@ -16,7 +16,7 @@ spec:
   initContainers:
     #### init container to initialize the workspace
     - name: init-base
-      image: {{ .Values.k8shelld.image }}
+      image: {{ include "workspace.k8shelldImage" . }}
       imagePullPolicy: {{ .Values.k8shelld.imagePullPolicy }}
       securityContext:
         runAsUser: 0
@@ -29,7 +29,7 @@ spec:
   containers:
     #### main container
     - name: k8shell-main
-      image: {{ .Values.image }}
+      image: {{ include "workspace.mainImage" . }}
       securityContext:
         runAsUser: 0
         runAsGroup: 0
@@ -57,7 +57,7 @@ spec:
 
       env:
       - name: IMAGE
-        value: {{ .Values.image }}
+        value:  {{ include "workspace.mainImage" . }}
       - name: WORKSPACE
         value: {{ .Values.__workspace__ }}
       - name: BLUEPRINT
@@ -121,7 +121,7 @@ spec:
       {{- end }}
       {{- if .Values.docker.enabled }}
       - name: docker-sock
-        mountPath: /var/docker
+        mountPath: /var/run/docker
       {{- end }}
 
     #### docker container
@@ -140,6 +140,12 @@ spec:
       volumeMounts:
         - name: docker-sock
           mountPath: /var/run/docker
+      {{- if .Values.__registry__.certCA }}
+        - name: docker-ca-cert
+          mountPath: /etc/ssl/certs/registry-ca.pem
+          subPath: registry-ca.pem
+      {{- end }}
+
       {{- if .Values.docker.parentStorages }}    
       {{- range $storageName, $storage := .Values.storages }}
       {{- if $storage.enabled }}
@@ -243,6 +249,14 @@ spec:
   - name: tls-volume
     secret:
       secretName: {{ .Values.__workspace__ }}-tls
+  {{- if .Values.__registry__.certCA }}
+  - name: docker-ca-cert
+    configMap:
+      name: registryca
+      items:
+        - key: registry-ca.pem
+          path: registry-ca.pem
+  {{- end }}
 
   {{- if .Values.affinity }}
   affinity:

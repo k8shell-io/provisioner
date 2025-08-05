@@ -1,4 +1,4 @@
-package server
+package config
 
 import (
 	"fmt"
@@ -9,10 +9,12 @@ import (
 
 // Config represents the server configuration
 type Config struct {
-	Http       HttpConfig           `yaml:"http"`
-	Identity   IdentityConfig       `yaml:"identity"`
-	Blueprints BlueprintsFileConfig `yaml:"blueprints"`
-	BaseDir    string               `yaml:"baseDir"`
+	TargetNamespace string               `yaml:"targetNamespace"`
+	DefaultRegistry DefaultRegistry      `yaml:"defaultRegistry"`
+	Http            HttpConfig           `yaml:"http"`
+	Identity        IdentityConfig       `yaml:"identity"`
+	Blueprints      BlueprintsFileConfig `yaml:"blueprints"`
+	BaseDir         string               `yaml:"baseDir"`
 }
 
 // HttpConfig represents the HTTP server configuration.
@@ -21,10 +23,31 @@ type HttpConfig struct {
 	APIKey string `yaml:"APIKey"`
 }
 
+// IdentityConfig represents the identity service configuration.
 type IdentityConfig struct {
 	BaseURL string `yaml:"baseURL"`
 	APIKey  string `yaml:"APIKey"`
 	Timeout int    `yaml:"timeout"`
+}
+
+// DefaultRegistry represents the default container registry configuration.
+type DefaultRegistry struct {
+	Host     string `yaml:"host"`
+	CertCA   string `yaml:"certCA"`
+	Username string `yaml:"username"`
+	Password string `yaml:"password"`
+}
+
+func (r DefaultRegistry) ToValues() map[string]interface{} {
+	values := make(map[string]interface{})
+	values["host"] = r.Host
+	values["certCA"] = r.CertCA
+	if r.Username != "" && r.Password != "" {
+		values["dockerConfigJson"] = fmt.Sprintf(`{"auths": {"%s": {"username": "%s","password": "%s"}}}`,
+			r.Host, r.Username, r.Password)
+		values["regcred"] = "regcred"
+	}
+	return values
 }
 
 // Blueprint represents a blueprint configuration

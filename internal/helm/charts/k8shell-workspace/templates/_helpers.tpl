@@ -58,3 +58,35 @@ spec:
     requests:
       storage: {{ .storage.size }}
 {{- end }}
+
+{{/*
+Build full image name with registry if needed
+Uses regex to detect registry hostname in image name
+*/}}
+{{- define "workspace.imageWithRegistry" -}}
+{{- $image := .image | toString -}}
+{{- $registry := .registry | toString -}}
+
+{{/* Use regex to check if image starts with a registry (hostname with . or :) */}}
+{{- if regexMatch "^[^/]*[.:].*/" $image -}}
+  {{/* Image already has a registry */}}
+  {{- $image -}}
+{{- else -}}
+  {{/* No registry detected, prepend the provided registry */}}
+  {{- $registry -}}/{{- $image -}}
+{{- end -}}
+{{- end }}
+
+{{/*
+Convenience helper for k8shelld image
+*/}}
+{{- define "workspace.k8shelldImage" -}}
+{{- include "workspace.imageWithRegistry" (dict "image" .Values.k8shelld.image "registry" .Values.__registry__.host) -}}
+{{- end }}
+
+{{/*
+Convenience helper for main container image  
+*/}}
+{{- define "workspace.mainImage" -}}
+{{- include "workspace.imageWithRegistry" (dict "image" .Values.image "registry" .Values.__registry__.host) -}}
+{{- end }}

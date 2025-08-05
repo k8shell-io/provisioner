@@ -64,20 +64,20 @@ func (w *Workspace) Provision(ctx context.Context, opts *ProvisionOptions) (*Wor
 		// }
 
 		w.log.Info().Msgf("Workspace %s already exists but is not running, attempting to reinstall", w.Name())
-		if err := w.client.Uninstall(w.Name(), w.Namespace(), int(opts.Timeout)); err != nil {
+		if err := w.client.Uninstall(w.Name(), int(opts.Timeout)); err != nil {
 			return nil, fmt.Errorf("failed to delete workspace: %w", err)
 		}
 	}
 
 	startTime := time.Now()
 	err = w.client.Install(ctx, helm.WORKSPACE_CHART_NAME, helm.InstallOptions{
-		ReleaseName: w.Name(),
-		Namespace:   w.Namespace(),
-		Values:      values,
-		Wait:        false,
-		Timeout:     opts.Timeout,
-		Labels:      w.Labels(),
-		AppVersion:  w.getK8shelldVersion(),
+		ReleaseName:     w.Name(),
+		Values:          values,
+		CreateNamespace: false,
+		Wait:            false,
+		Timeout:         opts.Timeout,
+		Labels:          w.Labels(),
+		AppVersion:      w.getK8shelldVersion(),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to install workspace: %w", err)
@@ -148,7 +148,7 @@ func (w *Workspace) waitForPodRunning(ctx context.Context, startTime time.Time,
 
 // watchEvents watches and reports Kubernetes events for the pod
 func (w *Workspace) watchEvents(ctx context.Context, podName string, stop <-chan struct{}, opts *ProvisionOptions) {
-	watcher, err := w.client.GetKubeClient().CoreV1().Events(w.Namespace()).Watch(ctx, metav1.ListOptions{
+	watcher, err := w.client.GetKubeClient().CoreV1().Events(w.client.TargetNamespace()).Watch(ctx, metav1.ListOptions{
 		FieldSelector: fmt.Sprintf("involvedObject.name=%s", podName),
 	})
 	if err != nil {

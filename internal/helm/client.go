@@ -3,39 +3,49 @@ package helm
 import (
 	"context"
 	"fmt"
-	"log"
 	"os"
 	"time"
 
+	"github.com/k8shell-io/provisioner/internal/config"
+	"github.com/k8shell-io/provisioner/internal/log"
+	"github.com/rs/zerolog"
 	"helm.sh/helm/v3/pkg/action"
 	"helm.sh/helm/v3/pkg/chart"
 	"helm.sh/helm/v3/pkg/cli"
 	"helm.sh/helm/v3/pkg/release"
+	"k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 )
 
-const WORKSPACE_CHART_NAME = "k8shell-workspace"
+const (
+	WORKSPACE_CHART_NAME      = "k8shell-workspace"
+	BASE_WORKSPACE_CHART_NAME = "base-workspace"
+)
 
 type Client struct {
-	settings   *cli.EnvSettings
-	kubeClient kubernetes.Interface
-	charts     map[string]*chart.Chart
+	settings        *cli.EnvSettings
+	log             *zerolog.Logger
+	kubeClient      kubernetes.Interface
+	targetNamespace string
+	charts          map[string]*chart.Chart
+	Registry        config.DefaultRegistry
 }
 
 type InstallOptions struct {
-	ReleaseName string
-	Namespace   string
-	ChartName   string
-	Values      map[string]interface{}
-	Wait        bool
-	Labels      map[string]string
-	Timeout     int
-	AppVersion  string
+	ReleaseName     string
+	CreateNamespace bool
+	ChartName       string
+	Values          map[string]interface{}
+	Wait            bool
+	Labels          map[string]string
+	Timeout         int
+	AppVersion      string
 }
 
 // NewClient creates a new Helm client
-func NewClient() (*Client, error) {
+func NewClient(targetNamespace string, registry config.DefaultRegistry) (*Client, error) {
 	settings := cli.New()
 
 	var config *rest.Config
@@ -57,10 +67,18 @@ func NewClient() (*Client, error) {
 		return nil, fmt.Errorf("failed to load workspace chart: %w", err)
 	}
 
+	charts[BASE_WORKSPACE_CHART_NAME], err = LoadChartFromMemory(BASE_WORKSPACE_CHART_NAME)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load base workspace chart: %w", err)
+	}
+
 	return &Client{
-		settings:   settings,
-		kubeClient: kubeClient,
-		charts:     charts,
+		log:             log.NewLogger("helm"),
+		settings:        settings,
+		kubeClient:      kubeClient,
+		charts:          charts,
+		targetNamespace: targetNamespace,
+		Registry:        registry,
 	}, nil
 }
 
@@ -68,16 +86,74 @@ func (c *Client) GetKubeClient() kubernetes.Interface {
 	return c.kubeClient
 }
 
+// GetTargetNamespace returns the target namespace for Helm operations
+func (c *Client) TargetNamespace() string {
+	return c.targetNamespace
+}
+
+// EnsureBase ensures that the target namespace is configured and exists
+func (c *Client) EnsureBase(ctx context.Context) error {
+	if c.targetNamespace == "" {
+		return fmt.Errorf("target namespace is not set")
+	}
+
+	// check if namespace exists
+	var found bool = false
+	_, err := c.kubeClient.CoreV1().Namespaces().Get(ctx, c.targetNamespace, metav1.GetOptions{})
+	if err != nil {
+		if errors.IsNotFound(err) {
+			found = false
+		} else {
+			return fmt.Errorf("failed to check if namespace exists: %w", err)
+		}
+	} else {
+		found = true
+	}
+
+	if found {
+		r, err := c.ListWithSelector(c.targetNamespace, "app.kubernetes.io/name="+BASE_WORKSPACE_CHART_NAME)
+		if err != nil {
+			return fmt.Errorf("failed to list releases in namespace %s: %w", c.targetNamespace, err)
+		}
+		if len(r) > 0 {
+			return nil
+		}
+	}
+
+	labels := map[string]string{
+		"app.kubernetes.io/name":       BASE_WORKSPACE_CHART_NAME,
+		"app.kubernetes.io/instance":   BASE_WORKSPACE_CHART_NAME,
+		"app.kubernetes.io/version":    "1.0.0",
+		"app.kubernetes.io/managed-by": "k8shell-provisioner",
+		"k8shell.io/app":               BASE_WORKSPACE_CHART_NAME,
+	}
+
+	values := map[string]interface{}{
+		"__registry__": c.Registry.ToValues(),
+	}
+
+	err = c.Install(ctx, BASE_WORKSPACE_CHART_NAME, InstallOptions{
+		ReleaseName:     BASE_WORKSPACE_CHART_NAME,
+		ChartName:       BASE_WORKSPACE_CHART_NAME,
+		CreateNamespace: true,
+		Values:          values,
+		Wait:            true,
+		Labels:          labels,
+	})
+
+	return err
+
+}
+
 func (c *Client) Template(ctx context.Context, chartName string, opts InstallOptions) (string, error) {
-	actionConfig, err := c.createActionConfig(opts.Namespace)
+	actionConfig, err := c.createActionConfig(c.targetNamespace)
 	if err != nil {
 		return "", err
 	}
 
 	install := action.NewInstall(actionConfig)
 	install.ReleaseName = opts.ReleaseName
-	install.Namespace = opts.Namespace
-	install.CreateNamespace = true
+	install.Namespace = c.targetNamespace
 	install.DryRun = true
 	install.ClientOnly = true
 	install.IncludeCRDs = true
@@ -91,6 +167,7 @@ func (c *Client) Template(ctx context.Context, chartName string, opts InstallOpt
 		return "", fmt.Errorf("chart %s not found", chartName)
 	}
 
+	c.log.Debug().Msgf("Rendering chart %s with values: %v", chartName, opts.Values)
 	release, err := install.RunWithContext(ctx, chart, opts.Values)
 	if err != nil {
 		return "", fmt.Errorf("failed to render chart: %w", err)
@@ -101,15 +178,15 @@ func (c *Client) Template(ctx context.Context, chartName string, opts InstallOpt
 
 // Install installs a Helm chart in the specified namespace
 func (c *Client) Install(ctx context.Context, chartName string, opts InstallOptions) error {
-	actionConfig, err := c.createActionConfig(opts.Namespace)
+	actionConfig, err := c.createActionConfig(c.targetNamespace)
 	if err != nil {
 		return err
 	}
 
 	install := action.NewInstall(actionConfig)
 	install.ReleaseName = opts.ReleaseName
-	install.Namespace = opts.Namespace
-	install.CreateNamespace = true
+	install.Namespace = c.targetNamespace
+	install.CreateNamespace = opts.CreateNamespace
 	install.Wait = opts.Wait
 	install.Labels = opts.Labels
 
@@ -130,6 +207,7 @@ func (c *Client) Install(ctx context.Context, chartName string, opts InstallOpti
 		chart.Metadata.AppVersion = opts.AppVersion
 	}
 
+	c.log.Debug().Msgf("Installing chart %s with values: %v", chartName, opts.Values)
 	_, err = install.RunWithContext(ctx, chart, opts.Values)
 	if err != nil {
 		return fmt.Errorf("failed to install chart: %w", err)
@@ -192,8 +270,8 @@ func (c *Client) ListAllNamespaces() ([]*release.Release, error) {
 }
 
 // GetRelease gets information about a specific release in a namespace
-func (c *Client) GetRelease(releaseName, namespace string) (*release.Release, error) {
-	actionConfig, err := c.createActionConfig(namespace)
+func (c *Client) GetRelease(releaseName string) (*release.Release, error) {
+	actionConfig, err := c.createActionConfig(c.targetNamespace)
 	if err != nil {
 		return nil, err
 	}
@@ -201,14 +279,14 @@ func (c *Client) GetRelease(releaseName, namespace string) (*release.Release, er
 	get := action.NewGet(actionConfig)
 	release, err := get.Run(releaseName)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get release %s in namespace %s: %w", releaseName, namespace, err)
+		return nil, fmt.Errorf("failed to get release %s in namespace %s: %w", releaseName, c.targetNamespace, err)
 	}
 	return release, nil
 }
 
 // Uninstall removes a Helm release from a specific namespace
-func (c *Client) Uninstall(releaseName, namespace string, timeout int) error {
-	actionConfig, err := c.createActionConfig(namespace)
+func (c *Client) Uninstall(releaseName string, timeout int) error {
+	actionConfig, err := c.createActionConfig(c.targetNamespace)
 	if err != nil {
 		return err
 	}
@@ -218,7 +296,7 @@ func (c *Client) Uninstall(releaseName, namespace string, timeout int) error {
 	uninstall.Timeout = time.Duration(timeout) * time.Second
 	_, err = uninstall.Run(releaseName)
 	if err != nil {
-		return fmt.Errorf("failed to uninstall release %s from namespace %s: %w", releaseName, namespace, err)
+		return fmt.Errorf("failed to uninstall release %s from namespace %s: %w", releaseName, c.targetNamespace, err)
 	}
 	return nil
 }
@@ -263,7 +341,7 @@ func (c *Client) createActionConfig(namespace string) (*action.Configuration, er
 		c.settings.RESTClientGetter(),
 		namespace,
 		os.Getenv("HELM_DRIVER"),
-		log.Printf,
+		c.log.Debug().Msgf,
 	); err != nil {
 		return nil, fmt.Errorf("failed to initialize Helm action config for namespace %s: %w", namespace, err)
 	}

@@ -380,7 +380,7 @@ func (bm *BlueprintManager) extractFromSequence(root *yaml.Node, path string) er
 }
 
 // extractSingleRawBlueprint extracts a single raw blueprint.
-func (bm *BlueprintManager) extractSingleRawBlueprint(node *yaml.Node, path string) error {
+func (bm *BlueprintManager) extractSingleRawBlueprint(node *yaml.Node, _ string) error {
 	var bpData map[string]interface{}
 	if err := node.Decode(&bpData); err != nil {
 		bpData = make(map[string]interface{})
