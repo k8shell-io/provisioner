@@ -34,8 +34,7 @@ type WorkspaceStatus struct {
 }
 
 // NewWorkspace creates a new workspace with the specified Helm chart
-func NewWorkspace(blueprint *models.Blueprint, user *identity.User,
-	client *helm.Client) (*Workspace, error) {
+func NewWorkspace(blueprint *models.Blueprint, user *identity.User, client *helm.Client) (*Workspace, error) {
 	return &Workspace{
 		log:       log.NewLogger("workspace"),
 		client:    client,
@@ -89,9 +88,9 @@ func (w *Workspace) Values() (map[string]interface{}, error) {
 		return nil, err
 	}
 
-	key, cert, err := w.generateSelfSignedCert(w.Name())
+	key, cert, err := w.generateKeyCert()
 	if err != nil {
-		return nil, fmt.Errorf("failed to generate TLS certificate: %w", err)
+		return nil, fmt.Errorf("failed to generate key and certificate: %w", err)
 	}
 
 	a1key, a2key, err := w.generateAccessKeys()
@@ -99,7 +98,7 @@ func (w *Workspace) Values() (map[string]interface{}, error) {
 		return nil, fmt.Errorf("failed to generate access keys: %w", err)
 	}
 
-	userValues, err := ToMap(w.user)
+	userValues, err := toMap(w.user)
 	if err != nil {
 		return nil, fmt.Errorf("failed to convert user to map: %w", err)
 	}
@@ -108,7 +107,6 @@ func (w *Workspace) Values() (map[string]interface{}, error) {
 	values["__username__"] = w.user.Username
 	values["__workspace__"] = w.Name()
 	values["__blueprint__"] = w.blueprint.Name
-	values["__username__"] = w.user.Username
 	values["__organization__"] = w.user.Organization
 	values["__tlscrt__"] = cert
 	values["__tlskey__"] = key
@@ -299,7 +297,7 @@ func (w *Workspace) IsInstalled(ctx context.Context) (bool, error) {
 }
 
 // ToMap converts any struct to a map[string]interface{} representation
-func ToMap(b any) (map[string]interface{}, error) {
+func toMap(b any) (map[string]interface{}, error) {
 	yamlBytes, err := yaml.Marshal(b)
 	if err != nil {
 		return nil, fmt.Errorf("failed to marshal struct to YAML: %w", err)

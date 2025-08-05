@@ -21,8 +21,8 @@ type Values struct {
 	Values map[string]interface{}
 }
 
-// workspaceConfigTemplate is the template for the k8shelld configuration
-const workspaceConfigTemplate = `# k8shelld configuration file
+// k8shelldConfigTemplate is the template for the k8shelld configuration
+const k8shelldConfigTemplate = `# k8shelld configuration file
 # system settings
 system:
   # true to enable profiling
@@ -84,7 +84,7 @@ func (w *Workspace) k8shelldConfig(encrypt bool, a1keyHex string, values map[str
 		},
 	}
 
-	tmpl, err := template.New("config").Funcs(funcMap).Parse(workspaceConfigTemplate)
+	tmpl, err := template.New("config").Funcs(funcMap).Parse(k8shelldConfigTemplate)
 	if err != nil {
 		return "", fmt.Errorf("failed to parse config template: %w", err)
 	}
@@ -140,8 +140,8 @@ func (w *Workspace) encryptText(a1keyHex, plaintext string) (string, error) {
 	return fmt.Sprintf("ENC[AES256]%s", encodedData), nil
 }
 
-// GenerateSelfSignedCert generates a self-signed TLS certificate and private key
-func (w *Workspace) generateSelfSignedCert(hostname string) (keyPEM, certPEM string, err error) {
+// GenerateKeyCert generates a self-signed TLS certificate and private key
+func (w *Workspace) generateKeyCert() (keyPEM, certPEM string, err error) {
 	privateKey, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {
 		return "", "", fmt.Errorf("failed to generate RSA private key: %w", err)
@@ -174,10 +174,7 @@ func (w *Workspace) generateSelfSignedCert(hostname string) (keyPEM, certPEM str
 		return "", "", fmt.Errorf("failed to generate serial number: %w", err)
 	}
 	template.SerialNumber = serialNumber
-
-	if hostname != "" && w.Namespace() != "" {
-		template.DNSNames = []string{fmt.Sprintf("%s.%s", hostname, w.Namespace())}
-	}
+	template.DNSNames = []string{fmt.Sprintf("%s.%s", w.Name(), w.Namespace())}
 
 	certBytes, err := x509.CreateCertificate(rand.Reader, &template, &template, &privateKey.PublicKey, privateKey)
 	if err != nil {
