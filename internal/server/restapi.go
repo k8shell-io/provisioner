@@ -660,15 +660,6 @@ func (a *RESTApiService) provisionWithStreaming(c *gin.Context, ws *workspace.Wo
 
 	messages := make(chan workspace.EventMessage, 100)
 
-	// Send initial message
-	initial := gin.H{
-		"type":    "started",
-		"message": "Starting workspace provisioning...",
-	}
-	data, _ := json.Marshal(initial)
-	c.Writer.Write([]byte(fmt.Sprintf("%s\n", data)))
-	flusher.Flush()
-
 	done := make(chan *workspace.WorkspaceStatus)
 	errorChan := make(chan error)
 
@@ -727,8 +718,9 @@ func (a *RESTApiService) provisionWithStreaming(c *gin.Context, ws *workspace.Wo
 		case err := <-errorChan:
 			if err != nil {
 				errEvent := gin.H{
-					"type":  "error",
-					"error": err.Error(),
+					"type":    "status",
+					"status":  "Error",
+					"message": err.Error(),
 				}
 				data, _ := json.Marshal(errEvent)
 				c.Writer.Write([]byte(fmt.Sprintf("%s\n", data)))

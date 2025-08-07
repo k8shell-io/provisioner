@@ -54,7 +54,18 @@ type StreamEvent struct {
 	Message    string `json:"message,omitempty"`
 	Status     string `json:"status,omitempty"`
 	PodIP      string `json:"podIP,omitempty"`
-	Error      string `json:"error,omitempty"`
+}
+
+func (e StreamEvent) String() string {
+	if e.Type == "event" {
+		return fmt.Sprintf("[%s] [%-12s] %s",
+			e.Timestamp, e.ObjectName, e.Message)
+	}
+	if e.Type == "status" {
+		return fmt.Sprintf("[%s] %s: %s",
+			e.Timestamp, e.Status, e.Message)
+	}
+	return ""
 }
 
 // ErrorResponse represents an API error response
@@ -407,7 +418,7 @@ func (c *Client) ProvisionWorkspaceStream(ctx context.Context, opts *ProvisionOp
 		}
 
 		// Break on final events
-		if event.Type == "status" || event.Type == "error" {
+		if event.Type == "status" {
 			break
 		}
 	}

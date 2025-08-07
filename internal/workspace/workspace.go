@@ -114,7 +114,6 @@ func (w *Workspace) Values() (map[string]interface{}, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to generate k8shelld config YAML: %w", err)
 	}
-
 	values["__k8shelldconfig__"] = config
 
 	return values, nil

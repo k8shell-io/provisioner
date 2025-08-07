@@ -65,6 +65,7 @@ func (w *Workspace) Provision(ctx context.Context, opts *ProvisionOptions) (*Wor
 	return w.provisionWithLock(ctx, opts)
 }
 
+// provisionWithLock provisions the workspace with a distributed lock
 func (w *Workspace) provisionWithLock(ctx context.Context, opts *ProvisionOptions) (*WorkspaceStatus, error) {
 	workspaceLock := NewWorkspaceLock(w.client.GetKubeClient(), w.client.TargetNamespace(), w.Name())
 
