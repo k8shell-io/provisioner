@@ -566,6 +566,8 @@ func (a *RESTApiService) ProvisionWorkspace(c *gin.Context) {
 	stream := c.Query("stream") == "true"
 	timeoutStr := c.Query("timeout")
 
+	a.log.Debug().Msgf("ProvisionWorkspace called with username=%s, stream=%t, timeout=%s", username, stream, timeoutStr)
+
 	timeout := 20
 	if timeoutStr != "" {
 		var err error

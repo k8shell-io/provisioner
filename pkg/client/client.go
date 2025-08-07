@@ -1,6 +1,7 @@
 package client
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -394,14 +395,23 @@ func (c *Client) ProvisionWorkspaceStream(ctx context.Context, opts *ProvisionOp
 		return fmt.Errorf("API error (status %d): %s", resp.StatusCode, errResp.Error)
 	}
 
-	decoder := json.NewDecoder(resp.Body)
-	for {
+	// CHANGE: Use bufio.Scanner to read line by line for NDJSON
+	scanner := bufio.NewScanner(resp.Body)
+
+	for scanner.Scan() {
+		line := scanner.Text()
+
+		// Skip empty lines
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+
+		// Parse each line as a separate JSON object
 		var event StreamEvent
-		if err := decoder.Decode(&event); err != nil {
-			if err == io.EOF {
-				break
-			}
-			return fmt.Errorf("failed to decode streaming event: %w", err)
+		if err := json.Unmarshal([]byte(line), &event); err != nil {
+			// Log the error but continue processing other events
+			fmt.Printf("Failed to unmarshal event: %v, line: %s\n", err, line)
+			continue
 		}
 
 		select {
@@ -415,6 +425,11 @@ func (c *Client) ProvisionWorkspaceStream(ctx context.Context, opts *ProvisionOp
 		if event.Type == "status" || event.Type == "error" {
 			break
 		}
+	}
+
+	// Check for scanner errors
+	if err := scanner.Err(); err != nil {
+		return fmt.Errorf("error reading stream: %w", err)
 	}
 
 	return nil
