@@ -16,20 +16,18 @@ import (
 	"github.com/k8shell-io/provisioner/pkg/models"
 )
 
+// Config represents the client configuration
+type Config struct {
+	BaseURL string `json:"baseURL"`
+	APIKey  string `json:"apiKey"`
+	Timeout int    `json:"timeout"`
+}
+
 // Client represents the provisioner API client
 type Client struct {
 	baseURL    string
 	apiKey     string
 	httpClient *http.Client
-}
-
-// Config represents the client configuration
-type Config struct {
-	BaseURL    string        `json:"baseURL"`
-	APIKey     string        `json:"apiKey"`
-	Timeout    time.Duration `json:"timeout"`
-	UserAgent  string        `json:"userAgent"`
-	HTTPClient *http.Client  `json:"-"`
 }
 
 // BlueprintListResponse represents the response for listing blueprints
@@ -81,31 +79,18 @@ type TemplateOptions struct {
 }
 
 // NewClient creates a new provisioner API client
-func NewClient(config *Config) (*Client, error) {
-	if config.BaseURL == "" {
-		return nil, fmt.Errorf("baseURL is required")
-	}
-
-	if config.APIKey == "" {
-		return nil, fmt.Errorf("apiKey is required")
-	}
-
+func NewClient(config Config) *Client {
 	if config.Timeout == 0 {
-		config.Timeout = 30 * time.Second
-	}
-
-	httpClient := config.HTTPClient
-	if httpClient == nil {
-		httpClient = &http.Client{
-			Timeout: config.Timeout,
-		}
+		config.Timeout = 30
 	}
 
 	return &Client{
-		baseURL:    strings.TrimSuffix(config.BaseURL, "/"),
-		apiKey:     config.APIKey,
-		httpClient: httpClient,
-	}, nil
+		baseURL: strings.TrimSuffix(config.BaseURL, "/"),
+		apiKey:  config.APIKey,
+		httpClient: &http.Client{
+			Timeout: time.Duration(config.Timeout) * time.Second,
+		},
+	}
 }
 
 // makeRequest makes an HTTP request to the API
