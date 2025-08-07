@@ -2,6 +2,7 @@ package workspace
 
 import (
 	"context"
+	"encoding/base64"
 	"fmt"
 	"strings"
 	"time"
@@ -105,8 +106,8 @@ func (w *Workspace) Values() (map[string]interface{}, error) {
 	values["__organization__"] = w.user.Organization
 	values["__tlscrt__"] = cert
 	values["__tlskey__"] = key
-	values["__a1key__"] = a1key
-	values["__a2key__"] = a2key
+	values["__a1key__"] = base64.StdEncoding.EncodeToString([]byte(a1key))
+	values["__a2key__"] = base64.StdEncoding.EncodeToString([]byte(a2key))
 	values["__registry__"] = w.client.Registry.ToValues()
 
 	config, err := w.k8shelldConfig(w.blueprint.K8shelld.EncryptConfig, a1key, values)

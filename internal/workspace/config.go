@@ -108,6 +108,7 @@ func (w *Workspace) k8shelldConfig(encrypt bool, a1keyHex string, values map[str
 }
 
 // encryptText encrypts plaintext using AES-GCM with the provided key
+// This matches the Python implementation format: nonce + tag + ciphertext
 func (w *Workspace) encryptText(a1keyHex, plaintext string) (string, error) {
 	keyBytes, err := hex.DecodeString(a1keyHex)
 	if err != nil {
@@ -134,7 +135,19 @@ func (w *Workspace) encryptText(a1keyHex, plaintext string) (string, error) {
 	}
 
 	ciphertext := gcm.Seal(nil, nonce, []byte(plaintext), nil)
-	encryptedData := append(nonce, ciphertext...)
+
+	if len(ciphertext) < 16 {
+		return "", fmt.Errorf("invalid ciphertext length")
+	}
+
+	actualCiphertext := ciphertext[:len(ciphertext)-16]
+	tag := ciphertext[len(ciphertext)-16:]
+
+	encryptedData := make([]byte, 0, len(nonce)+len(tag)+len(actualCiphertext))
+	encryptedData = append(encryptedData, nonce...)
+	encryptedData = append(encryptedData, tag...)
+	encryptedData = append(encryptedData, actualCiphertext...)
+
 	encodedData := base64.StdEncoding.EncodeToString(encryptedData)
 
 	return fmt.Sprintf("ENC[AES256]%s", encodedData), nil
@@ -191,7 +204,7 @@ func (w *Workspace) generateKeyCert() (keyPEM, certPEM string, err error) {
 	return keyPEM, certPEM, nil
 }
 
-// GenerateAccessKeys generates random access keys similar to Python's secrets.token_hex
+// GenerateAccessKeys generates random access keys
 func (w *Workspace) generateAccessKeys() (a1keyB64, a2keyB64 string, err error) {
 	a1Bytes := make([]byte, 16)
 	if _, err := rand.Read(a1Bytes); err != nil {
@@ -205,8 +218,6 @@ func (w *Workspace) generateAccessKeys() (a1keyB64, a2keyB64 string, err error) 
 
 	a1key := hex.EncodeToString(a1Bytes)
 	a2key := hex.EncodeToString(a2Bytes)
-	a1keyB64 = base64.StdEncoding.EncodeToString([]byte(a1key))
-	a2keyB64 = base64.StdEncoding.EncodeToString([]byte(a2key))
 
-	return a1keyB64, a2keyB64, nil
+	return a1key, a2key, nil
 }
