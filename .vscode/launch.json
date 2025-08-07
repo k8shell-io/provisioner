@@ -10,7 +10,7 @@
             "type": "go",
             "request": "launch",
             "mode": "auto",
-            "program": "cmd/provisioner/main.go", // Path to your Go file or main package
+            "program": "main.go",
             "env": {
                 "SECRET_FILES": "/opt/shared/provisioner/secrets",
                 "WORKSPACE_REGISTRY": "fitcr.ksi.in.fit.cvut.cz",
