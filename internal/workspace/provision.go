@@ -46,7 +46,7 @@ func (w *Workspace) Provision(ctx context.Context, opts *ProvisionOptions) (*mod
 		}
 
 		if status.Status == "Running" {
-			w.log.Info().Msgf("Workspace %s is already running, no provisioning needed", w.Name())
+			w.log.Info().Msgf("Workspace %s is already running", w.Name())
 			return status, nil
 		}
 
@@ -136,7 +136,8 @@ func (w *Workspace) doInstallation(ctx context.Context, opts *ProvisionOptions) 
 	}
 
 	if status.Status == "Running" {
-		w.log.Info().Msgf("Workspace %s is now running, provisioned in %s", w.Name(), time.Since(startTime))
+		provisionTime := time.Since(startTime)
+		w.log.Info().Msgf("Workspace %s is now running, provisioned in %s", w.Name(), provisionTime)
 	}
 	return status, nil
 }
@@ -195,12 +196,29 @@ func (w *Workspace) waitForPodRunning(ctx context.Context, startTime time.Time,
 
 // watchEvents watches and reports Kubernetes events for the pod
 func (w *Workspace) watchEvents(ctx context.Context, podName string, stop <-chan struct{}, opts *ProvisionOptions) {
-	watcher, err := w.client.GetKubeClient().CoreV1().Events(w.client.TargetNamespace()).Watch(ctx, metav1.ListOptions{
+	eventList, err := w.client.GetKubeClient().CoreV1().Events(w.client.TargetNamespace()).List(ctx, metav1.ListOptions{
 		FieldSelector: fmt.Sprintf("involvedObject.name=%s", podName),
+		Limit:         1,
 	})
 	if err != nil {
+		w.log.Warn().Err(err).Msg("Failed to get current resource version for events, watching from beginning")
+	}
+
+	listOptions := metav1.ListOptions{
+		FieldSelector: fmt.Sprintf("involvedObject.name=%s", podName),
+		Watch:         true,
+	}
+
+	if eventList != nil {
+		listOptions.ResourceVersion = eventList.ResourceVersion
+	}
+
+	watcher, err := w.client.GetKubeClient().CoreV1().Events(w.client.TargetNamespace()).Watch(ctx, listOptions)
+	if err != nil {
+		w.log.Warn().Err(err).Msg("Failed to watch events")
 		return
 	}
+
 	defer watcher.Stop()
 
 	for {
@@ -213,6 +231,7 @@ func (w *Workspace) watchEvents(ctx context.Context, podName string, stop <-chan
 			if event.Type == watch.Added || event.Type == watch.Modified {
 				if k8sEvent, ok := event.Object.(*corev1.Event); ok {
 					eventMessage := models.StreamEvent{
+						Type:       "event",
 						Timestamp:  k8sEvent.CreationTimestamp.Format("2006-01-02 15:04:05"),
 						ObjectName: k8sEvent.InvolvedObject.Name,
 						Message:    k8sEvent.Message,
