@@ -1,0 +1,24 @@
+
+### Variables
+@token=4343afe34e324093253465464523342343242132112
+@username=bruckins
+@blueprint=sql
+@workspacename=dev-bruckins
+
+### Get All Workspaces
+
+GET http://localhost:9201/api/v1/workspaces
+Authorization: Bearer {{token}}
+
+### Get Single Workspace
+
+GET http://localhost:9201/api/v1/workspaces?username={{username}}&blueprint={{blueprint}}
+Authorization: Bearer {{token}}
+
+### Get Workspace Status
+GET http://localhost:9201/api/v1/workspaces/sql-bruckins/status
+Authorization: Bearer {{token}}
+
+### Provision Workspace
+POST http://localhost:9201/api/v1/workspaces?stream=true&username={{username}}&blueprint={{blueprint}}
+Authorization: Bearer {{token}}
