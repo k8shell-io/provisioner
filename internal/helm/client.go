@@ -243,6 +243,8 @@ func (c *Client) ListWithSelector(namespace, selector string) ([]*release.Releas
 	}
 
 	list.StateMask = action.ListDeployed
+	list.SortReverse = true
+	list.ByDate = true
 
 	releases, err := list.Run()
 	if err != nil {
