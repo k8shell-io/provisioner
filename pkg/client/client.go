@@ -60,25 +60,6 @@ type TemplateOptions struct {
 	CustomBlueprint []byte
 }
 
-// // WorkspaceResponse represents a workspace response from the API
-// type WorkspaceResponse struct {
-// 	Name         string    `json:"name"`
-// 	Username     string    `json:"username"`
-// 	Blueprint    string    `json:"blueprint"`
-// 	Deployed     time.Time `json:"deployed"`
-// 	WorkspaceUrl string    `json:"workspaceUrl"`
-// 	StatusUrl    string    `json:"statusUrl"`
-// }
-
-// // WorkspaceStatus represents the status of a workspace
-// type WorkspaceStatus struct {
-// 	Created       time.Time     `json:"created"`
-// 	Status        string        `json:"status"`
-// 	Message       string        `json:"message"`
-// 	PodIP         string        `json:"podIP"`
-// 	ProvisionTime time.Duration `json:"provisionTime"`
-// }
-
 // NewClient creates a new provisioner API client
 func NewClient(config Config) *Client {
 	if config.Timeout == 0 {
