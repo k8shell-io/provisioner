@@ -67,7 +67,6 @@ func GetWorkspaceInfo(helmClient *helm.Client, name string, username string, blu
 			Deployed:  release.Info.LastDeployed.Time,
 		})
 	}
-
 	return resp, nil
 }
 
