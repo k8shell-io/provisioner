@@ -474,9 +474,7 @@ func (a *RESTApiService) GetWorkspaces(c *gin.Context) {
 	}
 
 	info := make([]models.WorkspaceInfo, 0, len(workspaces))
-	for _, ws := range workspaces {
-		info = append(info, ws)
-	}
+	info = append(info, workspaces...)
 
 	c.JSON(http.StatusOK, info)
 }
@@ -801,10 +799,12 @@ func (a *RESTApiService) provisionWithStreaming(c *gin.Context, ws *workspace.Wo
 		case status := <-done:
 			if status != nil {
 				final := gin.H{
-					"type":    "status",
-					"status":  status.Status,
-					"message": status.Message,
-					"podIP":   status.PodIP,
+					"type":       "status",
+					"timestamp":  time.Now().Format("2006-01-02 15:04:05"),
+					"objectName": ws.Name(),
+					"status":     status.Status,
+					"message":    status.Message,
+					"host":       status.Host,
 				}
 				data, _ := json.Marshal(final)
 				c.Writer.Write([]byte(fmt.Sprintf("%s\n", data)))
@@ -815,9 +815,11 @@ func (a *RESTApiService) provisionWithStreaming(c *gin.Context, ws *workspace.Wo
 		case err := <-errorChan:
 			if err != nil {
 				errEvent := gin.H{
-					"type":    "status",
-					"status":  "Error",
-					"message": err.Error(),
+					"type":       "status",
+					"timestamp":  time.Now().Format("2006-01-02 15:04:05"),
+					"objectName": ws.Name(),
+					"status":     "Error",
+					"message":    err.Error(),
 				}
 				data, _ := json.Marshal(errEvent)
 				c.Writer.Write([]byte(fmt.Sprintf("%s\n", data)))
@@ -844,7 +846,7 @@ func (a *RESTApiService) provisionSync(c *gin.Context, ws *workspace.Workspace, 
 	c.JSON(http.StatusCreated, gin.H{
 		"status":  status.Status,
 		"message": status.Message,
-		"podIP":   status.PodIP,
+		"host":    status.Host,
 	})
 }
 

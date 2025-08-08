@@ -87,7 +87,8 @@ func GetWorkspaceStatus(ctx context.Context, helmClient *helm.Client, name strin
 	status := &models.WorkspaceStatus{
 		Created: pod.CreationTimestamp.Time,
 		Status:  string(pod.Status.Phase),
-		PodIP:   pod.Status.PodIP,
+		// the pod name must correspond to the grpc service name
+		Host:    fmt.Sprintf("%s.%s", pod.ObjectMeta.Name, pod.ObjectMeta.Namespace),
 		Message: getPodStatusMessage(pod),
 	}
 

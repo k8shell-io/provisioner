@@ -3,6 +3,7 @@ package workspace
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/k8shell-io/provisioner/internal/helm"
@@ -175,13 +176,16 @@ func (w *Workspace) waitForPodRunning(ctx context.Context, startTime time.Time,
 				return status, nil
 
 			case "Failed", "Succeeded":
-				return status, fmt.Errorf("pod %s is in final state: %s - %s",
+				return status, fmt.Errorf("workspace pod %s is in final state: %s - %s",
 					podName, status.Status, status.Message)
 
 			case "Pending":
-				// Check if we've been pending too long
+				if strings.Contains(status.Message, "Image pull failed") {
+					return status, fmt.Errorf("image pull failure for workspace pod %s: %s",
+						podName, status.Message)
+				}
 				if time.Since(startTime) > time.Duration(opts.Timeout)*time.Second {
-					return status, fmt.Errorf("pod %s has been pending for too long: %s",
+					return status, fmt.Errorf("workspace pod %s has been pending for too long: %s",
 						podName, status.Message)
 				}
 			}
