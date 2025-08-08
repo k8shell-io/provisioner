@@ -3,9 +3,9 @@ package workspace
 import (
 	"context"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"strings"
-	"time"
 
 	identity "github.com/k8shell-io/identity/pkg/models"
 	"github.com/k8shell-io/provisioner/internal/helm"
@@ -25,14 +25,90 @@ type Workspace struct {
 	user      *identity.User
 }
 
-// WorkspaceStatus represents the current status of a workspace
-type WorkspaceStatus struct {
-	Created       time.Time
-	Status        string
-	Message       string
-	PodIP         string
-	ProvisionTime time.Duration
+// ErrWorkspaceNotFound is returned when a workspace is not found
+var ErrWorkspaceNotFound = errors.New("workspace not found")
+
+// ErrInvalidParameters is returned when the provided parameters are invalid
+var ErrInvalidParameters = errors.New("invalid parameters")
+
+// GetWorkspaceInfo retrieves information about workspaces
+func GetWorkspaceInfo(helmClient *helm.Client, name string, username string, blueprint string) ([]models.WorkspaceInfo, error) {
+	labels := map[string]string{
+		"app.kubernetes.io/name": helm.WORKSPACE_CHART_NAME,
+	}
+
+	if name != "" {
+		labels["app.kubernetes.io/instance"] = name
+	}
+
+	if username != "" {
+		labels["k8shell.io/username"] = username
+	}
+
+	if blueprint != "" {
+		labels["k8shell.io/blueprint"] = blueprint
+	}
+
+	selector := GetSelector(labels)
+	releases, err := helmClient.ListWithSelector(helmClient.TargetNamespace(), selector)
+	if err != nil {
+		if strings.Contains(err.Error(), "unable to parse") {
+			return nil, fmt.Errorf("failed to list releases: %w", ErrInvalidParameters)
+		}
+		return nil, fmt.Errorf("failed to list releases: %w", err)
+	}
+
+	resp := make([]models.WorkspaceInfo, 0, len(releases))
+	for _, release := range releases {
+		resp = append(resp, models.WorkspaceInfo{
+			Name:      release.Labels["app.kubernetes.io/instance"],
+			Username:  release.Labels["k8shell.io/username"],
+			Blueprint: release.Labels["k8shell.io/blueprint"],
+			Deployed:  release.Info.LastDeployed.Time,
+		})
+	}
+
+	return resp, nil
 }
+
+// GetWorkspaceStatus retrieves the status of a workspace by its name
+func GetWorkspaceStatus(ctx context.Context, helmClient *helm.Client, name string) (*models.WorkspaceStatus, error) {
+	pod, err := helmClient.GetKubeClient().CoreV1().Pods(helmClient.TargetNamespace()).Get(ctx, name, metav1.GetOptions{})
+	if err != nil {
+		if strings.Contains(err.Error(), "not found") {
+			return nil, fmt.Errorf("%w: %s", ErrWorkspaceNotFound, name)
+		}
+		if strings.Contains(err.Error(), "unable to parse") {
+			return nil, fmt.Errorf("%w: %s", ErrInvalidParameters, name)
+		}
+		return nil, fmt.Errorf("failed to get workspace %s: %w", name, err)
+	}
+
+	status := &models.WorkspaceStatus{
+		Created: pod.CreationTimestamp.Time,
+		Status:  string(pod.Status.Phase),
+		PodIP:   pod.Status.PodIP,
+		Message: getPodStatusMessage(pod),
+	}
+
+	return status, nil
+}
+
+// GetSelector returns a label selector string from the given labels map
+func GetSelector(labels map[string]string) string {
+	if len(labels) == 0 {
+		return ""
+	}
+
+	var selectors []string
+	for key, value := range labels {
+		selectors = append(selectors, fmt.Sprintf("%s=%s", key, value))
+	}
+
+	return strings.Join(selectors, ",")
+}
+
+// *** Workspace methods
 
 // NewWorkspace creates a new workspace with the specified Helm chart
 func NewWorkspace(blueprint *models.Blueprint, user *identity.User, client *helm.Client) (*Workspace, error) {
@@ -44,6 +120,7 @@ func NewWorkspace(blueprint *models.Blueprint, user *identity.User, client *helm
 	}, nil
 }
 
+// Name returns the name of the workspace
 func (w *Workspace) Name() string {
 	return w.blueprint.Name + "-" + w.user.Username
 }
@@ -135,37 +212,49 @@ func (w *Workspace) Template(ctx context.Context) (string, error) {
 }
 
 // GetStatus returns the current status of the workspace pod
-func (w *Workspace) GetStatus(ctx context.Context) (*WorkspaceStatus, error) {
-	podName := w.Name()
-
-	pod, err := w.client.GetKubeClient().CoreV1().Pods(w.client.TargetNamespace()).Get(ctx, podName, metav1.GetOptions{})
-	if err != nil {
-		return &WorkspaceStatus{
-			Status: "NotFound",
-		}, nil
-	}
-
-	status := &WorkspaceStatus{
-		Created: pod.CreationTimestamp.Time,
-		Status:  string(pod.Status.Phase),
-		PodIP:   pod.Status.PodIP,
-	}
-
-	status.Message = w.getPodStatusMessage(pod)
-	return status, nil
+func (w *Workspace) GetStatus(ctx context.Context) (*models.WorkspaceStatus, error) {
+	return GetWorkspaceStatus(ctx, w.client, w.Name())
 }
 
+func (w *Workspace) IsInstalled(ctx context.Context) (bool, error) {
+	_, err := w.client.GetRelease(w.Name())
+	if err != nil {
+		if strings.Contains(err.Error(), "not found") || strings.Contains(err.Error(), "release: not found") {
+			return false, nil
+		}
+		return false, err
+	}
+	return true, nil
+}
+
+// ToMap converts any struct to a map[string]interface{} representation
+func toMap(b any) (map[string]interface{}, error) {
+	yamlBytes, err := yaml.Marshal(b)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal struct to YAML: %w", err)
+	}
+
+	var values map[string]interface{}
+	if err := yaml.Unmarshal(yamlBytes, &values); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal YAML to map: %w", err)
+	}
+
+	return values, nil
+}
+
+// *** helpers
+
 // getPodStatusMessage extracts detailed status information from pod
-func (w *Workspace) getPodStatusMessage(pod *corev1.Pod) string {
+func getPodStatusMessage(pod *corev1.Pod) string {
 	phase := pod.Status.Phase
 
 	switch phase {
 	case corev1.PodPending:
-		return w.getPendingMessage(pod)
+		return getPendingMessage(pod)
 	case corev1.PodRunning:
-		return w.getRunningMessage(pod)
+		return getRunningMessage(pod)
 	case corev1.PodFailed:
-		return w.getFailedMessage(pod)
+		return getFailedMessage(pod)
 	case corev1.PodSucceeded:
 		return "Pod completed successfully"
 	default:
@@ -174,7 +263,7 @@ func (w *Workspace) getPodStatusMessage(pod *corev1.Pod) string {
 }
 
 // getPendingMessage gets detailed message for pending pods
-func (w *Workspace) getPendingMessage(pod *corev1.Pod) string {
+func getPendingMessage(pod *corev1.Pod) string {
 	for _, containerStatus := range pod.Status.ContainerStatuses {
 		if containerStatus.State.Waiting != nil {
 			waiting := containerStatus.State.Waiting
@@ -229,7 +318,7 @@ func (w *Workspace) getPendingMessage(pod *corev1.Pod) string {
 }
 
 // getRunningMessage gets message for running pods
-func (w *Workspace) getRunningMessage(pod *corev1.Pod) string {
+func getRunningMessage(pod *corev1.Pod) string {
 	// Check if all containers are ready
 	readyCount := 0
 	totalCount := len(pod.Status.ContainerStatuses)
@@ -254,7 +343,7 @@ func (w *Workspace) getRunningMessage(pod *corev1.Pod) string {
 }
 
 // getFailedMessage gets message for failed pods
-func (w *Workspace) getFailedMessage(pod *corev1.Pod) string {
+func getFailedMessage(pod *corev1.Pod) string {
 	// Check container statuses for failure details
 	for _, containerStatus := range pod.Status.ContainerStatuses {
 		if containerStatus.State.Terminated != nil {
@@ -278,30 +367,4 @@ func (w *Workspace) getFailedMessage(pod *corev1.Pod) string {
 	}
 
 	return "Pod failed"
-}
-
-func (w *Workspace) IsInstalled(ctx context.Context) (bool, error) {
-	_, err := w.client.GetRelease(w.Name())
-	if err != nil {
-		if strings.Contains(err.Error(), "not found") || strings.Contains(err.Error(), "release: not found") {
-			return false, nil
-		}
-		return false, err
-	}
-	return true, nil
-}
-
-// ToMap converts any struct to a map[string]interface{} representation
-func toMap(b any) (map[string]interface{}, error) {
-	yamlBytes, err := yaml.Marshal(b)
-	if err != nil {
-		return nil, fmt.Errorf("failed to marshal struct to YAML: %w", err)
-	}
-
-	var values map[string]interface{}
-	if err := yaml.Unmarshal(yamlBytes, &values); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal YAML to map: %w", err)
-	}
-
-	return values, nil
 }

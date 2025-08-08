@@ -40,12 +40,6 @@ type RESTApiService struct {
 	engine *gin.Engine
 }
 
-// BlueprintComposeRequest represents the request body for blueprint composition
-type BlueprintComposeRequest struct {
-	Blueprint models.CustomBlueprint   `json:"blueprint"`
-	Scope     blueprint.BlueprintScope `json:"scope"`
-}
-
 // ErrorResponse represents an error response
 type ErrorResponse struct {
 	Error string `json:"error" example:"Error message"`
@@ -60,23 +54,12 @@ type BlueprintInfo struct {
 	URL  string `json:"url" example:"/api/v1/blueprints/dev"`
 }
 
-// WorkspaceStatusResponse represents the response for workspace operations
-type WorkspaceStatusResponse struct {
-	Status  string `json:"status" example:"Running"`
-	Message string `json:"message" example:"Workspace is running"`
-	PodIP   string `json:"podIP" example:"10.42.0.123"`
-}
-
-// StreamEventResponse represents a streaming event response
-type StreamEventResponse struct {
-	Type       string `json:"type" example:"event"`
-	Timestamp  string `json:"timestamp,omitempty" example:"2025-08-05T10:30:00Z"`
-	ObjectName string `json:"objectName,omitempty" example:"dev-user123"`
-	Message    string `json:"message,omitempty" example:"Pod is starting"`
-	Status     string `json:"status,omitempty" example:"Running"`
-	PodIP      string `json:"podIP,omitempty" example:"10.42.0.123"`
-	Error      string `json:"error,omitempty" example:"Failed to provision workspace"`
-}
+// // WorkspaceResponse represents a response containing a list of workspaces
+// type WorkspaceResponse struct {
+// 	models.WorkspaceInfo
+// 	WorkspaceUrl string `json:"workspaceUrl" example:"/api/v1/workspaces/dev-user123"`
+// 	StatusUrl    string `json:"statusUrl" example:"/api/v1/workspaces/dev-user123/status"`
+// }
 
 // NewRESTAPI creates a new REST API service
 func NewRESTAPI(server *Server) (*RESTApiService, error) {
@@ -167,6 +150,9 @@ func (a *RESTApiService) initializeRouter() {
 		// Workspace routes
 		workspaces := api.Group("/workspaces")
 		{
+			workspaces.GET("", a.GetWorkspaces)
+			workspaces.GET("/:name", a.GetWorkspace)
+			workspaces.GET("/:name/status", a.GetWorkspaceStatus)
 			workspaces.POST("/template", a.TemplateWorkspace)
 			workspaces.POST("", a.ProvisionWorkspace)
 		}
@@ -225,6 +211,8 @@ func (a *RESTApiService) Serve(ctx context.Context) {
 
 	<-idleConnsClosed
 }
+
+// *** Blueprints
 
 // GetBlueprints handles the GET request for blueprints
 // @Summary      List available blueprints
@@ -456,6 +444,115 @@ func (a *RESTApiService) resolveBlueprintFromRequest(c *gin.Context, scope *blue
 	}
 }
 
+// *** Workspaces
+
+// GetWorkspaces handles the GET request for workspaces
+// @Summary      List workspaces
+// @Description  Get a list of workspaces, optionally filtered by username and/or blueprint
+// @Tags         workspaces
+// @Accept       json
+// @Produce      json
+// @Security     BearerAuth
+// @Param        username   query   string  false  "Filter by username"
+// @Param        blueprint  query   string  false  "Filter by blueprint name"
+// @Success      200        {array}   models.WorkspaceResponse  "List of workspaces"
+// @Failure      400        {object}  ErrorResponse      "Bad request - invalid parameters"
+// @Failure      401        {object}  ErrorResponse      "Unauthorized"
+// @Failure      500        {object}  ErrorResponse      "Internal server error"
+// @Router       /api/v1/workspaces [get]
+func (a *RESTApiService) GetWorkspaces(c *gin.Context) {
+	username := c.Query("username")
+	blueprint := c.Query("blueprint")
+
+	// TODO: check if the user is a valid user first in identity
+	// TODO: there could be inconsistencies, there could be workspaces of users that do not exist
+
+	workspaces, err := workspace.GetWorkspaceInfo(a.server.helm, "", username, blueprint)
+	if err != nil {
+		errToJSONError(c, err)
+		return
+	}
+
+	info := make([]models.WorkspaceInfo, 0, len(workspaces))
+	for _, ws := range workspaces {
+		info = append(info, ws)
+	}
+
+	c.JSON(http.StatusOK, info)
+}
+
+// GetWorkspace handles the GET request for a specific workspace
+// @Summary      Get a specific workspace
+// @Description  Get details of a workspace by name
+// @Tags         workspaces
+// @Accept       json
+// @Produce      json
+// @Security     BearerAuth
+// @Param        name  path    string  true  "Workspace name"
+// @Success      200   {object}  models.WorkspaceResponse  "Workspace details"
+// @Failure      404   {object}  ErrorResponse      "Workspace not found"
+// @Failure      409   {object}  ErrorResponse      "Multiple workspaces found with same name"
+// @Failure      401   {object}  ErrorResponse      "Unauthorized"
+// @Failure      500   {object}  ErrorResponse      "Internal server error"
+// @Router       /api/v1/workspaces/{name} [get]
+func (a *RESTApiService) GetWorkspace(c *gin.Context) {
+	name := c.Param("name")
+
+	// TODO: check if the user is a valid user first in identity
+	// TODO: there could be inconsistencies, there could be workspaces of users that do not exist
+
+	info, err := workspace.GetWorkspaceInfo(a.server.helm, name, "", "")
+	if err != nil {
+		errToJSONError(c, err)
+		return
+	}
+
+	if len(info) == 0 {
+		c.JSON(http.StatusNotFound, gin.H{
+			"error": fmt.Sprintf("Workspace not found: %s", name),
+		})
+		return
+	}
+
+	if len(info) > 1 {
+		c.JSON(http.StatusConflict, gin.H{
+			"error": fmt.Sprintf("Multiple workspaces found: %s", name),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, models.WorkspaceInfo{
+		Name:      info[0].Name,
+		Username:  info[0].Username,
+		Blueprint: info[0].Blueprint,
+		Deployed:  info[0].Deployed,
+	})
+}
+
+// GetWorkspaceStatus handles the GET request for workspace status
+// @Summary      Get workspace status
+// @Description  Get the current status of a workspace including pod status and IP
+// @Tags         workspaces
+// @Accept       json
+// @Produce      json
+// @Security     BearerAuth
+// @Param        name  path    string  true  "Workspace name"
+// @Success      200   {object}  models.WorkspaceStatus  "Workspace status details"
+// @Failure      400   {object}  ErrorResponse              "Bad request - invalid parameters"
+// @Failure      404   {object}  ErrorResponse              "Workspace not found"
+// @Failure      401   {object}  ErrorResponse              "Unauthorized"
+// @Failure      500   {object}  ErrorResponse              "Internal server error"
+// @Router       /api/v1/workspaces/{name}/status [get]
+func (a *RESTApiService) GetWorkspaceStatus(c *gin.Context) {
+	name := c.Param("name")
+	status, err := workspace.GetWorkspaceStatus(c.Request.Context(), a.server.helm, name)
+	if err != nil {
+		errToJSONError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, status)
+}
+
 // TemplateWorkspace renders workspace templates
 // @Summary      Template workspace
 // @Description  Generate Kubernetes manifests for a workspace without provisioning
@@ -658,9 +755,9 @@ func (a *RESTApiService) provisionWithStreaming(c *gin.Context, ws *workspace.Wo
 
 	c.Status(http.StatusOK)
 
-	messages := make(chan workspace.EventMessage, 100)
+	messages := make(chan models.StreamEvent, 100)
 
-	done := make(chan *workspace.WorkspaceStatus)
+	done := make(chan *models.WorkspaceStatus)
 	errorChan := make(chan error)
 
 	go func() {
@@ -748,5 +845,23 @@ func (a *RESTApiService) provisionSync(c *gin.Context, ws *workspace.Workspace, 
 		"status":  status.Status,
 		"message": status.Message,
 		"podIP":   status.PodIP,
+	})
+}
+
+func errToJSONError(c *gin.Context, err error) {
+	if errors.Is(err, workspace.ErrWorkspaceNotFound) {
+		c.JSON(http.StatusNotFound, gin.H{
+			"error": fmt.Sprintf("%v", err),
+		})
+		return
+	}
+	if errors.Is(err, workspace.ErrInvalidParameters) {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": fmt.Sprintf("%v", err),
+		})
+		return
+	}
+	c.JSON(http.StatusInternalServerError, gin.H{
+		"error": fmt.Sprintf("%v", err),
 	})
 }

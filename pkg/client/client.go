@@ -39,35 +39,6 @@ type BlueprintInfo struct {
 	URL  string `json:"url"`
 }
 
-// WorkspaceStatusResponse represents the response for workspace operations
-type WorkspaceStatusResponse struct {
-	Status  string `json:"status"`
-	Message string `json:"message"`
-	PodIP   string `json:"podIP"`
-}
-
-// StreamEvent represents a streaming event
-type StreamEvent struct {
-	Type       string `json:"type"`
-	Timestamp  string `json:"timestamp,omitempty"`
-	ObjectName string `json:"objectName,omitempty"`
-	Message    string `json:"message,omitempty"`
-	Status     string `json:"status,omitempty"`
-	PodIP      string `json:"podIP,omitempty"`
-}
-
-func (e StreamEvent) String() string {
-	if e.Type == "event" {
-		return fmt.Sprintf("[%s] [%-12s] %s",
-			e.Timestamp, e.ObjectName, e.Message)
-	}
-	if e.Type == "status" {
-		return fmt.Sprintf("[%s] %s: %s",
-			e.Timestamp, e.Status, e.Message)
-	}
-	return ""
-}
-
 // ErrorResponse represents an API error response
 type ErrorResponse struct {
 	Error string `json:"error"`
@@ -79,15 +50,34 @@ type ProvisionOptions struct {
 	Blueprint       string
 	Timeout         int
 	Stream          bool
-	CustomBlueprint []byte // YAML content for custom blueprints
+	CustomBlueprint []byte
 }
 
 // TemplateOptions represents options for workspace templating
 type TemplateOptions struct {
 	Username        string
 	Blueprint       string
-	CustomBlueprint []byte // YAML content for custom blueprints
+	CustomBlueprint []byte
 }
+
+// // WorkspaceResponse represents a workspace response from the API
+// type WorkspaceResponse struct {
+// 	Name         string    `json:"name"`
+// 	Username     string    `json:"username"`
+// 	Blueprint    string    `json:"blueprint"`
+// 	Deployed     time.Time `json:"deployed"`
+// 	WorkspaceUrl string    `json:"workspaceUrl"`
+// 	StatusUrl    string    `json:"statusUrl"`
+// }
+
+// // WorkspaceStatus represents the status of a workspace
+// type WorkspaceStatus struct {
+// 	Created       time.Time     `json:"created"`
+// 	Status        string        `json:"status"`
+// 	Message       string        `json:"message"`
+// 	PodIP         string        `json:"podIP"`
+// 	ProvisionTime time.Duration `json:"provisionTime"`
+// }
 
 // NewClient creates a new provisioner API client
 func NewClient(config Config) *Client {
@@ -156,6 +146,24 @@ func (c *Client) handleResponse(resp *http.Response, v interface{}) error {
 	}
 
 	return nil
+}
+
+// handleErrorResponse handles error responses from the API
+func (c *Client) handleErrorResponse(resp *http.Response) error {
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return fmt.Errorf("API error (status %d): failed to read error response: %w", resp.StatusCode, err)
+	}
+
+	var errResp ErrorResponse
+	if err := json.Unmarshal(body, &errResp); err != nil {
+		// If we can't parse the error response, return the raw body
+		return fmt.Errorf("API error (status %d): %s", resp.StatusCode, string(body))
+	}
+
+	return fmt.Errorf("API error (status %d): %s", resp.StatusCode, errResp.Error)
 }
 
 // ListBlueprints lists all available blueprints
@@ -286,7 +294,7 @@ func (c *Client) TemplateWorkspace(ctx context.Context, opts *TemplateOptions) (
 }
 
 // ProvisionWorkspace provisions a new workspace
-func (c *Client) ProvisionWorkspace(ctx context.Context, opts *ProvisionOptions) (*WorkspaceStatusResponse, error) {
+func (c *Client) ProvisionWorkspace(ctx context.Context, opts *ProvisionOptions) (*models.WorkspaceStatus, error) {
 	if opts == nil {
 		return nil, fmt.Errorf("provision options are required")
 	}
@@ -330,13 +338,13 @@ func (c *Client) ProvisionWorkspace(ctx context.Context, opts *ProvisionOptions)
 		return nil, err
 	}
 
-	var result WorkspaceStatusResponse
+	var result *models.WorkspaceStatus
 	err = c.handleResponse(resp, &result)
-	return &result, err
+	return result, err
 }
 
 // ProvisionWorkspaceStream provisions a new workspace with streaming updates
-func (c *Client) ProvisionWorkspaceStream(ctx context.Context, opts *ProvisionOptions, eventChan chan<- StreamEvent) error {
+func (c *Client) ProvisionWorkspaceStream(ctx context.Context, opts *ProvisionOptions, eventChan chan<- models.StreamEvent) error {
 	if opts == nil {
 		return fmt.Errorf("provision options are required")
 	}
@@ -403,7 +411,7 @@ func (c *Client) ProvisionWorkspaceStream(ctx context.Context, opts *ProvisionOp
 		}
 
 		// Parse each line as a separate JSON object
-		var event StreamEvent
+		var event models.StreamEvent
 		if err := json.Unmarshal([]byte(line), &event); err != nil {
 			// Log the error but continue processing other events
 			fmt.Printf("Failed to unmarshal event: %v, line: %s\n", err, line)
@@ -454,4 +462,95 @@ func (c *Client) SetTimeout(timeout time.Duration) {
 // GetBaseURL returns the base URL of the client
 func (c *Client) GetBaseURL() string {
 	return c.baseURL
+}
+
+// GetWorkspaces retrieves a list of workspaces, optionally filtered by username and/or blueprint
+func (c *Client) GetWorkspaces(ctx context.Context, username, blueprint string) ([]models.WorkspaceInfo, error) {
+	req, err := http.NewRequestWithContext(ctx, "GET", c.baseURL+"/api/v1/workspaces", nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	// Add query parameters
+	q := req.URL.Query()
+	if username != "" {
+		q.Add("username", username)
+	}
+	if blueprint != "" {
+		q.Add("blueprint", blueprint)
+	}
+	req.URL.RawQuery = q.Encode()
+
+	req.Header.Set("Authorization", "Bearer "+c.apiKey)
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to make request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, c.handleErrorResponse(resp)
+	}
+
+	var workspaces []models.WorkspaceInfo
+	if err := json.NewDecoder(resp.Body).Decode(&workspaces); err != nil {
+		return nil, fmt.Errorf("failed to decode response: %w", err)
+	}
+
+	return workspaces, nil
+}
+
+// GetWorkspace retrieves details of a specific workspace by name
+func (c *Client) GetWorkspace(ctx context.Context, name string) (*models.WorkspaceInfo, error) {
+	req, err := http.NewRequestWithContext(ctx, "GET", c.baseURL+"/api/v1/workspaces/"+name, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	req.Header.Set("Authorization", "Bearer "+c.apiKey)
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to make request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, c.handleErrorResponse(resp)
+	}
+
+	var workspace models.WorkspaceInfo
+	if err := json.NewDecoder(resp.Body).Decode(&workspace); err != nil {
+		return nil, fmt.Errorf("failed to decode response: %w", err)
+	}
+
+	return &workspace, nil
+}
+
+// GetWorkspaceStatus retrieves the current status of a workspace
+func (c *Client) GetWorkspaceStatus(ctx context.Context, name string) (*models.WorkspaceStatus, error) {
+	req, err := http.NewRequestWithContext(ctx, "GET", c.baseURL+"/api/v1/workspaces/"+name+"/status", nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	req.Header.Set("Authorization", "Bearer "+c.apiKey)
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to make request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, c.handleErrorResponse(resp)
+	}
+
+	var status models.WorkspaceStatus
+	if err := json.NewDecoder(resp.Body).Decode(&status); err != nil {
+		return nil, fmt.Errorf("failed to decode response: %w", err)
+	}
+
+	return &status, nil
 }

@@ -6,29 +6,21 @@ import (
 	"time"
 
 	"github.com/k8shell-io/provisioner/internal/helm"
+	"github.com/k8shell-io/provisioner/pkg/models"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/watch"
 )
 
-type EventMessage struct {
-	Timestamp  string
-	ObjectName string
-	Message    string
-}
-
-func (e EventMessage) String() string {
-	return fmt.Sprintf("[%s] [%-12s] %s",
-		e.Timestamp, e.ObjectName, e.Message)
-}
-
+// ProvisionOptions represents the options for provisioning a workspace
 type ProvisionOptions struct {
 	Timeout     int
-	Messages    chan EventMessage
+	Messages    chan models.StreamEvent
 	LockTimeout int
 }
 
-func (w *Workspace) Provision(ctx context.Context, opts *ProvisionOptions) (*WorkspaceStatus, error) {
+// Provision provisions the workspace
+func (w *Workspace) Provision(ctx context.Context, opts *ProvisionOptions) (*models.WorkspaceStatus, error) {
 	if opts == nil {
 		opts = &ProvisionOptions{
 			Timeout:     20,
@@ -66,7 +58,7 @@ func (w *Workspace) Provision(ctx context.Context, opts *ProvisionOptions) (*Wor
 }
 
 // provisionWithLock provisions the workspace with a distributed lock
-func (w *Workspace) provisionWithLock(ctx context.Context, opts *ProvisionOptions) (*WorkspaceStatus, error) {
+func (w *Workspace) provisionWithLock(ctx context.Context, opts *ProvisionOptions) (*models.WorkspaceStatus, error) {
 	workspaceLock := NewWorkspaceLock(w.client.GetKubeClient(), w.client.TargetNamespace(), w.Name())
 
 	w.log.Info().Msgf("Acquiring lock for workspace %s provisioning", w.Name())
@@ -117,7 +109,7 @@ func (w *Workspace) provisionWithLock(ctx context.Context, opts *ProvisionOption
 	return w.doInstallation(ctx, opts)
 }
 
-func (w *Workspace) doInstallation(ctx context.Context, opts *ProvisionOptions) (*WorkspaceStatus, error) {
+func (w *Workspace) doInstallation(ctx context.Context, opts *ProvisionOptions) (*models.WorkspaceStatus, error) {
 	values, err := w.Values()
 	if err != nil {
 		return nil, err
@@ -143,15 +135,14 @@ func (w *Workspace) doInstallation(ctx context.Context, opts *ProvisionOptions) 
 	}
 
 	if status.Status == "Running" {
-		status.ProvisionTime = time.Since(startTime)
-		w.log.Info().Msgf("Workspace %s is now running, provisioned in %s", w.Name(), status.ProvisionTime)
+		w.log.Info().Msgf("Workspace %s is now running, provisioned in %s", w.Name(), time.Since(startTime))
 	}
 	return status, nil
 }
 
 // waitForPodRunning with quick failure detection
 func (w *Workspace) waitForPodRunning(ctx context.Context, startTime time.Time,
-	opts *ProvisionOptions) (*WorkspaceStatus, error) {
+	opts *ProvisionOptions) (*models.WorkspaceStatus, error) {
 
 	podName := w.Name()
 	timeout := time.NewTimer(time.Duration(opts.Timeout) * time.Second)
@@ -217,7 +208,7 @@ func (w *Workspace) watchEvents(ctx context.Context, podName string, stop <-chan
 		case event := <-watcher.ResultChan():
 			if event.Type == watch.Added || event.Type == watch.Modified {
 				if k8sEvent, ok := event.Object.(*corev1.Event); ok {
-					eventMessage := EventMessage{
+					eventMessage := models.StreamEvent{
 						Timestamp:  k8sEvent.CreationTimestamp.Format("2006-01-02 15:04:05"),
 						ObjectName: k8sEvent.InvolvedObject.Name,
 						Message:    k8sEvent.Message,
