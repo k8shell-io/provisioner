@@ -2,7 +2,6 @@ package workspace
 
 import (
 	"context"
-	"encoding/base64"
 	"errors"
 	"fmt"
 	"strings"
@@ -12,6 +11,7 @@ import (
 	"github.com/k8shell-io/provisioner/internal/log"
 	"github.com/k8shell-io/provisioner/pkg/models"
 	"github.com/rs/zerolog"
+	"golang.org/x/sync/errgroup"
 	"gopkg.in/yaml.v3"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -70,25 +70,72 @@ func GetWorkspaceInfo(helmClient *helm.Client, name string, username string, blu
 	return resp, nil
 }
 
-// GetWorkspaceStatus retrieves the status of a workspace by its name
 func GetWorkspaceStatus(ctx context.Context, helmClient *helm.Client, name string) (*models.WorkspaceStatus, error) {
-	pod, err := helmClient.GetKubeClient().CoreV1().Pods(helmClient.TargetNamespace()).Get(ctx, name, metav1.GetOptions{})
-	if err != nil {
-		if strings.Contains(err.Error(), "not found") {
-			return nil, fmt.Errorf("%w: %s", ErrWorkspaceNotFound, name)
+	v1 := helmClient.GetKubeClient().CoreV1()
+
+	var pod *corev1.Pod
+	var keysSecret *corev1.Secret
+	var tlsSecret *corev1.Secret
+
+	g, ctx := errgroup.WithContext(ctx)
+
+	// Fetch pod
+	g.Go(func() error {
+		var err error
+		pod, err = v1.Pods(helmClient.TargetNamespace()).Get(ctx, name, metav1.GetOptions{})
+		if err != nil {
+			if strings.Contains(err.Error(), "not found") {
+				return fmt.Errorf("%w: %s", ErrWorkspaceNotFound, name)
+			}
+			if strings.Contains(err.Error(), "unable to parse") {
+				return fmt.Errorf("%w: %s", ErrInvalidParameters, name)
+			}
+			return fmt.Errorf("failed to get workspace %s: %w", name, err)
 		}
-		if strings.Contains(err.Error(), "unable to parse") {
-			return nil, fmt.Errorf("%w: %s", ErrInvalidParameters, name)
+		return nil
+	})
+
+	// Fetch access keys secret
+	g.Go(func() error {
+		var err error
+		keysSecret, err = v1.Secrets(helmClient.TargetNamespace()).Get(ctx, name+"-access-keys", metav1.GetOptions{})
+		if err != nil {
+			return fmt.Errorf("failed to get keys %s: %w", name, err)
 		}
-		return nil, fmt.Errorf("failed to get workspace %s: %w", name, err)
+		return nil
+	})
+
+	// Fetch TLS secret
+	g.Go(func() error {
+		var err error
+		tlsSecret, err = v1.Secrets(helmClient.TargetNamespace()).Get(ctx, name+"-tls", metav1.GetOptions{})
+		if err != nil {
+			return fmt.Errorf("failed to get tls secret %s: %w", name, err)
+		}
+		return nil
+	})
+
+	if err := g.Wait(); err != nil {
+		return nil, err
+	}
+
+	accessKey, ok := keysSecret.Data["a1key"]
+	if !ok {
+		return nil, fmt.Errorf("failed to get access key from keys %s", name)
+	}
+
+	tlsCert, ok := tlsSecret.Data["tls.crt"]
+	if !ok {
+		return nil, fmt.Errorf("failed to get tls cert from secret %s", name)
 	}
 
 	status := &models.WorkspaceStatus{
-		Created: pod.CreationTimestamp.Time,
-		Status:  string(pod.Status.Phase),
-		// the pod name must correspond to the grpc service name
-		Host:    fmt.Sprintf("%s.%s", pod.ObjectMeta.Name, pod.ObjectMeta.Namespace),
-		Message: getPodStatusMessage(pod),
+		Created:   pod.CreationTimestamp.Time,
+		Status:    string(pod.Status.Phase),
+		Host:      fmt.Sprintf("%s.%s", pod.ObjectMeta.Name, pod.ObjectMeta.Namespace),
+		Message:   getPodStatusMessage(pod),
+		AccessKey: string(accessKey),
+		TLSCert:   string(tlsCert),
 	}
 
 	return status, nil
@@ -183,8 +230,10 @@ func (w *Workspace) Values() (map[string]interface{}, error) {
 	values["__organization__"] = w.user.Organization
 	values["__tlscrt__"] = cert
 	values["__tlskey__"] = key
-	values["__a1key__"] = base64.StdEncoding.EncodeToString([]byte(a1key))
-	values["__a2key__"] = base64.StdEncoding.EncodeToString([]byte(a2key))
+	// values["__a1key__"] = base64.StdEncoding.EncodeToString([]byte(a1key))
+	// values["__a2key__"] = base64.StdEncoding.EncodeToString([]byte(a2key))
+	values["__a1key__"] = a1key
+	values["__a2key__"] = a2key
 	values["__registry__"] = w.client.Registry.ToValues()
 
 	config, err := w.k8shelldConfig(w.blueprint.K8shelld.EncryptConfig, a1key, values)

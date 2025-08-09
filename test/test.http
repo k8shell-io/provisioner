@@ -16,7 +16,7 @@ GET http://localhost:9201/api/v1/workspaces?username={{username}}&blueprint={{bl
 Authorization: Bearer {{token}}
 
 ### Get Workspace Status
-GET http://localhost:9201/api/v1/workspaces/sql-bruckins/status
+GET http://localhost:9201/api/v1/workspaces/dev-bruckins/status
 Authorization: Bearer {{token}}
 
 ### Provision Workspace

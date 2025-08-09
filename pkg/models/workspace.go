@@ -15,10 +15,12 @@ type WorkspaceInfo struct {
 
 // WorkspaceStatus represents the current status of a workspace
 type WorkspaceStatus struct {
-	Created time.Time `json:"created" example:"2025-08-05T10:30:00Z"`
-	Status  string    `json:"status" example:"Running"`
-	Message string    `json:"message" example:"Workspace is running"`
-	Host    string    `json:"host" example:"10.42.0.123"`
+	Created   time.Time `json:"created" example:"2025-08-05T10:30:00Z"`
+	Status    string    `json:"status" example:"Running"`
+	Message   string    `json:"message" example:"Workspace is running"`
+	Host      string    `json:"host" example:"10.42.0.123"`
+	AccessKey string    `json:"accessKey" example:"abc123"`
+	TLSCert   string    `json:"tlsCert" example:"-----BEGIN CERTIFICATE-----\nMIID...IDAQAB\n-----END CERTIFICATE-----"`
 }
 
 // StreamEvent represents a streaming event response
