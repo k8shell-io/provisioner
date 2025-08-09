@@ -21,7 +21,7 @@ type ProvisionOptions struct {
 }
 
 // Provision provisions the workspace
-func (w *Workspace) Provision(ctx context.Context, opts *ProvisionOptions) (*models.WorkspaceStatus, error) {
+func (w *Workspace) Provision(ctx context.Context, opts *ProvisionOptions) (*models.PodStatus, error) {
 	if opts == nil {
 		opts = &ProvisionOptions{
 			Timeout:     20,
@@ -40,7 +40,7 @@ func (w *Workspace) Provision(ctx context.Context, opts *ProvisionOptions) (*mod
 	}
 
 	if exists {
-		status, err := w.GetStatus(ctx)
+		status, err := w.GetPodStatus(ctx)
 		if err != nil {
 			return nil, fmt.Errorf("failed to get workspace status: %w", err)
 		}
@@ -59,7 +59,7 @@ func (w *Workspace) Provision(ctx context.Context, opts *ProvisionOptions) (*mod
 }
 
 // provisionWithLock provisions the workspace with a distributed lock
-func (w *Workspace) provisionWithLock(ctx context.Context, opts *ProvisionOptions) (*models.WorkspaceStatus, error) {
+func (w *Workspace) provisionWithLock(ctx context.Context, opts *ProvisionOptions) (*models.PodStatus, error) {
 	workspaceLock := NewWorkspaceLock(w.client.GetKubeClient(), w.client.TargetNamespace(), w.Name())
 
 	w.log.Info().Msgf("Acquiring lock for workspace %s provisioning", w.Name())
@@ -91,7 +91,7 @@ func (w *Workspace) provisionWithLock(ctx context.Context, opts *ProvisionOption
 	}
 
 	if exists {
-		status, err := w.GetStatus(ctx)
+		status, err := w.GetPodStatus(ctx)
 		if err != nil {
 			return nil, fmt.Errorf("failed to recheck workspace status: %w", err)
 		}
@@ -110,7 +110,7 @@ func (w *Workspace) provisionWithLock(ctx context.Context, opts *ProvisionOption
 	return w.doInstallation(ctx, opts)
 }
 
-func (w *Workspace) doInstallation(ctx context.Context, opts *ProvisionOptions) (*models.WorkspaceStatus, error) {
+func (w *Workspace) doInstallation(ctx context.Context, opts *ProvisionOptions) (*models.PodStatus, error) {
 	values, err := w.Values()
 	if err != nil {
 		return nil, err
@@ -144,7 +144,7 @@ func (w *Workspace) doInstallation(ctx context.Context, opts *ProvisionOptions) 
 
 // waitForPodRunning with quick failure detection
 func (w *Workspace) waitForPodRunning(ctx context.Context, startTime time.Time,
-	opts *ProvisionOptions) (*models.WorkspaceStatus, error) {
+	opts *ProvisionOptions) (*models.PodStatus, error) {
 
 	podName := w.Name()
 	timeout := time.NewTimer(time.Duration(opts.Timeout) * time.Second)
@@ -167,7 +167,7 @@ func (w *Workspace) waitForPodRunning(ctx context.Context, startTime time.Time,
 				podName, opts.Timeout)
 
 		case <-ticker.C:
-			status, err := w.GetStatus(ctx)
+			status, err := w.GetPodStatus(ctx)
 			if err != nil {
 				continue // Keep trying
 			}
@@ -181,7 +181,7 @@ func (w *Workspace) waitForPodRunning(ctx context.Context, startTime time.Time,
 					podName, status.Status, status.Message)
 
 			case "Pending":
-				if strings.Contains(status.Message, "Image pull failed") {
+				if strings.Contains(status.Message, "Error pulling image") {
 					return status, fmt.Errorf("image pull failure for workspace pod %s: %s",
 						podName, status.Message)
 				}

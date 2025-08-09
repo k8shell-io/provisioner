@@ -13,14 +13,22 @@ type WorkspaceInfo struct {
 	Deployed  time.Time `json:"deployed" example:"2025-08-05T10:30:00Z"`
 }
 
+// PodStatus represents the status of a workspace pod
+type PodStatus struct {
+	Created time.Time `json:"created" example:"2025-08-05T10:30:00Z"`
+	Status  string    `json:"status" example:"Running"`
+	Message string    `json:"message" example:"Workspace is running"`
+}
+
 // WorkspaceStatus represents the current status of a workspace
+// It contains information about the workspace pod status and in addition
+// the workspace-specific details such host, port and access key and TLS certificate.
 type WorkspaceStatus struct {
-	Created   time.Time `json:"created" example:"2025-08-05T10:30:00Z"`
-	Status    string    `json:"status" example:"Running"`
-	Message   string    `json:"message" example:"Workspace is running"`
-	Host      string    `json:"host" example:"10.42.0.123"`
-	AccessKey string    `json:"accessKey" example:"abc123"`
-	TLSCert   string    `json:"tlsCert" example:"-----BEGIN CERTIFICATE-----\nMIID...IDAQAB\n-----END CERTIFICATE-----"`
+	PodStatus
+	Host      string `json:"host" example:"10.42.0.123"`
+	Port      int    `json:"port" example:"2822"`
+	AccessKey string `json:"accessKey" example:"abc123"`
+	TLSCert   string `json:"tlsCert" example:"-----BEGIN CERTIFICATE-----\nMIID...IDAQAB\n-----END CERTIFICATE-----"`
 }
 
 // StreamEvent represents a streaming event response
@@ -30,7 +38,6 @@ type StreamEvent struct {
 	ObjectName string `json:"objectName,omitempty" example:"dev-user123"`
 	Message    string `json:"message,omitempty" example:"Pod is starting"`
 	Status     string `json:"status,omitempty" example:"Running"`
-	Host       string `json:"host,omitempty" example:"dev-user123.namespace123"`
 }
 
 func (e StreamEvent) String() string {

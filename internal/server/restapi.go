@@ -755,9 +755,10 @@ func (a *RESTApiService) provisionWithStreaming(c *gin.Context, ws *workspace.Wo
 
 	messages := make(chan models.StreamEvent, 100)
 
-	done := make(chan *models.WorkspaceStatus)
+	done := make(chan *models.PodStatus)
 	errorChan := make(chan error)
 
+	// Provision the workspace
 	go func() {
 		defer close(done)
 		defer close(errorChan)
@@ -804,7 +805,6 @@ func (a *RESTApiService) provisionWithStreaming(c *gin.Context, ws *workspace.Wo
 					"objectName": ws.Name(),
 					"status":     status.Status,
 					"message":    status.Message,
-					"host":       status.Host,
 				}
 				data, _ := json.Marshal(final)
 				c.Writer.Write([]byte(fmt.Sprintf("%s\n", data)))
@@ -846,7 +846,6 @@ func (a *RESTApiService) provisionSync(c *gin.Context, ws *workspace.Workspace, 
 	c.JSON(http.StatusCreated, gin.H{
 		"status":  status.Status,
 		"message": status.Message,
-		"host":    status.Host,
 	})
 }
 

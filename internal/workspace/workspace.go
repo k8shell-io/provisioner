@@ -75,6 +75,7 @@ func GetWorkspaceStatus(ctx context.Context, helmClient *helm.Client, name strin
 	v1 := helmClient.GetKubeClient().CoreV1()
 
 	var pod *corev1.Pod
+	var podService *corev1.Service
 	var keysSecret *corev1.Secret
 	var tlsSecret *corev1.Secret
 
@@ -92,6 +93,16 @@ func GetWorkspaceStatus(ctx context.Context, helmClient *helm.Client, name strin
 				return fmt.Errorf("%w: %s", ErrInvalidParameters, name)
 			}
 			return fmt.Errorf("failed to get workspace %s: %w", name, err)
+		}
+		return nil
+	})
+
+	// Fetch grpc service
+	g.Go(func() error {
+		var err error
+		podService, err = v1.Services(helmClient.TargetNamespace()).Get(ctx, name, metav1.GetOptions{})
+		if err != nil {
+			return fmt.Errorf("failed to get pod service %s: %w", name, err)
 		}
 		return nil
 	})
@@ -131,10 +142,13 @@ func GetWorkspaceStatus(ctx context.Context, helmClient *helm.Client, name strin
 	}
 
 	status := &models.WorkspaceStatus{
-		Created:   pod.CreationTimestamp.Time,
-		Status:    string(pod.Status.Phase),
-		Host:      fmt.Sprintf("%s.%s", pod.ObjectMeta.Name, pod.ObjectMeta.Namespace),
-		Message:   getPodStatusMessage(pod),
+		PodStatus: models.PodStatus{
+			Created: pod.CreationTimestamp.Time,
+			Status:  string(pod.Status.Phase),
+			Message: getPodStatusMessage(pod),
+		},
+		Host:      podService.Name + "." + podService.Namespace,
+		Port:      int(podService.Spec.Ports[0].Port),
 		AccessKey: string(accessKey),
 		TLSCert:   string(tlsCert),
 	}
@@ -259,9 +273,17 @@ func (w *Workspace) Template(ctx context.Context) (string, error) {
 	return out, nil
 }
 
-// GetStatus returns the current status of the workspace pod
-func (w *Workspace) GetStatus(ctx context.Context) (*models.WorkspaceStatus, error) {
-	return GetWorkspaceStatus(ctx, w.client, w.Name())
+func (w *Workspace) GetPodStatus(ctx context.Context) (*models.PodStatus, error) {
+	v1 := w.client.GetKubeClient().CoreV1()
+	pod, err := v1.Pods(w.client.TargetNamespace()).Get(ctx, w.Name(), metav1.GetOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("failed to get pod status %s: %w", w.Name(), err)
+	}
+	return &models.PodStatus{
+		Created: pod.CreationTimestamp.Time,
+		Status:  string(pod.Status.Phase),
+		Message: getPodStatusMessage(pod),
+	}, nil
 }
 
 func (w *Workspace) IsInstalled(ctx context.Context) (bool, error) {
