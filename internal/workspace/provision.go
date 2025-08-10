@@ -150,9 +150,11 @@ func (w *Workspace) waitForPodRunning(ctx context.Context, startTime time.Time,
 	timeout := time.NewTimer(time.Duration(opts.Timeout) * time.Second)
 	defer timeout.Stop()
 
-	eventStop := make(chan struct{})
-	go w.watchEvents(ctx, podName, eventStop, opts)
-	defer close(eventStop)
+	watchCtx, cancelWatch := context.WithCancel(ctx)
+	defer cancelWatch() // This handles ALL cleanup
+
+	criticalErrorChan := make(chan error, 1)
+	go w.watchEvents(watchCtx, podName, criticalErrorChan, opts)
 
 	ticker := time.NewTicker(1 * time.Second)
 	defer ticker.Stop()
@@ -166,10 +168,15 @@ func (w *Workspace) waitForPodRunning(ctx context.Context, startTime time.Time,
 			return nil, fmt.Errorf("timeout waiting for pod %s to be running after %v",
 				podName, opts.Timeout)
 
+		case criticalErr := <-criticalErrorChan:
+			if criticalErr != nil {
+				return nil, criticalErr
+			}
+
 		case <-ticker.C:
 			status, err := w.GetPodStatus(ctx)
 			if err != nil {
-				continue // Keep trying
+				continue
 			}
 
 			switch status.Status {
@@ -181,10 +188,6 @@ func (w *Workspace) waitForPodRunning(ctx context.Context, startTime time.Time,
 					podName, status.Status, status.Message)
 
 			case "Pending":
-				if strings.Contains(status.Message, "Error pulling image") {
-					return status, fmt.Errorf("image pull failure for workspace pod %s: %s",
-						podName, status.Message)
-				}
 				if time.Since(startTime) > time.Duration(opts.Timeout)*time.Second {
 					return status, fmt.Errorf("workspace pod %s has been pending for too long: %s",
 						podName, status.Message)
@@ -195,7 +198,7 @@ func (w *Workspace) waitForPodRunning(ctx context.Context, startTime time.Time,
 }
 
 // watchEvents watches and reports Kubernetes events for the pod
-func (w *Workspace) watchEvents(ctx context.Context, podName string, stop <-chan struct{}, opts *ProvisionOptions) {
+func (w *Workspace) watchEvents(ctx context.Context, podName string, criticalErrorChan chan<- error, opts *ProvisionOptions) {
 	eventList, err := w.client.GetKubeClient().CoreV1().Events(w.client.TargetNamespace()).List(ctx, metav1.ListOptions{
 		FieldSelector: fmt.Sprintf("involvedObject.name=%s", podName),
 		Limit:         1,
@@ -218,15 +221,13 @@ func (w *Workspace) watchEvents(ctx context.Context, podName string, stop <-chan
 		w.log.Warn().Err(err).Msg("Failed to watch events")
 		return
 	}
-
 	defer watcher.Stop()
 
 	for {
 		select {
-		case <-stop:
-			return
 		case <-ctx.Done():
 			return
+
 		case event := <-watcher.ResultChan():
 			if event.Type == watch.Added || event.Type == watch.Modified {
 				if k8sEvent, ok := event.Object.(*corev1.Event); ok {
@@ -236,12 +237,42 @@ func (w *Workspace) watchEvents(ctx context.Context, podName string, stop <-chan
 						ObjectName: k8sEvent.InvolvedObject.Name,
 						Message:    k8sEvent.Message,
 					}
+
 					w.log.Info().Msg(eventMessage.String())
 					if opts.Messages != nil {
 						opts.Messages <- eventMessage
+					}
+
+					if w.isCriticalError(eventMessage.Message) {
+						criticalErr := fmt.Errorf("provisioning error")
+						criticalErrorChan <- criticalErr
+						return
 					}
 				}
 			}
 		}
 	}
+}
+
+// isCriticalError determines if an event message indicates a critical error
+func (w *Workspace) isCriticalError(message string) bool {
+	criticalErrors := []string{
+		"Failed to pull image",
+		"ImagePullBackOff",
+		"ErrImagePull",
+		"InvalidImageName",
+		"image not found",
+		"authentication required",
+		"insufficient memory",
+		"insufficient cpu",
+		"no nodes available",
+	}
+
+	messageLower := strings.ToLower(message)
+	for _, criticalError := range criticalErrors {
+		if strings.Contains(messageLower, strings.ToLower(criticalError)) {
+			return true
+		}
+	}
+	return false
 }
