@@ -850,13 +850,13 @@ func (a *RESTApiService) provisionSync(c *gin.Context, ws *workspace.Workspace, 
 }
 
 func errToJSONError(c *gin.Context, err error) {
-	if errors.Is(err, workspace.ErrWorkspaceNotFound) {
+	if errors.Is(err, models.ErrWorkspaceNotFound) {
 		c.JSON(http.StatusNotFound, gin.H{
 			"error": fmt.Sprintf("%v", err),
 		})
 		return
 	}
-	if errors.Is(err, workspace.ErrInvalidParameters) {
+	if errors.Is(err, models.ErrInvalidParameters) {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"error": fmt.Sprintf("%v", err),
 		})

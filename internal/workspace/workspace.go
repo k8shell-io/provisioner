@@ -3,7 +3,6 @@ package workspace
 import (
 	"context"
 	"encoding/base64"
-	"errors"
 	"fmt"
 	"strings"
 
@@ -15,6 +14,7 @@ import (
 	"golang.org/x/sync/errgroup"
 	"gopkg.in/yaml.v3"
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
@@ -25,12 +25,6 @@ type Workspace struct {
 	blueprint *models.Blueprint
 	user      *identity.User
 }
-
-// ErrWorkspaceNotFound is returned when a workspace is not found
-var ErrWorkspaceNotFound = errors.New("workspace not found")
-
-// ErrInvalidParameters is returned when the provided parameters are invalid
-var ErrInvalidParameters = errors.New("invalid parameters")
 
 // GetWorkspaceInfo retrieves information about workspaces
 func GetWorkspaceInfo(helmClient *helm.Client, name string, username string, blueprint string) ([]models.WorkspaceInfo, error) {
@@ -54,7 +48,7 @@ func GetWorkspaceInfo(helmClient *helm.Client, name string, username string, blu
 	releases, err := helmClient.ListWithSelector(helmClient.TargetNamespace(), selector)
 	if err != nil {
 		if strings.Contains(err.Error(), "unable to parse") {
-			return nil, fmt.Errorf("failed to list releases: %w", ErrInvalidParameters)
+			return nil, fmt.Errorf("failed to list releases: %w", models.ErrInvalidParameters)
 		}
 		return nil, fmt.Errorf("failed to list releases: %w", err)
 	}
@@ -87,10 +81,10 @@ func GetWorkspaceStatus(ctx context.Context, helmClient *helm.Client, name strin
 		pod, err = v1.Pods(helmClient.TargetNamespace()).Get(ctx, name, metav1.GetOptions{})
 		if err != nil {
 			if strings.Contains(err.Error(), "not found") {
-				return fmt.Errorf("%w: %s", ErrWorkspaceNotFound, name)
+				return fmt.Errorf("%w: %s", models.ErrWorkspaceNotFound, name)
 			}
 			if strings.Contains(err.Error(), "unable to parse") {
-				return fmt.Errorf("%w: %s", ErrInvalidParameters, name)
+				return fmt.Errorf("%w: %s", models.ErrInvalidParameters, name)
 			}
 			return fmt.Errorf("failed to get workspace %s: %w", name, err)
 		}
@@ -277,6 +271,9 @@ func (w *Workspace) GetPodStatus(ctx context.Context) (*models.PodStatus, error)
 	v1 := w.client.GetKubeClient().CoreV1()
 	pod, err := v1.Pods(w.client.TargetNamespace()).Get(ctx, w.Name(), metav1.GetOptions{})
 	if err != nil {
+		if errors.IsNotFound(err) {
+			return nil, fmt.Errorf("%w: %s", models.ErrWorkspaceNotFound, w.Name())
+		}
 		return nil, fmt.Errorf("failed to get pod status %s: %w", w.Name(), err)
 	}
 	return &models.PodStatus{

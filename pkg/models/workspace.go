@@ -1,6 +1,7 @@
 package models
 
 import (
+	"errors"
 	"fmt"
 	"time"
 )
@@ -39,6 +40,12 @@ type StreamEvent struct {
 	Message    string `json:"message,omitempty" example:"Pod is starting"`
 	Status     string `json:"status,omitempty" example:"Running"`
 }
+
+// ErrWorkspaceNotFound is returned when a workspace is not found
+var ErrWorkspaceNotFound = errors.New("workspace not found")
+
+// ErrInvalidParameters is returned when the provided parameters are invalid
+var ErrInvalidParameters = errors.New("invalid parameters")
 
 func (e StreamEvent) String() string {
 	if e.Type == "event" {

@@ -2,6 +2,7 @@ package workspace
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -42,15 +43,19 @@ func (w *Workspace) Provision(ctx context.Context, opts *ProvisionOptions) (*mod
 	if exists {
 		status, err := w.GetPodStatus(ctx)
 		if err != nil {
-			return nil, fmt.Errorf("failed to get workspace status: %w", err)
+			if errors.Is(err, models.ErrWorkspaceNotFound) {
+				w.log.Info().Msgf("Pod %s not found, proceeding with provisioning", w.Name())
+			} else {
+				return nil, fmt.Errorf("failed to get workspace pod status: %w", err)
+			}
+		} else {
+			if status.Status == "Running" {
+				w.log.Info().Msgf("Workspace %s is already running", w.Name())
+				return status, nil
+			}
 		}
 
-		if status.Status == "Running" {
-			w.log.Info().Msgf("Workspace %s is already running", w.Name())
-			return status, nil
-		}
-
-		w.log.Info().Msgf("Workspace %s exists but is not running (%s), need to provision", w.Name(), status.Status)
+		w.log.Info().Msgf("Workspace %s exists but it is not running, need to provision", w.Name())
 	} else {
 		w.log.Info().Msgf("Workspace %s does not exist, need to provision", w.Name())
 	}
@@ -79,7 +84,7 @@ func (w *Workspace) provisionWithLock(ctx context.Context, opts *ProvisionOption
 		if releaseErr := workspaceLock.Release(context.Background()); releaseErr != nil {
 			w.log.Error().Err(releaseErr).Msgf("Failed to release lock for workspace %s", w.Name())
 		} else {
-			w.log.Info().Msgf("Released lock for workspace %s", w.Name())
+			w.log.Debug().Msgf("Released lock for workspace %s", w.Name())
 		}
 	}()
 
@@ -93,15 +98,19 @@ func (w *Workspace) provisionWithLock(ctx context.Context, opts *ProvisionOption
 	if exists {
 		status, err := w.GetPodStatus(ctx)
 		if err != nil {
-			return nil, fmt.Errorf("failed to recheck workspace status: %w", err)
+			if errors.Is(err, models.ErrWorkspaceNotFound) {
+				w.log.Debug().Msgf("Pod %s not found, proceeding with provisioning", w.Name())
+			} else {
+				return nil, fmt.Errorf("failed to recheck workspace status: %w", err)
+			}
+		} else {
+			if status.Status == "Running" {
+				w.log.Debug().Msgf("Workspace %s is now running (completed by another instance while waiting for lock)", w.Name())
+				return status, nil
+			}
 		}
 
-		if status.Status == "Running" {
-			w.log.Info().Msgf("Workspace %s is now running (completed by another instance while waiting for lock)", w.Name())
-			return status, nil
-		}
-
-		w.log.Info().Msgf("Workspace %s still not running after acquiring lock, proceeding with reinstall", w.Name())
+		w.log.Debug().Msgf("Workspace %s still not running after acquiring lock, proceeding with reinstall", w.Name())
 		if err := w.client.Uninstall(w.Name(), int(opts.Timeout)); err != nil {
 			return nil, fmt.Errorf("failed to delete workspace: %w", err)
 		}
