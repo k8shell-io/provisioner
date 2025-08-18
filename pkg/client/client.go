@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -59,6 +60,8 @@ type TemplateOptions struct {
 	Blueprint       string
 	CustomBlueprint []byte
 }
+
+var ErrWorkspaceNotFound = errors.New("workspace not found")
 
 // NewClient creates a new provisioner API client
 func NewClient(config Config) *Client {
@@ -498,6 +501,9 @@ func (c *Client) GetWorkspace(ctx context.Context, name string) (*models.Workspa
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
+		if resp.StatusCode == http.StatusNotFound {
+			return nil, fmt.Errorf("%w: %s", ErrWorkspaceNotFound, name)
+		}
 		return nil, c.handleErrorResponse(resp)
 	}
 
@@ -525,6 +531,9 @@ func (c *Client) GetWorkspaceStatus(ctx context.Context, name string) (*models.W
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
+		if resp.StatusCode == http.StatusNotFound {
+			return nil, fmt.Errorf("%w: %s", ErrWorkspaceNotFound, name)
+		}
 		return nil, c.handleErrorResponse(resp)
 	}
 
