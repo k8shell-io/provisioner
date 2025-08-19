@@ -336,8 +336,6 @@ func (c *Client) ProvisionWorkspaceStream(ctx context.Context, opts *ProvisionOp
 		return fmt.Errorf("event channel is required")
 	}
 
-	defer close(eventChan)
-
 	params := url.Values{}
 	params.Set("username", opts.Username)
 	params.Set("stream", "true")
