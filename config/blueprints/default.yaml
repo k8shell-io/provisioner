@@ -7,7 +7,7 @@ blueprints:
     imagePullPolicy: Always
     
     k8shelld: 
-      image: k8shell-base/k8shelld:v0.10.1-35
+      image: k8shell-base/k8shelld:v0.10.2-1
       imagePullPolicy: Always
       encryptConfig: !cel "!(user.roles.exists(r, r in ['org-admin', 'admin', 'workspace-admin']))"
       ignoreOrphans:
