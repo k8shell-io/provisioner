@@ -45,10 +45,10 @@ mainUser:
       gid: {{ if and (ne .Values.docker.subgid 0) }}{{ add .Values.docker.subgid .Values.docker.groupId -1 }}{{ else }}{{ .Values.docker.groupId }}{{ end }}
   {{- end }}
 
-{{- if .Values.k8shelld.PortForward }}
+{{- if .Values.k8shelld.portForward }}
 # port forwarding rules
 portForwarding:
-{{- range .Values.k8shelld.PortForward }}
+{{- range .Values.k8shelld.portForward }}
   - {{ . }}
 {{- end }}
 {{- end }}
@@ -61,9 +61,9 @@ reapZombies:
 terminateOrphans:
   enabled: true
   checkInterval: 5
-  {{- if .Values.k8shelld.IgnoreOrphans }}
+  {{- if .Values.k8shelld.ignoreOrphans }}
   exclude:
-  {{- range .Values.k8shelld.IgnoreOrphans }}
+  {{- range .Values.k8shelld.ignoreOrphans }}
   - {{ . }}
   {{- end }}
   {{- end }}
