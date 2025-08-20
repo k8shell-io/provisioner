@@ -8,7 +8,6 @@ import (
 	"os/signal"
 	"syscall"
 
-	_ "github.com/k8shell-io/provisioner/docs"
 	"github.com/k8shell-io/provisioner/internal/log"
 	"github.com/k8shell-io/provisioner/internal/server"
 )
