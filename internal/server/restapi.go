@@ -23,7 +23,6 @@ import (
 
 	"github.com/gin-gonic/gin"
 	identity "github.com/k8shell-io/identity/pkg/client"
-	_ "github.com/k8shell-io/provisioner/docs"
 	"github.com/k8shell-io/provisioner/internal/blueprint"
 	"github.com/k8shell-io/provisioner/internal/log"
 	"github.com/k8shell-io/provisioner/internal/workspace"
