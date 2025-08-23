@@ -3,14 +3,13 @@ package workspace
 import (
 	"context"
 	"encoding/base64"
-	"errors"
 	"fmt"
 	"strings"
-	"time"
 
 	"github.com/k8shell-io/common/models"
 	"github.com/k8shell-io/provisioner/internal/helm"
 	"github.com/k8shell-io/provisioner/internal/log"
+	provModels "github.com/k8shell-io/provisioner/pkg/models"
 	"github.com/rs/zerolog"
 	"golang.org/x/sync/errgroup"
 	"gopkg.in/yaml.v3"
@@ -27,62 +26,9 @@ type Workspace struct {
 	user      *models.User
 }
 
-// WorkspaceInfo represents information about a workspace
-type WorkspaceInfo struct {
-	Name      string    `json:"name" example:"dev-user123"`
-	Username  string    `json:"username" example:"dev-user"`
-	Blueprint string    `json:"blueprint" example:"dev"`
-	Deployed  time.Time `json:"deployed" example:"2025-08-05T10:30:00Z"`
-}
-
-// PodStatus represents the status of a workspace pod
-type PodStatus struct {
-	Created time.Time `json:"created" example:"2025-08-05T10:30:00Z"`
-	Status  string    `json:"status" example:"Running"`
-	Message string    `json:"message" example:"Workspace is running"`
-}
-
-// WorkspaceStatus represents the current status of a workspace
-// It contains information about the workspace pod status and in addition
-// the workspace-specific details such host, port and access key and TLS certificate.
-type WorkspaceStatus struct {
-	PodStatus
-	Host      string `json:"host" example:"dev-john.k8shell-workspace"`
-	PodIP     string `json:"podIP" example:"10.42.0.123"`
-	Port      int    `json:"port" example:"2822"`
-	AccessKey string `json:"accessKey" example:"abc123"`
-	TLSCert   string `json:"tlsCert" example:"-----BEGIN CERTIFICATE-----\nMIID...IDAQAB\n-----END CERTIFICATE-----"`
-}
-
-// StreamEvent represents a streaming event response
-type StreamEvent struct {
-	Type       string `json:"type" example:"event"`
-	Timestamp  string `json:"timestamp,omitempty" example:"2025-08-05T10:30:00Z"`
-	ObjectName string `json:"objectName,omitempty" example:"dev-user123"`
-	Message    string `json:"message,omitempty" example:"Pod is starting"`
-	Status     string `json:"status,omitempty" example:"Running"`
-}
-
-// ErrWorkspaceNotFound is returned when a workspace is not found
-var ErrWorkspaceNotFound = errors.New("workspace not found")
-
-// ErrInvalidParameters is returned when the provided parameters are invalid
-var ErrInvalidParameters = errors.New("invalid parameters")
-
-func (e StreamEvent) String() string {
-	if e.Type == "event" {
-		return fmt.Sprintf("[%s] [%-12s] %s",
-			e.Timestamp, e.ObjectName, e.Message)
-	}
-	if e.Type == "status" {
-		return fmt.Sprintf("[%s] [%-12s] %s: %s",
-			e.Timestamp, e.ObjectName, e.Status, e.Message)
-	}
-	return ""
-}
-
 // GetWorkspaceInfo retrieves information about workspaces
-func GetWorkspaceInfo(helmClient *helm.Client, name string, username string, blueprint string) ([]WorkspaceInfo, error) {
+func GetWorkspaceInfo(helmClient *helm.Client, name string, username string,
+	blueprint string) ([]provModels.WorkspaceInfo, error) {
 	labels := map[string]string{
 		"app.kubernetes.io/name": helm.WORKSPACE_CHART_NAME,
 	}
@@ -103,14 +49,14 @@ func GetWorkspaceInfo(helmClient *helm.Client, name string, username string, blu
 	releases, err := helmClient.ListWithSelector(helmClient.TargetNamespace(), selector)
 	if err != nil {
 		if strings.Contains(err.Error(), "unable to parse") {
-			return nil, fmt.Errorf("failed to list releases: %w", ErrInvalidParameters)
+			return nil, fmt.Errorf("failed to list releases: %w", provModels.ErrInvalidParameters)
 		}
 		return nil, fmt.Errorf("failed to list releases: %w", err)
 	}
 
-	resp := make([]WorkspaceInfo, 0, len(releases))
+	resp := make([]provModels.WorkspaceInfo, 0, len(releases))
 	for _, release := range releases {
-		resp = append(resp, WorkspaceInfo{
+		resp = append(resp, provModels.WorkspaceInfo{
 			Name:      release.Labels["app.kubernetes.io/instance"],
 			Username:  release.Labels["k8shell.io/username"],
 			Blueprint: release.Labels["k8shell.io/blueprint"],
@@ -120,7 +66,8 @@ func GetWorkspaceInfo(helmClient *helm.Client, name string, username string, blu
 	return resp, nil
 }
 
-func GetWorkspaceStatus(ctx context.Context, helmClient *helm.Client, name string) (*WorkspaceStatus, error) {
+func GetWorkspaceStatus(ctx context.Context, helmClient *helm.Client,
+	name string) (*provModels.WorkspaceStatus, error) {
 	v1 := helmClient.GetKubeClient().CoreV1()
 
 	var pod *corev1.Pod
@@ -136,10 +83,10 @@ func GetWorkspaceStatus(ctx context.Context, helmClient *helm.Client, name strin
 		pod, err = v1.Pods(helmClient.TargetNamespace()).Get(ctx, name, metav1.GetOptions{})
 		if err != nil {
 			if strings.Contains(err.Error(), "not found") {
-				return fmt.Errorf("%w: %s", ErrWorkspaceNotFound, name)
+				return fmt.Errorf("%w: %s", provModels.ErrWorkspaceNotFound, name)
 			}
 			if strings.Contains(err.Error(), "unable to parse") {
-				return fmt.Errorf("%w: %s", ErrInvalidParameters, name)
+				return fmt.Errorf("%w: %s", provModels.ErrInvalidParameters, name)
 			}
 			return fmt.Errorf("failed to get workspace %s: %w", name, err)
 		}
@@ -190,8 +137,8 @@ func GetWorkspaceStatus(ctx context.Context, helmClient *helm.Client, name strin
 		return nil, fmt.Errorf("failed to get tls cert from secret %s", name)
 	}
 
-	status := &WorkspaceStatus{
-		PodStatus: PodStatus{
+	status := &provModels.WorkspaceStatus{
+		PodStatus: provModels.PodStatus{
 			Created: pod.CreationTimestamp.Time,
 			Status:  string(pod.Status.Phase),
 			Message: getPodStatusMessage(pod),
@@ -323,16 +270,16 @@ func (w *Workspace) Template(ctx context.Context) (string, error) {
 	return out, nil
 }
 
-func (w *Workspace) GetPodStatus(ctx context.Context) (*PodStatus, error) {
+func (w *Workspace) GetPodStatus(ctx context.Context) (*provModels.PodStatus, error) {
 	v1 := w.client.GetKubeClient().CoreV1()
 	pod, err := v1.Pods(w.client.TargetNamespace()).Get(ctx, w.Name(), metav1.GetOptions{})
 	if err != nil {
 		if k8sErrors.IsNotFound(err) {
-			return nil, fmt.Errorf("%w: %s", ErrWorkspaceNotFound, w.Name())
+			return nil, fmt.Errorf("%w: %s", provModels.ErrWorkspaceNotFound, w.Name())
 		}
 		return nil, fmt.Errorf("failed to get pod status %s: %w", w.Name(), err)
 	}
-	return &PodStatus{
+	return &provModels.PodStatus{
 		Created: pod.CreationTimestamp.Time,
 		Status:  string(pod.Status.Phase),
 		Message: getPodStatusMessage(pod),

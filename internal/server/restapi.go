@@ -27,6 +27,7 @@ import (
 	"github.com/k8shell-io/provisioner/internal/blueprint"
 	"github.com/k8shell-io/provisioner/internal/log"
 	ws "github.com/k8shell-io/provisioner/internal/workspace"
+	provModels "github.com/k8shell-io/provisioner/pkg/models"
 	"github.com/rs/zerolog"
 	swaggerFiles "github.com/swaggo/files"
 	ginSwagger "github.com/swaggo/gin-swagger"
@@ -52,13 +53,6 @@ type BlueprintInfo struct {
 	Name string `json:"name" example:"dev"`
 	URL  string `json:"url" example:"/api/v1/blueprints/dev"`
 }
-
-// // WorkspaceResponse represents a response containing a list of workspaces
-// type WorkspaceResponse struct {
-// 	models.WorkspaceInfo
-// 	WorkspaceUrl string `json:"workspaceUrl" example:"/api/v1/workspaces/dev-user123"`
-// 	StatusUrl    string `json:"statusUrl" example:"/api/v1/workspaces/dev-user123/status"`
-// }
 
 // NewRESTAPI creates a new REST API service
 func NewRESTAPI(server *Server) (*RESTApiService, error) {
@@ -472,7 +466,7 @@ func (a *RESTApiService) GetWorkspaces(c *gin.Context) {
 		return
 	}
 
-	info := make([]ws.WorkspaceInfo, 0, len(workspaces))
+	info := make([]provModels.WorkspaceInfo, 0, len(workspaces))
 	info = append(info, workspaces...)
 
 	c.JSON(http.StatusOK, info)
@@ -486,7 +480,7 @@ func (a *RESTApiService) GetWorkspaces(c *gin.Context) {
 // @Produce      json
 // @Security     BearerAuth
 // @Param        name  path    string  true  "Workspace name"
-// @Success      200   {object}  models.WorkspaceResponse  "Workspace details"
+// @Success      200   {object}  provModels.WorkspaceInfo  "Workspace details"
 // @Failure      404   {object}  ErrorResponse      "Workspace not found"
 // @Failure      409   {object}  ErrorResponse      "Multiple workspaces found with same name"
 // @Failure      401   {object}  ErrorResponse      "Unauthorized"
@@ -518,7 +512,7 @@ func (a *RESTApiService) GetWorkspace(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, ws.WorkspaceInfo{
+	c.JSON(http.StatusOK, provModels.WorkspaceInfo{
 		Name:      info[0].Name,
 		Username:  info[0].Username,
 		Blueprint: info[0].Blueprint,
@@ -534,7 +528,7 @@ func (a *RESTApiService) GetWorkspace(c *gin.Context) {
 // @Produce      json
 // @Security     BearerAuth
 // @Param        name  path    string  true  "Workspace name"
-// @Success      200   {object}  models.WorkspaceStatus  "Workspace status details"
+// @Success      200   {object}  provModels.WorkspaceStatus  "Workspace status details"
 // @Failure      400   {object}  ErrorResponse              "Bad request - invalid parameters"
 // @Failure      404   {object}  ErrorResponse              "Workspace not found"
 // @Failure      401   {object}  ErrorResponse              "Unauthorized"
@@ -752,9 +746,9 @@ func (a *RESTApiService) provisionWithStreaming(c *gin.Context, workspace *ws.Wo
 
 	c.Status(http.StatusOK)
 
-	messages := make(chan ws.StreamEvent, 100)
+	messages := make(chan provModels.StreamEvent, 100)
 
-	done := make(chan *ws.PodStatus)
+	done := make(chan *provModels.PodStatus)
 	errorChan := make(chan error)
 
 	// Provision the workspace
@@ -849,13 +843,13 @@ func (a *RESTApiService) provisionSync(c *gin.Context, workspace *ws.Workspace, 
 }
 
 func errToJSONError(c *gin.Context, err error) {
-	if errors.Is(err, ws.ErrWorkspaceNotFound) {
+	if errors.Is(err, provModels.ErrWorkspaceNotFound) {
 		c.JSON(http.StatusNotFound, gin.H{
 			"error": fmt.Sprintf("%v", err),
 		})
 		return
 	}
-	if errors.Is(err, ws.ErrInvalidParameters) {
+	if errors.Is(err, provModels.ErrInvalidParameters) {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"error": fmt.Sprintf("%v", err),
 		})
