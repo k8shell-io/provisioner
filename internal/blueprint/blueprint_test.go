@@ -5,9 +5,8 @@ import (
 	"os"
 	"testing"
 
-	identity "github.com/k8shell-io/identity/pkg/models"
+	"github.com/k8shell-io/common/models"
 	"github.com/k8shell-io/provisioner/internal/blueprint"
-	"github.com/k8shell-io/provisioner/pkg/models"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	_ "go.uber.org/automaxprocs"
@@ -39,7 +38,7 @@ func setupTestEnvironment(t *testing.T) func() {
 // createTestScope creates a test scope with user data
 func createTestScope(username string, roles []string) *blueprint.BlueprintScope {
 	scope := blueprint.TestScope()
-	scope.User = &identity.User{
+	scope.User = &models.User{
 		Username: username,
 		Roles:    roles,
 	}

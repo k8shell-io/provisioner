@@ -13,7 +13,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/k8shell-io/provisioner/pkg/models"
+	"github.com/k8shell-io/common/models"
+	ws "github.com/k8shell-io/provisioner/internal/workspace"
 )
 
 // Config represents the client configuration
@@ -275,7 +276,7 @@ func (c *Client) TemplateWorkspace(ctx context.Context, opts *TemplateOptions) (
 }
 
 // ProvisionWorkspace provisions a new workspace
-func (c *Client) ProvisionWorkspace(ctx context.Context, opts *ProvisionOptions) (*models.WorkspaceStatus, error) {
+func (c *Client) ProvisionWorkspace(ctx context.Context, opts *ProvisionOptions) (*ws.WorkspaceStatus, error) {
 	if opts == nil {
 		return nil, fmt.Errorf("provision options are required")
 	}
@@ -319,13 +320,13 @@ func (c *Client) ProvisionWorkspace(ctx context.Context, opts *ProvisionOptions)
 		return nil, err
 	}
 
-	var result *models.WorkspaceStatus
+	var result *ws.WorkspaceStatus
 	err = c.handleResponse(resp, &result)
 	return result, err
 }
 
 // ProvisionWorkspaceStream provisions a new workspace with streaming updates
-func (c *Client) ProvisionWorkspaceStream(ctx context.Context, opts *ProvisionOptions, eventChan chan<- models.StreamEvent) error {
+func (c *Client) ProvisionWorkspaceStream(ctx context.Context, opts *ProvisionOptions, eventChan chan<- ws.StreamEvent) error {
 	if opts == nil {
 		return fmt.Errorf("provision options are required")
 	}
@@ -390,7 +391,7 @@ func (c *Client) ProvisionWorkspaceStream(ctx context.Context, opts *ProvisionOp
 		}
 
 		// Parse each line as a separate JSON object
-		var event models.StreamEvent
+		var event ws.StreamEvent
 		if err := json.Unmarshal([]byte(line), &event); err != nil {
 			// Log the error but continue processing other events
 			fmt.Printf("Failed to unmarshal event: %v, line: %s\n", err, line)
@@ -444,7 +445,7 @@ func (c *Client) GetBaseURL() string {
 }
 
 // GetWorkspaces retrieves a list of workspaces, optionally filtered by username and/or blueprint
-func (c *Client) GetWorkspaces(ctx context.Context, username, blueprint string) ([]models.WorkspaceInfo, error) {
+func (c *Client) GetWorkspaces(ctx context.Context, username, blueprint string) ([]ws.WorkspaceInfo, error) {
 	req, err := http.NewRequestWithContext(ctx, "GET", c.baseURL+"/api/v1/workspaces", nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
@@ -472,7 +473,7 @@ func (c *Client) GetWorkspaces(ctx context.Context, username, blueprint string) 
 		return nil, c.handleErrorResponse(resp)
 	}
 
-	var workspaces []models.WorkspaceInfo
+	var workspaces []ws.WorkspaceInfo
 	if err := json.NewDecoder(resp.Body).Decode(&workspaces); err != nil {
 		return nil, fmt.Errorf("failed to decode response: %w", err)
 	}
@@ -481,7 +482,7 @@ func (c *Client) GetWorkspaces(ctx context.Context, username, blueprint string) 
 }
 
 // GetWorkspace retrieves details of a specific workspace by name
-func (c *Client) GetWorkspace(ctx context.Context, name string) (*models.WorkspaceInfo, error) {
+func (c *Client) GetWorkspace(ctx context.Context, name string) (*ws.WorkspaceInfo, error) {
 	req, err := http.NewRequestWithContext(ctx, "GET", c.baseURL+"/api/v1/workspaces/"+name, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
@@ -497,12 +498,12 @@ func (c *Client) GetWorkspace(ctx context.Context, name string) (*models.Workspa
 
 	if resp.StatusCode != http.StatusOK {
 		if resp.StatusCode == http.StatusNotFound {
-			return nil, fmt.Errorf("%w: %s", models.ErrWorkspaceNotFound, name)
+			return nil, fmt.Errorf("%w: %s", ws.ErrWorkspaceNotFound, name)
 		}
 		return nil, c.handleErrorResponse(resp)
 	}
 
-	var workspace models.WorkspaceInfo
+	var workspace ws.WorkspaceInfo
 	if err := json.NewDecoder(resp.Body).Decode(&workspace); err != nil {
 		return nil, fmt.Errorf("failed to decode response: %w", err)
 	}
@@ -511,7 +512,7 @@ func (c *Client) GetWorkspace(ctx context.Context, name string) (*models.Workspa
 }
 
 // GetWorkspaceStatus retrieves the current status of a workspace
-func (c *Client) GetWorkspaceStatus(ctx context.Context, name string) (*models.WorkspaceStatus, error) {
+func (c *Client) GetWorkspaceStatus(ctx context.Context, name string) (*ws.WorkspaceStatus, error) {
 	req, err := http.NewRequestWithContext(ctx, "GET", c.baseURL+"/api/v1/workspaces/"+name+"/status", nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
@@ -527,12 +528,12 @@ func (c *Client) GetWorkspaceStatus(ctx context.Context, name string) (*models.W
 
 	if resp.StatusCode != http.StatusOK {
 		if resp.StatusCode == http.StatusNotFound {
-			return nil, fmt.Errorf("%w: %s", models.ErrWorkspaceNotFound, name)
+			return nil, fmt.Errorf("%w: %s", ws.ErrWorkspaceNotFound, name)
 		}
 		return nil, c.handleErrorResponse(resp)
 	}
 
-	var status models.WorkspaceStatus
+	var status ws.WorkspaceStatus
 	if err := json.NewDecoder(resp.Body).Decode(&status); err != nil {
 		return nil, fmt.Errorf("failed to decode response: %w", err)
 	}

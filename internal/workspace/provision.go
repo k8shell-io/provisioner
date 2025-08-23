@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"github.com/k8shell-io/provisioner/internal/helm"
-	"github.com/k8shell-io/provisioner/pkg/models"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/watch"
@@ -17,12 +16,12 @@ import (
 // ProvisionOptions represents the options for provisioning a workspace
 type ProvisionOptions struct {
 	Timeout     int
-	Messages    chan models.StreamEvent
+	Messages    chan StreamEvent
 	LockTimeout int
 }
 
 // Provision provisions the workspace
-func (w *Workspace) Provision(ctx context.Context, opts *ProvisionOptions) (*models.PodStatus, error) {
+func (w *Workspace) Provision(ctx context.Context, opts *ProvisionOptions) (*PodStatus, error) {
 	if opts == nil {
 		opts = &ProvisionOptions{
 			Timeout:     20,
@@ -43,7 +42,7 @@ func (w *Workspace) Provision(ctx context.Context, opts *ProvisionOptions) (*mod
 	if exists {
 		status, err := w.GetPodStatus(ctx)
 		if err != nil {
-			if errors.Is(err, models.ErrWorkspaceNotFound) {
+			if errors.Is(err, ErrWorkspaceNotFound) {
 				w.log.Info().Msgf("Pod %s not found, proceeding with provisioning", w.Name())
 			} else {
 				return nil, fmt.Errorf("failed to get workspace pod status: %w", err)
@@ -64,7 +63,7 @@ func (w *Workspace) Provision(ctx context.Context, opts *ProvisionOptions) (*mod
 }
 
 // provisionWithLock provisions the workspace with a distributed lock
-func (w *Workspace) provisionWithLock(ctx context.Context, opts *ProvisionOptions) (*models.PodStatus, error) {
+func (w *Workspace) provisionWithLock(ctx context.Context, opts *ProvisionOptions) (*PodStatus, error) {
 	workspaceLock := NewWorkspaceLock(w.client.GetKubeClient(), w.client.TargetNamespace(), w.Name())
 
 	w.log.Info().Msgf("Acquiring lock for workspace %s provisioning", w.Name())
@@ -98,7 +97,7 @@ func (w *Workspace) provisionWithLock(ctx context.Context, opts *ProvisionOption
 	if exists {
 		status, err := w.GetPodStatus(ctx)
 		if err != nil {
-			if errors.Is(err, models.ErrWorkspaceNotFound) {
+			if errors.Is(err, ErrWorkspaceNotFound) {
 				w.log.Debug().Msgf("Pod %s not found, proceeding with provisioning", w.Name())
 			} else {
 				return nil, fmt.Errorf("failed to recheck workspace status: %w", err)
@@ -119,7 +118,7 @@ func (w *Workspace) provisionWithLock(ctx context.Context, opts *ProvisionOption
 	return w.doInstallation(ctx, opts)
 }
 
-func (w *Workspace) doInstallation(ctx context.Context, opts *ProvisionOptions) (*models.PodStatus, error) {
+func (w *Workspace) doInstallation(ctx context.Context, opts *ProvisionOptions) (*PodStatus, error) {
 	values, err := w.Values()
 	if err != nil {
 		return nil, err
@@ -153,7 +152,7 @@ func (w *Workspace) doInstallation(ctx context.Context, opts *ProvisionOptions) 
 
 // waitForPodRunning with quick failure detection
 func (w *Workspace) waitForPodRunning(ctx context.Context, startTime time.Time,
-	opts *ProvisionOptions) (*models.PodStatus, error) {
+	opts *ProvisionOptions) (*PodStatus, error) {
 
 	podName := w.Name()
 	timeout := time.NewTimer(time.Duration(opts.Timeout) * time.Second)
@@ -240,7 +239,7 @@ func (w *Workspace) watchEvents(ctx context.Context, podName string, criticalErr
 		case event := <-watcher.ResultChan():
 			if event.Type == watch.Added || event.Type == watch.Modified {
 				if k8sEvent, ok := event.Object.(*corev1.Event); ok {
-					eventMessage := models.StreamEvent{
+					eventMessage := StreamEvent{
 						Type:       "event",
 						Timestamp:  k8sEvent.CreationTimestamp.Format("2006-01-02 15:04:05"),
 						ObjectName: k8sEvent.InvolvedObject.Name,

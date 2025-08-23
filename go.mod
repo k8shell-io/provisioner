@@ -7,8 +7,8 @@ require github.com/rs/zerolog v1.34.0 // direct
 require (
 	github.com/fsnotify/fsnotify v1.9.0
 	github.com/gin-gonic/gin v1.10.1
-	github.com/go-playground/validator/v10 v10.27.0
-	github.com/k8shell-io/identity v0.11.4
+	github.com/k8shell-io/common v0.11.6
+	github.com/k8shell-io/identity v0.11.8
 	github.com/k8shell-io/yaml-cel v0.2.5
 	github.com/k8shell-io/yaml-config v0.1.1
 	github.com/stretchr/testify v1.10.0
@@ -65,6 +65,7 @@ require (
 	github.com/go-openapi/swag v0.23.0 // indirect
 	github.com/go-playground/locales v0.14.1 // indirect
 	github.com/go-playground/universal-translator v0.18.1 // indirect
+	github.com/go-playground/validator/v10 v10.27.0 // indirect
 	github.com/gobwas/glob v0.2.3 // indirect
 	github.com/goccy/go-json v0.10.2 // indirect
 	github.com/gogo/protobuf v1.3.2 // indirect

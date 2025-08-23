@@ -12,9 +12,8 @@ import (
 	"time"
 
 	"github.com/fsnotify/fsnotify"
-	identity "github.com/k8shell-io/identity/pkg/models"
+	"github.com/k8shell-io/common/models"
 	"github.com/k8shell-io/provisioner/internal/log"
-	"github.com/k8shell-io/provisioner/pkg/models"
 	"github.com/k8shell-io/yaml-cel/pkg/yamlcel"
 	"github.com/k8shell-io/yaml-config/pkg/yamlconfig"
 	"github.com/rs/zerolog"
@@ -29,9 +28,9 @@ type RawBlueprint struct {
 }
 
 type BlueprintScope struct {
-	Blueprint string         `yaml:"blueprint"`
-	User      *identity.User `yaml:"user"`
-	Repo      models.Repo    `yaml:"repo"`
+	Blueprint string       `yaml:"blueprint"`
+	User      *models.User `yaml:"user"`
+	Repo      models.Repo  `yaml:"repo"`
 }
 
 func (bs *BlueprintScope) ToMap() (map[string]any, error) {
@@ -80,7 +79,7 @@ type BlueprintManager struct {
 func TestScope() *BlueprintScope {
 	return &BlueprintScope{
 		Blueprint: "testblueprint",
-		User: &identity.User{
+		User: &models.User{
 			Username:     "testuser",
 			IsValid:      true,
 			ExpiresAt:    time.Now().Add(24 * time.Hour),
@@ -90,11 +89,11 @@ func TestScope() *BlueprintScope {
 			AccessToken:  "testtoken",
 			Email:        "testuser@example.com",
 			Password:     "testpassword",
-			Auths:        []string{identity.AuthMethodPublicKey, identity.AuthMethodPassword},
+			Auths:        []string{models.AuthMethodPublicKey, models.AuthMethodPassword},
 			AuthKeys:     []string{"ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQC3..."},
 			Locked:       false,
 			FailedLogins: 0,
-			Channels:     []string{identity.ChannelShell, identity.ChannelSFTP},
+			Channels:     []string{models.ChannelShell, models.ChannelSFTP},
 			Envs:         []string{},
 			Roles:        []string{"role1", "role2"},
 			Blueprints:   []string{"testblueprint"},

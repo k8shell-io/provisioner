@@ -6,12 +6,12 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/k8shell-io/common/models"
 	identity "github.com/k8shell-io/identity/pkg/client"
 	"github.com/k8shell-io/provisioner/internal/blueprint"
 	"github.com/k8shell-io/provisioner/internal/config"
 	"github.com/k8shell-io/provisioner/internal/helm"
 	"github.com/k8shell-io/provisioner/internal/log"
-	"github.com/k8shell-io/provisioner/pkg/models"
 	"github.com/rs/zerolog"
 )
 
@@ -46,10 +46,10 @@ func NewServer(configFile string) (*Server, error) {
 	}
 
 	server.log.Info().Msgf("Creating identity client with base URL: %s", server.config.Identity.BaseURL)
-	server.Identity = identity.New(identity.Config{
+	server.Identity = identity.NewClient(identity.Config{
 		BaseURL: server.config.Identity.BaseURL,
 		APIKey:  server.config.Identity.APIKey,
-		Timeout: time.Duration(server.config.Identity.Timeout) * time.Millisecond,
+		Timeout: int(time.Duration(server.config.Identity.Timeout) * time.Millisecond),
 	})
 
 	server.log.Info().Msg("Creating REST API service")

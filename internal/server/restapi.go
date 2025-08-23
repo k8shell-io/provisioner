@@ -22,11 +22,11 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/k8shell-io/common/models"
 	identity "github.com/k8shell-io/identity/pkg/client"
 	"github.com/k8shell-io/provisioner/internal/blueprint"
 	"github.com/k8shell-io/provisioner/internal/log"
-	"github.com/k8shell-io/provisioner/internal/workspace"
-	"github.com/k8shell-io/provisioner/pkg/models"
+	ws "github.com/k8shell-io/provisioner/internal/workspace"
 	"github.com/rs/zerolog"
 	swaggerFiles "github.com/swaggo/files"
 	ginSwagger "github.com/swaggo/gin-swagger"
@@ -466,13 +466,13 @@ func (a *RESTApiService) GetWorkspaces(c *gin.Context) {
 	// TODO: check if the user is a valid user first in identity
 	// TODO: there could be inconsistencies, there could be workspaces of users that do not exist
 
-	workspaces, err := workspace.GetWorkspaceInfo(a.server.helm, "", username, blueprint)
+	workspaces, err := ws.GetWorkspaceInfo(a.server.helm, "", username, blueprint)
 	if err != nil {
 		errToJSONError(c, err)
 		return
 	}
 
-	info := make([]models.WorkspaceInfo, 0, len(workspaces))
+	info := make([]ws.WorkspaceInfo, 0, len(workspaces))
 	info = append(info, workspaces...)
 
 	c.JSON(http.StatusOK, info)
@@ -498,7 +498,7 @@ func (a *RESTApiService) GetWorkspace(c *gin.Context) {
 	// TODO: check if the user is a valid user first in identity
 	// TODO: there could be inconsistencies, there could be workspaces of users that do not exist
 
-	info, err := workspace.GetWorkspaceInfo(a.server.helm, name, "", "")
+	info, err := ws.GetWorkspaceInfo(a.server.helm, name, "", "")
 	if err != nil {
 		errToJSONError(c, err)
 		return
@@ -518,7 +518,7 @@ func (a *RESTApiService) GetWorkspace(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, models.WorkspaceInfo{
+	c.JSON(http.StatusOK, ws.WorkspaceInfo{
 		Name:      info[0].Name,
 		Username:  info[0].Username,
 		Blueprint: info[0].Blueprint,
@@ -542,7 +542,7 @@ func (a *RESTApiService) GetWorkspace(c *gin.Context) {
 // @Router       /api/v1/workspaces/{name}/status [get]
 func (a *RESTApiService) GetWorkspaceStatus(c *gin.Context) {
 	name := c.Param("name")
-	status, err := workspace.GetWorkspaceStatus(c.Request.Context(), a.server.helm, name)
+	status, err := ws.GetWorkspaceStatus(c.Request.Context(), a.server.helm, name)
 	if err != nil {
 		errToJSONError(c, err)
 		return
@@ -616,7 +616,7 @@ func (a *RESTApiService) TemplateWorkspace(c *gin.Context) {
 		return
 	}
 
-	ws, err := workspace.NewWorkspace(blueprint, scope.User, a.server.helm)
+	ws, err := ws.NewWorkspace(blueprint, scope.User, a.server.helm)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"error": fmt.Sprintf("Failed to create workspace: %v", err),
@@ -720,7 +720,7 @@ func (a *RESTApiService) ProvisionWorkspace(c *gin.Context) {
 		return
 	}
 
-	ws, err := workspace.NewWorkspace(blueprint, scope.User, a.server.helm)
+	ws, err := ws.NewWorkspace(blueprint, scope.User, a.server.helm)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"error": fmt.Sprintf("Failed to create workspace: %v", err),
@@ -736,7 +736,7 @@ func (a *RESTApiService) ProvisionWorkspace(c *gin.Context) {
 }
 
 // provisionWithStreaming handles workspace provisioning with streaming updates
-func (a *RESTApiService) provisionWithStreaming(c *gin.Context, ws *workspace.Workspace, timeout int) {
+func (a *RESTApiService) provisionWithStreaming(c *gin.Context, workspace *ws.Workspace, timeout int) {
 	c.Header("Content-Type", "application/x-ndjson")
 	c.Header("Transfer-Encoding", "chunked")
 	c.Header("Cache-Control", "no-cache")
@@ -752,9 +752,9 @@ func (a *RESTApiService) provisionWithStreaming(c *gin.Context, ws *workspace.Wo
 
 	c.Status(http.StatusOK)
 
-	messages := make(chan models.StreamEvent, 100)
+	messages := make(chan ws.StreamEvent, 100)
 
-	done := make(chan *models.PodStatus)
+	done := make(chan *ws.PodStatus)
 	errorChan := make(chan error)
 
 	// Provision the workspace
@@ -762,7 +762,7 @@ func (a *RESTApiService) provisionWithStreaming(c *gin.Context, ws *workspace.Wo
 		defer close(done)
 		defer close(errorChan)
 
-		status, err := ws.Provision(c.Request.Context(), &workspace.ProvisionOptions{
+		status, err := workspace.Provision(c.Request.Context(), &ws.ProvisionOptions{
 			Timeout:  timeout,
 			Messages: messages,
 		})
@@ -801,7 +801,7 @@ func (a *RESTApiService) provisionWithStreaming(c *gin.Context, ws *workspace.Wo
 				final := gin.H{
 					"type":       "status",
 					"timestamp":  time.Now().Format("2006-01-02 15:04:05"),
-					"objectName": ws.Name(),
+					"objectName": workspace.Name(),
 					"status":     status.Status,
 					"message":    status.Message,
 				}
@@ -816,7 +816,7 @@ func (a *RESTApiService) provisionWithStreaming(c *gin.Context, ws *workspace.Wo
 				errEvent := gin.H{
 					"type":       "status",
 					"timestamp":  time.Now().Format("2006-01-02 15:04:05"),
-					"objectName": ws.Name(),
+					"objectName": workspace.Name(),
 					"status":     "Error",
 					"message":    err.Error(),
 				}
@@ -830,8 +830,8 @@ func (a *RESTApiService) provisionWithStreaming(c *gin.Context, ws *workspace.Wo
 }
 
 // provisionSync handles synchronous workspace provisioning
-func (a *RESTApiService) provisionSync(c *gin.Context, ws *workspace.Workspace, timeout int) {
-	status, err := ws.Provision(c.Request.Context(), &workspace.ProvisionOptions{
+func (a *RESTApiService) provisionSync(c *gin.Context, workspace *ws.Workspace, timeout int) {
+	status, err := workspace.Provision(c.Request.Context(), &ws.ProvisionOptions{
 		Timeout:  timeout,
 		Messages: nil,
 	})
@@ -849,13 +849,13 @@ func (a *RESTApiService) provisionSync(c *gin.Context, ws *workspace.Workspace, 
 }
 
 func errToJSONError(c *gin.Context, err error) {
-	if errors.Is(err, models.ErrWorkspaceNotFound) {
+	if errors.Is(err, ws.ErrWorkspaceNotFound) {
 		c.JSON(http.StatusNotFound, gin.H{
 			"error": fmt.Sprintf("%v", err),
 		})
 		return
 	}
-	if errors.Is(err, models.ErrInvalidParameters) {
+	if errors.Is(err, ws.ErrInvalidParameters) {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"error": fmt.Sprintf("%v", err),
 		})
