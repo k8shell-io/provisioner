@@ -99,33 +99,31 @@ func (a *RESTApiService) apiKeyMiddleware() gin.HandlerFunc {
 	}
 }
 
-// loggingMiddleware logs requests and responses
-func (a *RESTApiService) loggingMiddleware() gin.HandlerFunc {
+// Custom logger middleware
+func (a *RESTApiService) customLogger() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		start := time.Now()
-		path := c.Request.URL.Path
-		method := c.Request.Method
-
-		a.log.Debug().Msgf("Request: method %s, path %s", method, path)
-
 		c.Next()
-
 		latency := time.Since(start)
-		statusCode := c.Writer.Status()
 
-		if statusCode >= 400 {
-			a.log.Error().Msgf("Response: status %d, method %s, path %s, latency %s",
-				statusCode, method, path, latency)
-		} else {
-			a.log.Debug().Msgf("Response: status %d, method %s, path %s, latency %s",
-				statusCode, method, path, latency)
-		}
+		status := c.Writer.Status()
+		ip := c.ClientIP()
+		method := c.Request.Method
+		path := c.Request.URL.Path
+
+		a.log.Info().
+			Str("method", method).
+			Int("status", status).
+			Str("path", path).
+			Str("ip", ip).
+			Dur("duration", latency).
+			Msg("request")
 	}
 }
 
 // initializeRouter sets up all routes
 func (a *RESTApiService) initializeRouter() {
-	a.engine.Use(a.loggingMiddleware())
+	a.engine.Use(a.customLogger())
 
 	// API routes with authentication
 	api := a.engine.Group("/api/v1")
