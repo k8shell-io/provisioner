@@ -47,11 +47,9 @@ type ErrorResponse struct {
 
 // ProvisionOptions represents options for workspace provisioning
 type ProvisionOptions struct {
-	Username        string
-	Blueprint       string
-	Timeout         int
-	Stream          bool
-	CustomBlueprint []byte
+	UserStr models.UserStr
+	Timeout int
+	Stream  bool
 }
 
 // TemplateOptions represents options for workspace templating
@@ -280,15 +278,12 @@ func (c *Client) ProvisionWorkspace(ctx context.Context, opts *ProvisionOptions)
 	if opts == nil {
 		return nil, fmt.Errorf("provision options are required")
 	}
-	if opts.Username == "" {
-		return nil, fmt.Errorf("username is required")
-	}
 	if opts.Stream {
 		return nil, fmt.Errorf("use ProvisionWorkspaceStream for streaming")
 	}
 
 	params := url.Values{}
-	params.Set("username", opts.Username)
+	params.Set("userstr", opts.UserStr.Raw)
 
 	if opts.Timeout > 0 {
 		params.Set("timeout", strconv.Itoa(opts.Timeout))
@@ -298,22 +293,7 @@ func (c *Client) ProvisionWorkspace(ctx context.Context, opts *ProvisionOptions)
 	var body io.Reader
 	var contentType string
 
-	if len(opts.CustomBlueprint) > 0 {
-		// Custom blueprint approach
-		if opts.Blueprint != "" {
-			return nil, fmt.Errorf("cannot use both blueprint name and custom blueprint")
-		}
-		endpoint = fmt.Sprintf("/api/v1/workspaces?%s", params.Encode())
-		body = bytes.NewReader(opts.CustomBlueprint)
-		contentType = "text/yaml"
-	} else {
-		// Blueprint name approach
-		if opts.Blueprint == "" {
-			return nil, fmt.Errorf("blueprint name is required when no custom blueprint is provided")
-		}
-		params.Set("blueprint", opts.Blueprint)
-		endpoint = fmt.Sprintf("/api/v1/workspaces?%s", params.Encode())
-	}
+	endpoint = fmt.Sprintf("/api/v1/workspaces?%s", params.Encode())
 
 	resp, err := c.makeRequest(ctx, "POST", endpoint, body, contentType)
 	if err != nil {
@@ -331,15 +311,12 @@ func (c *Client) ProvisionWorkspaceStream(ctx context.Context, opts *ProvisionOp
 	if opts == nil {
 		return fmt.Errorf("provision options are required")
 	}
-	if opts.Username == "" {
-		return fmt.Errorf("username is required")
-	}
 	if eventChan == nil {
 		return fmt.Errorf("event channel is required")
 	}
 
 	params := url.Values{}
-	params.Set("username", opts.Username)
+	params.Set("userstr", opts.UserStr.Raw)
 	params.Set("stream", "true")
 
 	if opts.Timeout > 0 {
@@ -350,20 +327,7 @@ func (c *Client) ProvisionWorkspaceStream(ctx context.Context, opts *ProvisionOp
 	var body io.Reader
 	var contentType string
 
-	if len(opts.CustomBlueprint) > 0 {
-		if opts.Blueprint != "" {
-			return fmt.Errorf("cannot use both blueprint name and custom blueprint")
-		}
-		endpoint = fmt.Sprintf("/api/v1/workspaces?%s", params.Encode())
-		body = bytes.NewReader(opts.CustomBlueprint)
-		contentType = "text/yaml"
-	} else {
-		if opts.Blueprint == "" {
-			return fmt.Errorf("blueprint name is required when no custom blueprint is provided")
-		}
-		params.Set("blueprint", opts.Blueprint)
-		endpoint = fmt.Sprintf("/api/v1/workspaces?%s", params.Encode())
-	}
+	endpoint = fmt.Sprintf("/api/v1/workspaces?%s", params.Encode())
 
 	resp, err := c.makeRequest(ctx, "POST", endpoint, body, contentType)
 	if err != nil {
@@ -380,18 +344,15 @@ func (c *Client) ProvisionWorkspaceStream(ctx context.Context, opts *ProvisionOp
 		return fmt.Errorf("API error (status %d): %s", resp.StatusCode, errResp.Error)
 	}
 
-	// CHANGE: Use bufio.Scanner to read line by line for NDJSON
 	scanner := bufio.NewScanner(resp.Body)
 
 	for scanner.Scan() {
 		line := scanner.Text()
 
-		// Skip empty lines
 		if strings.TrimSpace(line) == "" {
 			continue
 		}
 
-		// Parse each line as a separate JSON object
 		var event provModels.StreamEvent
 		if err := json.Unmarshal([]byte(line), &event); err != nil {
 			// Log the error but continue processing other events
@@ -406,13 +367,11 @@ func (c *Client) ProvisionWorkspaceStream(ctx context.Context, opts *ProvisionOp
 			// Event sent successfully
 		}
 
-		// Break on final events
 		if event.Type == "status" {
 			break
 		}
 	}
 
-	// Check for scanner errors
 	if err := scanner.Err(); err != nil {
 		return fmt.Errorf("error reading stream: %w", err)
 	}
@@ -452,7 +411,6 @@ func (c *Client) GetWorkspaces(ctx context.Context, username, blueprint string) 
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
 
-	// Add query parameters
 	q := req.URL.Query()
 	if username != "" {
 		q.Add("username", username)
