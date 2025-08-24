@@ -653,7 +653,8 @@ func (a *RESTApiService) ProvisionWorkspace(c *gin.Context) {
 	stream := c.Query("stream") == "true"
 	timeoutStr := c.Query("timeout")
 
-	a.log.Debug().Msgf("ProvisionWorkspace called with userstr=%s, stream=%t, timeout=%s", userstrParam, stream, timeoutStr)
+	a.log.Debug().Msgf("ProvisionWorkspace called with userstr=%s, stream=%t, timeout=%s",
+		userstrParam, stream, timeoutStr)
 
 	timeout := 20
 	if timeoutStr != "" {
@@ -699,7 +700,7 @@ func (a *RESTApiService) ProvisionWorkspace(c *gin.Context) {
 
 	var blueprintObj *models.Blueprint
 
-	if userstr.Blueprint == "" {
+	if userstr.HasCustomBlueprint {
 		customBlueprint, err := a.server.Identity.GetBlueprintByUserStr(c.Request.Context(), userstrParam)
 		if err != nil {
 			// Check if it's a "not found" error
@@ -723,18 +724,16 @@ func (a *RESTApiService) ProvisionWorkspace(c *gin.Context) {
 			return
 		}
 
-		blueprintYAML, err := yaml.Marshal(customBlueprint)
-		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{
-				"error": fmt.Sprintf("Failed to marshal custom blueprint to YAML: %v", err),
-			})
-			return
+		wrappedBp := struct {
+			Blueprint *models.CustomBlueprint `yaml:"blueprint"`
+		}{
+			Blueprint: customBlueprint,
 		}
 
-		_, validationErrors := models.ValidateCustomBlueprint(blueprintYAML)
-		if len(validationErrors) > 0 {
-			c.JSON(http.StatusBadRequest, gin.H{
-				"error": fmt.Sprintf("Custom blueprint validation failed: %s", strings.Join(validationErrors, "; ")),
+		blueprintYAML, err := yaml.Marshal(wrappedBp)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{
+				"error": fmt.Sprintf("Failed to wrap blueprint YAML: %v", err),
 			})
 			return
 		}
