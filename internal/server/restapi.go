@@ -31,7 +31,6 @@ import (
 	"github.com/rs/zerolog"
 	swaggerFiles "github.com/swaggo/files"
 	ginSwagger "github.com/swaggo/gin-swagger"
-	"gopkg.in/yaml.v3"
 )
 
 // RESTApiService represents the REST API service for the K8Shell Provisioner server.
@@ -363,7 +362,7 @@ func (a *RESTApiService) ComposeBlueprint(c *gin.Context) {
 	}
 
 	// Validate the custom blueprint YAML
-	_, validationErrors := models.ValidateCustomBlueprint(blueprintYAML)
+	customBlueprint, validationErrors := models.ValidateCustomBlueprint(blueprintYAML)
 	if len(validationErrors) > 0 {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"error": fmt.Sprintf("Blueprint validation failed: %s", strings.Join(validationErrors, "; ")),
@@ -388,7 +387,7 @@ func (a *RESTApiService) ComposeBlueprint(c *gin.Context) {
 	}
 
 	// Compose and convert to json
-	bp, err := a.server.bpManager.ComposeWithScope(blueprintYAML, scope)
+	bp, err := a.server.bpManager.ComposeWithScope(customBlueprint, scope)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"error": fmt.Sprintf("Failed to compose blueprint with scope: %v", err),
@@ -424,12 +423,12 @@ func (a *RESTApiService) resolveBlueprintFromRequest(c *gin.Context,
 			return nil, fmt.Errorf("unsupported content type, expected text/yaml or application/x-yaml")
 		}
 
-		_, validationErrors := models.ValidateCustomBlueprint(blueprintYAML)
+		customBlueprint, validationErrors := models.ValidateCustomBlueprint(blueprintYAML)
 		if len(validationErrors) > 0 {
 			return nil, fmt.Errorf("blueprint validation failed: %s", strings.Join(validationErrors, "; "))
 		}
 
-		return a.server.bpManager.ComposeWithScope(blueprintYAML, scope)
+		return a.server.bpManager.ComposeWithScope(customBlueprint, scope)
 	} else {
 		if blueprintName == "" {
 			return nil, fmt.Errorf("blueprint query parameter is required when no payload is provided")
@@ -724,21 +723,7 @@ func (a *RESTApiService) ProvisionWorkspace(c *gin.Context) {
 			return
 		}
 
-		wrappedBp := struct {
-			Blueprint *models.CustomBlueprint `yaml:"blueprint"`
-		}{
-			Blueprint: customBlueprint,
-		}
-
-		blueprintYAML, err := yaml.Marshal(wrappedBp)
-		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{
-				"error": fmt.Sprintf("Failed to wrap blueprint YAML: %v", err),
-			})
-			return
-		}
-
-		blueprintObj, err = a.server.bpManager.ComposeWithScope(blueprintYAML, scope)
+		blueprintObj, err = a.server.bpManager.ComposeWithScope(customBlueprint, scope)
 		if err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{
 				"error": fmt.Sprintf("Failed to compose custom blueprint: %v", err),
