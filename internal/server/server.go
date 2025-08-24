@@ -6,12 +6,12 @@ import (
 	"path/filepath"
 	"time"
 
+	log "github.com/k8shell-io/common/logger"
 	"github.com/k8shell-io/common/models"
 	identity "github.com/k8shell-io/identity/pkg/client"
 	"github.com/k8shell-io/provisioner/internal/blueprint"
 	"github.com/k8shell-io/provisioner/internal/config"
 	"github.com/k8shell-io/provisioner/internal/helm"
-	"github.com/k8shell-io/provisioner/internal/log"
 	"github.com/rs/zerolog"
 )
 

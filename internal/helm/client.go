@@ -6,8 +6,8 @@ import (
 	"os"
 	"time"
 
+	log "github.com/k8shell-io/common/logger"
 	"github.com/k8shell-io/provisioner/internal/config"
-	"github.com/k8shell-io/provisioner/internal/log"
 	"github.com/rs/zerolog"
 	"helm.sh/helm/v3/pkg/action"
 	"helm.sh/helm/v3/pkg/chart"

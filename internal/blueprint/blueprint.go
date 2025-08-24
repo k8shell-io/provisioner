@@ -12,8 +12,8 @@ import (
 	"time"
 
 	"github.com/fsnotify/fsnotify"
+	log "github.com/k8shell-io/common/logger"
 	"github.com/k8shell-io/common/models"
-	"github.com/k8shell-io/provisioner/internal/log"
 	"github.com/k8shell-io/yaml-cel/pkg/yamlcel"
 	"github.com/k8shell-io/yaml-config/pkg/yamlconfig"
 	"github.com/rs/zerolog"

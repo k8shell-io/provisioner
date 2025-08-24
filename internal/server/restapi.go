@@ -22,10 +22,10 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	log "github.com/k8shell-io/common/logger"
 	"github.com/k8shell-io/common/models"
 	identity "github.com/k8shell-io/identity/pkg/client"
 	"github.com/k8shell-io/provisioner/internal/blueprint"
-	"github.com/k8shell-io/provisioner/internal/log"
 	ws "github.com/k8shell-io/provisioner/internal/workspace"
 	provModels "github.com/k8shell-io/provisioner/pkg/models"
 	"github.com/rs/zerolog"

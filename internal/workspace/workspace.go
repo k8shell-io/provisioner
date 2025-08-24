@@ -6,9 +6,9 @@ import (
 	"fmt"
 	"strings"
 
+	log "github.com/k8shell-io/common/logger"
 	"github.com/k8shell-io/common/models"
 	"github.com/k8shell-io/provisioner/internal/helm"
-	"github.com/k8shell-io/provisioner/internal/log"
 	provModels "github.com/k8shell-io/provisioner/pkg/models"
 	"github.com/rs/zerolog"
 	"golang.org/x/sync/errgroup"
