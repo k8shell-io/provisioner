@@ -93,7 +93,8 @@ func (bm *BlueprintManager) Compose(customBlueprintYAML []byte) (interface{}, er
 	return result, nil
 }
 
-func (bm *BlueprintManager) ComposeWithScope(customBlueprintYAML []byte, scope *BlueprintScope) (*models.Blueprint, error) {
+func (bm *BlueprintManager) ComposeWithScope(customBlueprintYAML []byte,
+	scope *BlueprintScope) (*models.Blueprint, error) {
 	rawBp, err := bm.ComposeRaw(customBlueprintYAML)
 	if err != nil {
 		bm.log.Error().Err(err).Msg("Failed to compose blueprint with scope")

@@ -31,6 +31,7 @@ import (
 	"github.com/rs/zerolog"
 	swaggerFiles "github.com/swaggo/files"
 	ginSwagger "github.com/swaggo/gin-swagger"
+	"gopkg.in/yaml.v3" // Add this import for YAML marshaling
 )
 
 // RESTApiService represents the REST API service for the K8Shell Provisioner server.
@@ -362,7 +363,7 @@ func (a *RESTApiService) ComposeBlueprint(c *gin.Context) {
 	}
 
 	// Validate the custom blueprint YAML
-	validationErrors := models.ValidateCustomBlueprint(blueprintYAML)
+	_, validationErrors := models.ValidateCustomBlueprint(blueprintYAML)
 	if len(validationErrors) > 0 {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"error": fmt.Sprintf("Blueprint validation failed: %s", strings.Join(validationErrors, "; ")),
@@ -399,7 +400,8 @@ func (a *RESTApiService) ComposeBlueprint(c *gin.Context) {
 }
 
 // resolveBlueprintFromRequest resolves blueprint either from query parameter or request payload
-func (a *RESTApiService) resolveBlueprintFromRequest(c *gin.Context, scope *blueprint.BlueprintScope) (*models.Blueprint, error) {
+func (a *RESTApiService) resolveBlueprintFromRequest(c *gin.Context,
+	scope *blueprint.BlueprintScope) (*models.Blueprint, error) {
 	blueprintName := c.Query("blueprint")
 
 	// Check if request has body
@@ -422,7 +424,7 @@ func (a *RESTApiService) resolveBlueprintFromRequest(c *gin.Context, scope *blue
 			return nil, fmt.Errorf("unsupported content type, expected text/yaml or application/x-yaml")
 		}
 
-		validationErrors := models.ValidateCustomBlueprint(blueprintYAML)
+		_, validationErrors := models.ValidateCustomBlueprint(blueprintYAML)
 		if len(validationErrors) > 0 {
 			return nil, fmt.Errorf("blueprint validation failed: %s", strings.Join(validationErrors, "; "))
 		}
@@ -633,28 +635,25 @@ func (a *RESTApiService) TemplateWorkspace(c *gin.Context) {
 // @Summary      Provision workspace
 // @Description  Create and deploy a new workspace to Kubernetes
 // @Tags         workspaces
-// @Accept       text/yaml,application/x-yaml
+// @Accept       json
 // @Produce      json,application/x-ndjson
 // @Security     BearerAuth
-// @Param        username   query   string  true   "Username for scope resolution"
-// @Param        blueprint  query   string  false  "Blueprint name (required if no payload)"
+// @Param        userstr    query   string  true   "User string in format 'username~blueprint' or 'username~repo=org/repo'"
 // @Param        timeout    query   int     false  "Timeout in seconds (default: 20)"
 // @Param        stream     query   bool    false  "Enable streaming updates (default: false)"
-// @Param        blueprint  body    string  false  "Custom blueprint YAML (alternative to query parameter)"
 // @Success      200        {object}  StreamEventResponse     "Streaming events (when stream=true)"
 // @Success      201        {object}  WorkspaceStatusResponse "Workspace status (when stream=false)"
 // @Failure      400        {object}  ErrorResponse           "Bad request - missing parameters or validation failed"
 // @Failure      404        {object}  ErrorResponse           "Blueprint not found"
-// @Failure      415        {object}  ErrorResponse           "Unsupported media type"
 // @Failure      401        {object}  ErrorResponse           "Unauthorized"
 // @Failure      500        {object}  ErrorResponse           "Internal server error"
 // @Router       /api/v1/workspaces [post]
 func (a *RESTApiService) ProvisionWorkspace(c *gin.Context) {
-	username := c.Query("username")
+	userstrParam := c.Query("userstr")
 	stream := c.Query("stream") == "true"
 	timeoutStr := c.Query("timeout")
 
-	a.log.Debug().Msgf("ProvisionWorkspace called with username=%s, stream=%t, timeout=%s", username, stream, timeoutStr)
+	a.log.Debug().Msgf("ProvisionWorkspace called with userstr=%s, stream=%t, timeout=%s", userstrParam, stream, timeoutStr)
 
 	timeout := 20
 	if timeoutStr != "" {
@@ -668,14 +667,22 @@ func (a *RESTApiService) ProvisionWorkspace(c *gin.Context) {
 		}
 	}
 
-	if username == "" {
+	if userstrParam == "" {
 		c.JSON(http.StatusBadRequest, gin.H{
-			"error": "username query parameter is required",
+			"error": "userstr query parameter is required",
 		})
 		return
 	}
 
-	scope, errx := a.server.GetBlueprintScope(c.Request.Context(), username, "", "")
+	userstr, err := models.NewUserStr(userstrParam)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": fmt.Sprintf("Invalid userstr format: %v", err),
+		})
+		return
+	}
+
+	scope, errx := a.server.GetBlueprintScope(c.Request.Context(), userstr.Username, "", "")
 	if errx != nil {
 		var eresp identity.ErrorResponse
 		if errors.As(errx, &eresp) {
@@ -690,31 +697,66 @@ func (a *RESTApiService) ProvisionWorkspace(c *gin.Context) {
 		return
 	}
 
-	blueprint, err := a.resolveBlueprintFromRequest(c, scope)
-	if err != nil {
-		if strings.Contains(err.Error(), "cannot use both") ||
-			strings.Contains(err.Error(), "required when no payload") ||
-			strings.Contains(err.Error(), "validation failed") {
-			c.JSON(http.StatusBadRequest, gin.H{
-				"error": err.Error(),
-			})
-		} else if strings.Contains(err.Error(), "not found") {
-			c.JSON(http.StatusNotFound, gin.H{
-				"error": err.Error(),
-			})
-		} else if strings.Contains(err.Error(), "unsupported content type") {
-			c.JSON(http.StatusUnsupportedMediaType, gin.H{
-				"error": err.Error(),
-			})
-		} else {
+	var blueprintObj *models.Blueprint
+
+	if userstr.Blueprint == "" {
+		customBlueprint, err := a.server.Identity.GetBlueprintByUserStr(c.Request.Context(), userstrParam)
+		if err != nil {
+			// Check if it's a "not found" error
+			var eresp identity.ErrorResponse
+			if errors.As(err, &eresp) && eresp.Status == http.StatusNotFound {
+				c.JSON(http.StatusBadRequest, gin.H{
+					"error": "No blueprint specified in userstr and no custom blueprint found for user",
+				})
+				return
+			}
 			c.JSON(http.StatusInternalServerError, gin.H{
-				"error": err.Error(),
+				"error": fmt.Sprintf("Failed to lookup custom blueprint: %v", err),
 			})
+			return
 		}
-		return
+
+		if customBlueprint == nil {
+			c.JSON(http.StatusBadRequest, gin.H{
+				"error": "No blueprint specified in userstr and no custom blueprint found for user",
+			})
+			return
+		}
+
+		blueprintYAML, err := yaml.Marshal(customBlueprint)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{
+				"error": fmt.Sprintf("Failed to marshal custom blueprint to YAML: %v", err),
+			})
+			return
+		}
+
+		_, validationErrors := models.ValidateCustomBlueprint(blueprintYAML)
+		if len(validationErrors) > 0 {
+			c.JSON(http.StatusBadRequest, gin.H{
+				"error": fmt.Sprintf("Custom blueprint validation failed: %s", strings.Join(validationErrors, "; ")),
+			})
+			return
+		}
+
+		blueprintObj, err = a.server.bpManager.ComposeWithScope(blueprintYAML, scope)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{
+				"error": fmt.Sprintf("Failed to compose custom blueprint: %v", err),
+			})
+			return
+		}
+	} else {
+		blueprintObj, err = a.server.bpManager.GetBlueprint(userstr.Blueprint, scope)
+		if err != nil {
+			c.JSON(http.StatusNotFound, gin.H{
+				"error": fmt.Sprintf("Blueprint not found: %s", userstr.Blueprint),
+			})
+			return
+		}
 	}
 
-	ws, err := ws.NewWorkspace(blueprint, scope.User, a.server.helm)
+	workspace, err := ws.NewWorkspace(blueprintObj, scope.User, a.server.helm)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"error": fmt.Sprintf("Failed to create workspace: %v", err),
@@ -723,9 +765,9 @@ func (a *RESTApiService) ProvisionWorkspace(c *gin.Context) {
 	}
 
 	if stream {
-		a.provisionWithStreaming(c, ws, timeout)
+		a.provisionWithStreaming(c, workspace, timeout)
 	} else {
-		a.provisionSync(c, ws, timeout)
+		a.provisionSync(c, workspace, timeout)
 	}
 }
 
