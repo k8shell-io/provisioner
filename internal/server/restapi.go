@@ -31,7 +31,7 @@ import (
 	"github.com/rs/zerolog"
 	swaggerFiles "github.com/swaggo/files"
 	ginSwagger "github.com/swaggo/gin-swagger"
-	"gopkg.in/yaml.v3" // Add this import for YAML marshaling
+	"gopkg.in/yaml.v3"
 )
 
 // RESTApiService represents the REST API service for the K8Shell Provisioner server.
