@@ -67,11 +67,6 @@ spec:
           secretKeyRef:
             name: {{ .Values.__workspace__ }}-access-keys
             key: a1key
-      - name: A2K
-        valueFrom:
-          secretKeyRef:
-            name: {{ .Values.__workspace__ }}-access-keys
-            key: a2key        
       {{- if .Values.docker.enabled }}
       - name: DOCKER_HOST
         value: unix:///var/run/docker/docker.sock
@@ -187,8 +182,6 @@ spec:
       items:
       - key: a1key
         path: a1key
-      - key: a2key
-        path: a2key
   - name: main-volume
     configMap:
       name: {{ .Values.__workspace__ }}-files

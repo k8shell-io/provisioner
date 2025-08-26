@@ -117,19 +117,13 @@ func (w *Workspace) generateKeyCert() (keyPEM, certPEM string, err error) {
 }
 
 // GenerateAccessKeys generates random access keys
-func (w *Workspace) generateAccessKeys() (a1keyB64, a2keyB64 string, err error) {
+func (w *Workspace) generateAccessKey() (a1keyB64 string, err error) {
 	a1Bytes := make([]byte, 16)
 	if _, err := rand.Read(a1Bytes); err != nil {
-		return "", "", fmt.Errorf("failed to generate a1key: %w", err)
-	}
-
-	a2Bytes := make([]byte, 16)
-	if _, err := rand.Read(a2Bytes); err != nil {
-		return "", "", fmt.Errorf("failed to generate a2key: %w", err)
+		return "", fmt.Errorf("failed to generate a1key: %w", err)
 	}
 
 	a1key := hex.EncodeToString(a1Bytes)
-	a2key := hex.EncodeToString(a2Bytes)
 
-	return a1key, a2key, nil
+	return a1key, nil
 }

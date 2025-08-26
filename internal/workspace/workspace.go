@@ -225,9 +225,9 @@ func (w *Workspace) Values() (map[string]interface{}, error) {
 		return nil, fmt.Errorf("failed to generate key and certificate: %w", err)
 	}
 
-	a1key, a2key, err := w.generateAccessKeys()
+	a1key, err := w.generateAccessKey()
 	if err != nil {
-		return nil, fmt.Errorf("failed to generate access keys: %w", err)
+		return nil, fmt.Errorf("failed to generate access key: %w", err)
 	}
 
 	userValues, err := toMap(w.user)
@@ -243,7 +243,6 @@ func (w *Workspace) Values() (map[string]interface{}, error) {
 	values["__tlscrt__"] = cert
 	values["__tlskey__"] = key
 	values["__a1key__"] = base64.StdEncoding.EncodeToString([]byte(a1key))
-	values["__a2key__"] = base64.StdEncoding.EncodeToString([]byte(a2key))
 	values["__registry__"] = w.client.Registry.ToValues()
 
 	return values, nil
