@@ -8,4 +8,50 @@ metadata:
     type: config-init
 data:
   config.yaml: |
-    {{ .Values.__k8shelldconfig__ }} 
+    # system settings
+    system:
+      # true to enable profiling
+      # if enabled, pprof will be available at localhost:6060
+      pprof: false
+
+      # api server 
+      apiServer: http://api-internal
+
+    # workspace user
+    user:
+      username: {{ .Values.__username__ }}
+      fullname: {{ .Values.__user__.fullname }}
+      uid: {{ .Values.__user__.uid }}
+      gid: {{ .Values.__user__.gid }}
+      shell: {{ .Values.shell }}
+      sudo: {{ .Values.sudo }}
+
+      {{- if .Values.docker.enabled }}
+      # supplementary groups
+      groups:
+        - name: k8shell-docker
+          gid: {{ if and (ne .Values.docker.subgid 0) }}{{ add .Values.docker.subgid .Values.docker.groupId -1 }}{{ else }}{{ .Values.docker.groupId }}{{ end }}
+      {{- end }}
+
+    {{- if .Values.k8shelld.portForward }}
+    # port forwarding rules
+    portForwarding:
+    {{- range .Values.k8shelld.portForward }}
+      - {{ . }}
+    {{- end }}
+    {{- end }}
+
+    # reap zombie processes
+    reapZombies:
+      enabled: true
+
+    # terminate orphaned processes, i.e. processes that were reparented to init (pid 1)
+    terminateOrphans:
+      enabled: true
+      checkInterval: 5
+      {{- if .Values.k8shelld.ignoreOrphans }}
+      exclude:
+      {{- range .Values.k8shelld.ignoreOrphans }}
+      - {{ . }}
+      {{- end }}
+      {{- end }}

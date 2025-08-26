@@ -1,7 +1,6 @@
 package workspace
 
 import (
-	"bytes"
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/rand"
@@ -13,98 +12,11 @@ import (
 	"encoding/pem"
 	"fmt"
 	"math/big"
-	"text/template"
 	"time"
 )
 
 type Values struct {
 	Values map[string]interface{}
-}
-
-// k8shelldConfigTemplate is the template for the k8shelld configuration
-const k8shelldConfigTemplate = `# k8shelld configuration file
-# system settings
-system:
-  # true to enable profiling
-  # if enabled, pprof will be available at localhost:6060
-  pprof: false
-
-# workspace user
-mainUser:
-  username: {{ .Values.__username__ }}
-  fullname: {{ .Values.__user__.fullname }}
-  uid: {{ .Values.__user__.uid }}
-  gid: {{ .Values.__user__.gid }}
-  shell: {{ .Values.shell }}
-  sudo: {{ .Values.sudo }}
-
-  {{- if .Values.docker.enabled }}
-  # supplementary groups
-  groups:
-    - name: k8shell-docker
-      gid: {{ if and (ne .Values.docker.subgid 0) }}{{ add .Values.docker.subgid .Values.docker.groupId -1 }}{{ else }}{{ .Values.docker.groupId }}{{ end }}
-  {{- end }}
-
-{{- if .Values.k8shelld.portForward }}
-# port forwarding rules
-portForwarding:
-{{- range .Values.k8shelld.portForward }}
-  - {{ . }}
-{{- end }}
-{{- end }}
-
-# reap zombie processes
-reapZombies:
-  enabled: true
-
-# terminate orphaned processes, i.e. processes that were reparented to init (pid 1)
-terminateOrphans:
-  enabled: true
-  checkInterval: 5
-  {{- if .Values.k8shelld.ignoreOrphans }}
-  exclude:
-  {{- range .Values.k8shelld.ignoreOrphans }}
-  - {{ . }}
-  {{- end }}
-  {{- end }}
-`
-
-// k8shelldConfig generates the k8shelld configuration YAML
-func (w *Workspace) k8shelldConfig(encrypt bool, a1keyHex string, values map[string]interface{}) (string, error) {
-	funcMap := template.FuncMap{
-		"add": func(a, b int) int { return a + b },
-		"ne":  func(a, b int) bool { return a != b },
-		"and": func(args ...interface{}) bool {
-			for _, arg := range args {
-				if !arg.(bool) {
-					return false
-				}
-			}
-			return true
-		},
-	}
-
-	tmpl, err := template.New("config").Funcs(funcMap).Parse(k8shelldConfigTemplate)
-	if err != nil {
-		return "", fmt.Errorf("failed to parse config template: %w", err)
-	}
-
-	var buf bytes.Buffer
-	if err := tmpl.Execute(&buf, Values{Values: values}); err != nil {
-		return "", fmt.Errorf("failed to execute config template: %w", err)
-	}
-
-	configYAML := buf.String()
-
-	if encrypt && a1keyHex != "" {
-		encrypted, err := w.encryptText(a1keyHex, configYAML)
-		if err != nil {
-			return "", fmt.Errorf("failed to encrypt config: %w", err)
-		}
-		return encrypted, nil
-	}
-
-	return base64.StdEncoding.EncodeToString([]byte(configYAML)), nil
 }
 
 // encryptText encrypts plaintext using AES-GCM with the provided key
