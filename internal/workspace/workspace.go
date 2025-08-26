@@ -246,12 +246,6 @@ func (w *Workspace) Values() (map[string]interface{}, error) {
 	values["__a2key__"] = base64.StdEncoding.EncodeToString([]byte(a2key))
 	values["__registry__"] = w.client.Registry.ToValues()
 
-	config, err := w.k8shelldConfig(w.blueprint.K8shelld.EncryptConfig, a1key, values)
-	if err != nil {
-		return nil, fmt.Errorf("failed to generate k8shelld config YAML: %w", err)
-	}
-	values["__k8shelldconfig__"] = config
-
 	return values, nil
 }
 
