@@ -67,6 +67,12 @@ spec:
           secretKeyRef:
             name: {{ .Values.__workspace__ }}-access-keys
             key: a1key
+      {{- if .Values.env }}    
+      {{- range $envName, $envValue := .Values.env }}            
+      - name: {{ $envName }}
+        value: {{ $envValue }}
+      {{- end }}
+      {{- end }}
       {{- if .Values.docker.enabled }}
       - name: DOCKER_HOST
         value: unix:///var/run/docker/docker.sock

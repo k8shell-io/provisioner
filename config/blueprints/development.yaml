@@ -11,6 +11,11 @@ blueprint:
   #     ? "admin-sa"
   #     : "default"
 
+  env:
+    GIT_ADDRESS: !cel "repo.address"
+    REPO_OWNER: !cel "repo.owner"
+    REPO_NAME: !cel "repo.name"
+
   storages:
     home:
       annotations:
