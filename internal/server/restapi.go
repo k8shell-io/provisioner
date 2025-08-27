@@ -262,19 +262,9 @@ func (a *RESTApiService) GetBlueprint(c *gin.Context) {
 		return
 	}
 
-	// Get the user's blueprint scope
-	scope, errx := a.server.GetBlueprintScope(c.Request.Context(), username, "", "")
+	scope, errx := a.server.GetBlueprintScope(c.Request.Context(), username, nil)
 	if errx != nil {
-		var eresp identity.ErrorResponse
-		if errors.As(errx, &eresp) {
-			c.JSON(eresp.Status, gin.H{
-				"error": eresp.Msg,
-			})
-			return
-		}
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"error": fmt.Sprintf("Failed to get user: %v", errx),
-		})
+		errToJSONError(c, errx)
 		return
 	}
 
@@ -369,18 +359,9 @@ func (a *RESTApiService) ComposeBlueprint(c *gin.Context) {
 	}
 
 	// Get the user's blueprint scope
-	scope, errx := a.server.GetBlueprintScope(c.Request.Context(), username, "", "")
+	scope, errx := a.server.GetBlueprintScope(c.Request.Context(), username, nil)
 	if errx != nil {
-		var eresp identity.ErrorResponse
-		if errors.As(errx, &eresp) {
-			c.JSON(eresp.Status, gin.H{
-				"error": eresp.Msg,
-			})
-			return
-		}
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"error": fmt.Sprintf("Failed to get user: %v", errx),
-		})
+		errToJSONError(c, errx)
 		return
 	}
 
@@ -570,18 +551,9 @@ func (a *RESTApiService) TemplateWorkspace(c *gin.Context) {
 		return
 	}
 
-	scope, errx := a.server.GetBlueprintScope(c.Request.Context(), username, "", "")
+	scope, errx := a.server.GetBlueprintScope(c.Request.Context(), username, nil)
 	if errx != nil {
-		var eresp identity.ErrorResponse
-		if errors.As(errx, &eresp) {
-			c.JSON(eresp.Status, gin.H{
-				"error": eresp.Msg,
-			})
-			return
-		}
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"error": fmt.Sprintf("Failed to get user: %v", errx),
-		})
+		errToJSONError(c, errx)
 		return
 	}
 
@@ -680,22 +652,8 @@ func (a *RESTApiService) ProvisionWorkspace(c *gin.Context) {
 		return
 	}
 
-	scope, errx := a.server.GetBlueprintScope(c.Request.Context(), userstr.Username, "", "")
-	if errx != nil {
-		var eresp identity.ErrorResponse
-		if errors.As(errx, &eresp) {
-			c.JSON(eresp.Status, gin.H{
-				"error": eresp.Msg,
-			})
-			return
-		}
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"error": fmt.Sprintf("Failed to get user: %v", errx),
-		})
-		return
-	}
-
 	var blueprintObj *models.Blueprint
+	var user *models.User
 
 	if userstr.HasCustomBlueprint {
 		customBlueprint, err := a.server.Identity.GetBlueprintByUserStr(c.Request.Context(), userstrParam)
@@ -721,6 +679,12 @@ func (a *RESTApiService) ProvisionWorkspace(c *gin.Context) {
 			return
 		}
 
+		scope, errx := a.server.GetBlueprintScope(c.Request.Context(), userstr.Username, &customBlueprint.Metadata)
+		if errx != nil {
+			errToJSONError(c, errx)
+			return
+		}
+
 		blueprintObj, err = a.server.bpManager.ComposeWithScope(customBlueprint, scope)
 		if err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{
@@ -728,7 +692,15 @@ func (a *RESTApiService) ProvisionWorkspace(c *gin.Context) {
 			})
 			return
 		}
+
+		user = scope.User
 	} else {
+		scope, errx := a.server.GetBlueprintScope(c.Request.Context(), userstr.Username, nil)
+		if errx != nil {
+			errToJSONError(c, errx)
+			return
+		}
+
 		blueprintObj, err = a.server.bpManager.GetBlueprint(userstr.Blueprint, scope)
 		if err != nil {
 			c.JSON(http.StatusNotFound, gin.H{
@@ -736,9 +708,11 @@ func (a *RESTApiService) ProvisionWorkspace(c *gin.Context) {
 			})
 			return
 		}
+
+		user = scope.User
 	}
 
-	workspace, err := ws.NewWorkspace(blueprintObj, scope.User, a.server.helm)
+	workspace, err := ws.NewWorkspace(blueprintObj, user, a.server.helm)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"error": fmt.Sprintf("Failed to create workspace: %v", err),
@@ -867,6 +841,14 @@ func (a *RESTApiService) provisionSync(c *gin.Context, workspace *ws.Workspace, 
 }
 
 func errToJSONError(c *gin.Context, err error) {
+	var eresp identity.ErrorResponse
+	if errors.As(err, &eresp) {
+		c.JSON(eresp.Status, gin.H{
+			"error": eresp.Msg,
+		})
+		return
+	}
+
 	if errors.Is(err, provModels.ErrWorkspaceNotFound) {
 		c.JSON(http.StatusNotFound, gin.H{
 			"error": fmt.Sprintf("%v", err),

@@ -73,27 +73,35 @@ func NewServer(configFile string) (*Server, error) {
 	return server, nil
 }
 
-func (s *Server) GetBlueprintScope(ctx context.Context, username string, repoName string,
-	repoOwner string) (*blueprint.BlueprintScope, error) {
-	s.log.Debug().Msgf("Getting blueprint scope for user: %s, repo: %s, owner: %s",
-		username, repoName, repoOwner)
+func (s *Server) GetBlueprintScope(ctx context.Context, username string,
+	metadata *models.BlueprintMetadata) (*blueprint.BlueprintScope, error) {
+
+	var repoName = "noreponame"
+	var ownerName = "norepoowner"
+	var repoAddress = "noaddress"
+
+	if metadata != nil && metadata.RepoName != "" && metadata.RepoOwner != "" {
+		repoName = metadata.RepoName
+		ownerName = metadata.RepoOwner
+	}
+	if metadata != nil && metadata.RepoAddress != "" {
+		repoAddress = metadata.RepoAddress
+	}
+
+	s.log.Debug().Msgf("Creating blueprint scope for user: %s, repo: %s, owner: %s, address: %s",
+		username, repoName, ownerName, repoAddress)
+
 	user, err := s.Identity.GetUser(ctx, username)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get user: %w", err)
 	}
 
-	var repo = "noreponame"
-	var owner = "norepoowner"
-	if repoName != "" && repoOwner != "" {
-		repo = repoName
-		owner = repoOwner
-	}
-
 	scope := &blueprint.BlueprintScope{
 		User: user,
 		Repo: models.Repo{
-			Name:  repo,
-			Owner: owner,
+			Address: repoAddress,
+			Name:    repoName,
+			Owner:   ownerName,
 		},
 	}
 	return scope, nil
