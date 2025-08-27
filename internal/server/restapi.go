@@ -270,9 +270,7 @@ func (a *RESTApiService) GetBlueprint(c *gin.Context) {
 
 	blueprint, err := a.server.bpManager.GetBlueprint(name, scope)
 	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{
-			"error": fmt.Sprintf("Blueprint not found: %s", name),
-		})
+		errToJSONError(c, err)
 		return
 	}
 
@@ -296,9 +294,7 @@ func (a *RESTApiService) GetRawBlueprint(c *gin.Context) {
 
 	rawBp, err := a.server.bpManager.GetRawBlueprint(name)
 	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{
-			"error": fmt.Sprintf("Raw blueprint not found: %s", name),
-		})
+		errToJSONError(c, err)
 		return
 	}
 
@@ -861,6 +857,13 @@ func errToJSONError(c *gin.Context, err error) {
 		})
 		return
 	}
+	if errors.Is(err, blueprint.ErrBlueprintNotFound) {
+		c.JSON(http.StatusNotFound, gin.H{
+			"error": fmt.Sprintf("%v", err),
+		})
+		return
+	}
+
 	c.JSON(http.StatusInternalServerError, gin.H{
 		"error": fmt.Sprintf("%v", err),
 	})

@@ -218,7 +218,7 @@ func (bm *BlueprintManager) GetBlueprint(name string, scope *BlueprintScope) (*m
 	bm.mu.RUnlock()
 
 	if !exists {
-		return nil, fmt.Errorf("blueprint %s not found", name)
+		return nil, fmt.Errorf("blueprint %s not found: %w", name, ErrBlueprintNotFound)
 	}
 
 	var tmpl yamlcel.CELTemplate
@@ -253,7 +253,7 @@ func (bm *BlueprintManager) GetRawBlueprint(name string) (interface{}, error) {
 
 	rawBp, exists := bm.rawBlueprints[name]
 	if !exists {
-		return nil, fmt.Errorf("blueprint %s not found", name)
+		return nil, fmt.Errorf("blueprint %s not found: %w", name, ErrBlueprintNotFound)
 	}
 
 	clonedNode := bm.cloneAndProcessCELNodes(rawBp.Node)
