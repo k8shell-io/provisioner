@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"path/filepath"
 
-	"github.com/k8shell-io/yaml-config/pkg/yamlconfig"
+	"github.com/k8shell-io/common/config"
 )
 
 // Config represents the server configuration
@@ -56,17 +56,17 @@ type BlueprintsFileConfig struct {
 }
 
 func NewConfig(configFile string) (*Config, error) {
-	var config Config
+	var cfg Config
 
-	processor := yamlconfig.NewDefaultProcessor()
-	if err := processor.LoadAndDecode(configFile, &config); err != nil {
+	processor := config.NewDefaultProcessor()
+	if err := processor.LoadAndDecode(configFile, &cfg); err != nil {
 		return nil, fmt.Errorf("failed to load configuration from '%s': %w", configFile, err)
 	}
 
-	if config.Http.Port == 0 || config.Http.APIKey == "" {
+	if cfg.Http.Port == 0 || cfg.Http.APIKey == "" {
 		return nil, fmt.Errorf("missing required configuration values: port and APIKey must be set")
 	}
 
-	config.BaseDir = filepath.Dir(configFile)
-	return &config, nil
+	cfg.BaseDir = filepath.Dir(configFile)
+	return &cfg, nil
 }

@@ -12,10 +12,10 @@ import (
 	"time"
 
 	"github.com/fsnotify/fsnotify"
+	"github.com/k8shell-io/common/config"
 	log "github.com/k8shell-io/common/logger"
 	"github.com/k8shell-io/common/models"
 	"github.com/k8shell-io/yaml-cel/pkg/yamlcel"
-	"github.com/k8shell-io/yaml-config/pkg/yamlconfig"
 	"github.com/rs/zerolog"
 	"gopkg.in/yaml.v3"
 )
@@ -65,7 +65,7 @@ type BlueprintManager struct {
 	rawBlueprints map[string]*RawBlueprint // Map of blueprint names to their raw definitions
 	knownFields   bool                     // Whether to allow unknown fields in YAML decoding
 	strategies    MergeStrategies          // Custom strategies for merging lists in blueprints
-	processor     *yamlconfig.Processor    // YAML processor for parsing and validating blueprints
+	processor     *config.Processor        // YAML processor for parsing and validating blueprints
 	watcher       *fsnotify.Watcher        // File system watcher for monitoring blueprint directory changes
 	watchDir      string                   // Directory to watch for blueprint changes
 	watchEnabled  bool                     // Whether file watching is enabled
@@ -117,11 +117,14 @@ func NewBlueprintManager(opts LoadOptions) (*BlueprintManager, error) {
 		rawBlueprints: make(map[string]*RawBlueprint),
 		knownFields:   true,
 		strategies:    opts.Strategies,
-		processor:     yamlconfig.NewProcessor(yamlconfig.DefaultOptions()),
-		watchDir:      opts.Dir,
-		watchEnabled:  opts.EnableWatch,
-		reloadDelay:   500 * time.Millisecond,
-		stopChan:      make(chan struct{}),
+		processor: config.NewProcessor(config.ProcessorOptions{
+			EnableEnvVarExpansion: false,
+			EnableFileTag:         true,
+		}),
+		watchDir:     opts.Dir,
+		watchEnabled: opts.EnableWatch,
+		reloadDelay:  500 * time.Millisecond,
+		stopChan:     make(chan struct{}),
 	}
 
 	if err := manager.loadAndValidateBlueprints(); err != nil {

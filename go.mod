@@ -7,9 +7,9 @@ require github.com/rs/zerolog v1.34.0 // direct
 require (
 	github.com/fsnotify/fsnotify v1.9.0
 	github.com/gin-gonic/gin v1.10.1
-	github.com/k8shell-io/common v0.11.14
+	github.com/k8shell-io/common v0.11.15
 	github.com/k8shell-io/identity v0.11.9
-	github.com/k8shell-io/yaml-cel v0.2.5
+	github.com/k8shell-io/yaml-cel v0.2.6
 	github.com/k8shell-io/yaml-config v0.1.1
 	github.com/stretchr/testify v1.10.0
 	github.com/swaggo/files v1.0.1
