@@ -13,8 +13,8 @@ blueprint:
 
   env:
     GIT_ADDRESS: !cel "metadata.repoAddress"
-    REPO_OWNER: !cel "metadata.repoOwner"
-    REPO_NAME: !cel "metadata.repoName"
+    GIT_REPOOWNER: !cel "metadata.repoOwner"
+    GIT_REPONAME: !cel "metadata.repoName"
 
   storages:
     home:
@@ -29,4 +29,4 @@ blueprint:
     - clone_repo@: |
         cd $HOME
         git config --global credential.helper k8shell
-        git clone https://${GIT_ADDRESS}/${REPO_OWNER}/${REPO_NAME}.git
+        git clone https://${GIT_ADDRESS}/${GIT_REPOOWNER}/${GIT_REPONAME}.git
