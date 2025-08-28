@@ -60,7 +60,7 @@ blueprints:
         path: !cel "'/home/' + user.username"
         readonly: False      
         annotations:
-          zfs-csi.k8shell.io/volume-name: !cel "blueprint + '/' + user.username"
+          zfs-csi.k8shell.io/volume-name: !cel "metadata.name + '/' + user.username"
           zfs-csi.k8shell.io/retain-on-delete: "true"
           zfs-csi.k8shell.io/squash: "all_squash"
           zfs-csi.k8shell.io/squash-uid: !cel "user.uid"
@@ -73,7 +73,7 @@ blueprints:
         path: /opt/shared
         readonly: !cel "!(user.roles.exists(r, r in ['org-admin', 'admin', 'workspace-admin']))"
         annotations:
-          zfs-csi.k8shell.io/volume-name: !cel "blueprint + '/shared'"
+          zfs-csi.k8shell.io/volume-name: !cel "metadata.name + '/shared'"
           zfs-csi.k8shell.io/retain-on-delete: "true"
 
     initScripts:

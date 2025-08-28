@@ -98,10 +98,11 @@ func (s *Server) GetBlueprintScope(ctx context.Context, username string,
 
 	scope := &blueprint.BlueprintScope{
 		User: user,
-		Repo: models.Repo{
-			Address: repoAddress,
-			Name:    repoName,
-			Owner:   ownerName,
+		Metadata: &models.BlueprintMetadata{
+			Name:        "testblueprint",
+			RepoName:    repoName,
+			RepoOwner:   ownerName,
+			RepoAddress: repoAddress,
 		},
 	}
 	return scope, nil

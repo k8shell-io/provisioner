@@ -28,9 +28,8 @@ type RawBlueprint struct {
 }
 
 type BlueprintScope struct {
-	Blueprint string       `yaml:"blueprint"`
-	User      *models.User `yaml:"user"`
-	Repo      models.Repo  `yaml:"repo"`
+	User     *models.User              `yaml:"user"`
+	Metadata *models.BlueprintMetadata `yaml:"metadata"`
 }
 
 func (bs *BlueprintScope) ToMap() (map[string]any, error) {
@@ -78,7 +77,12 @@ type BlueprintManager struct {
 // TestScope creates a minimal BlueprintScope for testing purposes.
 func TestScope() *BlueprintScope {
 	return &BlueprintScope{
-		Blueprint: "testblueprint",
+		Metadata: &models.BlueprintMetadata{
+			Name:        "testblueprint",
+			RepoName:    "testrepo",
+			RepoOwner:   "testowner",
+			RepoAddress: "testaddress",
+		},
 		User: &models.User{
 			Username:     "testuser",
 			IsValid:      true,
@@ -98,10 +102,6 @@ func TestScope() *BlueprintScope {
 			Roles:        []string{"role1", "role2"},
 			Blueprints:   []string{"testblueprint"},
 			Source:       "testsource",
-		},
-		Repo: models.Repo{
-			Owner: "testowner",
-			Name:  "testrepo",
 		},
 	}
 }

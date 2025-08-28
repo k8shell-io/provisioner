@@ -12,18 +12,18 @@ blueprint:
   #     : "default"
 
   env:
-    GIT_ADDRESS: !cel "repo.address"
-    REPO_OWNER: !cel "repo.owner"
-    REPO_NAME: !cel "repo.name"
+    GIT_ADDRESS: !cel "metadata.repoAddress"
+    REPO_OWNER: !cel "metadata.repoOwner"
+    REPO_NAME: !cel "metadata.repoName"
 
   storages:
     home:
       annotations:
-        zfs-csi.k8shell.io/volume-name: !cel "repo.owner + '/' + repo.name + '/' + user.username"
+        zfs-csi.k8shell.io/volume-name: !cel "metadata.repoOwner + '/' + metadata.repoName + '/' + user.username"
     shared:
       readonly: false
       annotations:
-        zfs-csi.k8shell.io/volume-name: !cel "repo.owner + '/shared'"
+        zfs-csi.k8shell.io/volume-name: !cel "metadata.repoOwner + '/shared'"
 
   initScripts:
     - clone_repo@: |
