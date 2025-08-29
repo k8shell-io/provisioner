@@ -26,6 +26,7 @@ type PodStatus struct {
 // the workspace-specific details such host, port and access key and TLS certificate.
 type WorkspaceStatus struct {
 	PodStatus
+	Name      string `json:"name" example:"dev-user123"`
 	Host      string `json:"host" example:"dev-john.k8shell-workspace"`
 	PodIP     string `json:"podIP" example:"10.42.0.123"`
 	Port      int    `json:"port" example:"2822"`
