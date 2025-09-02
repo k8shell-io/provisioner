@@ -25,6 +25,7 @@ import (
 	log "github.com/k8shell-io/common/logger"
 	"github.com/k8shell-io/common/models"
 	identity "github.com/k8shell-io/identity/pkg/client"
+	_ "github.com/k8shell-io/provisioner/docs"
 	"github.com/k8shell-io/provisioner/internal/blueprint"
 	ws "github.com/k8shell-io/provisioner/internal/workspace"
 	provModels "github.com/k8shell-io/provisioner/pkg/models"
@@ -39,7 +40,7 @@ type RESTApiService struct {
 	log    *zerolog.Logger
 	engine *gin.Engine
 }
-
+ 
 // ErrorResponse represents an error response
 type ErrorResponse struct {
 	Error string `json:"error" example:"Error message"`
@@ -245,7 +246,7 @@ func (a *RESTApiService) GetBlueprints(c *gin.Context) {
 // @Security     BearerAuth
 // @Param        name      path    string  true   "Blueprint name"
 // @Param        username  query   string  true   "Username for scope resolution"
-// @Success      200       {object}  models.Blueprint  "Blueprint details"
+// @Success      200       {object}  object  "Blueprint details"
 // @Failure      400       {object}  ErrorResponse     "Bad request - missing username"
 // @Failure      404       {object}  ErrorResponse     "Blueprint not found"
 // @Failure      401       {object}  ErrorResponse     "Unauthorized"
@@ -310,7 +311,7 @@ func (a *RESTApiService) GetRawBlueprint(c *gin.Context) {
 // @Security     BearerAuth
 // @Param        username  query   string  true   "Username for scope resolution"
 // @Param        blueprint body    string  true   "Custom blueprint YAML"
-// @Success      200       {object}  models.Blueprint  "Composed blueprint"
+// @Success      200       {object}  object  "Composed blueprint"
 // @Failure      400       {object}  ErrorResponse     "Bad request - validation failed"
 // @Failure      415       {object}  ErrorResponse     "Unsupported media type"
 // @Failure      401       {object}  ErrorResponse     "Unauthorized"
@@ -424,7 +425,7 @@ func (a *RESTApiService) resolveBlueprintFromRequest(c *gin.Context,
 // @Security     BearerAuth
 // @Param        username   query   string  false  "Filter by username"
 // @Param        blueprint  query   string  false  "Filter by blueprint name"
-// @Success      200        {array}   models.WorkspaceResponse  "List of workspaces"
+// @Success      200        {array}   provModels.WorkspaceInfo  "List of workspaces"
 // @Failure      400        {object}  ErrorResponse      "Bad request - invalid parameters"
 // @Failure      401        {object}  ErrorResponse      "Unauthorized"
 // @Failure      500        {object}  ErrorResponse      "Internal server error"
@@ -606,8 +607,8 @@ func (a *RESTApiService) TemplateWorkspace(c *gin.Context) {
 // @Param        userstr    query   string  true   "User string in format 'username~blueprint' or 'username~repo=org/repo'"
 // @Param        timeout    query   int     false  "Timeout in seconds (default: 20)"
 // @Param        stream     query   bool    false  "Enable streaming updates (default: false)"
-// @Success      200        {object}  StreamEventResponse     "Streaming events (when stream=true)"
-// @Success      201        {object}  WorkspaceStatusResponse "Workspace status (when stream=false)"
+// @Success      200        {object}  provModels.StreamEvent     "Streaming events (when stream=true)"
+// @Success      201        {object}  provModels.WorkspaceStatus "Workspace status (when stream=false)"
 // @Failure      400        {object}  ErrorResponse           "Bad request - missing parameters or validation failed"
 // @Failure      404        {object}  ErrorResponse           "Blueprint not found"
 // @Failure      401        {object}  ErrorResponse           "Unauthorized"
