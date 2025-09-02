@@ -52,7 +52,7 @@ jobs:
       - name: Copy sources to docker context
         run: |
           cp go.mod go.sum main.go -t docker/provisioner/files/
-          cp -r pkg internal db docs docker/provisioner/files/
+          cp -r pkg internal docs docker/provisioner/files/
           echo -n "k8shell-base/provisioner:$VERSION" > docker/provisioner/BUILD
 
       - name: Load REPO_NAME from docker/provisioner/BUILD
