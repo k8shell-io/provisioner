@@ -184,8 +184,8 @@ func NewWorkspace(blueprint *models.Blueprint, user *models.User, client *helm.C
 // Name returns the name of the workspace
 func (w *Workspace) Name() string {
 	hash := sha256.Sum256([]byte(w.blueprint.Name + w.user.Username))
-	hashStr := fmt.Sprintf("a%x", hash)
-	return hashStr[:7] + "-" + w.user.Username
+	hashStr := fmt.Sprintf("%x", hash)
+	return w.user.Username + "-" + hashStr[:7]
 }
 
 func (w *Workspace) Labels() map[string]string {
