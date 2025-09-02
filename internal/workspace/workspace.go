@@ -2,6 +2,7 @@ package workspace
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/base64"
 	"fmt"
 	"strings"
@@ -182,7 +183,9 @@ func NewWorkspace(blueprint *models.Blueprint, user *models.User, client *helm.C
 
 // Name returns the name of the workspace
 func (w *Workspace) Name() string {
-	return w.blueprint.Name + "-" + w.user.Username
+	hash := sha256.Sum256([]byte(w.blueprint.Name + w.user.Username))
+	hashStr := fmt.Sprintf("a%x", hash)
+	return hashStr[:7] + "-" + w.user.Username
 }
 
 func (w *Workspace) Labels() map[string]string {
