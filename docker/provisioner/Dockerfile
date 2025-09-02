@@ -9,9 +9,7 @@ LABEL COMMIT_ID=$COMMIT_ID
 WORKDIR /go/src/provisioner
 COPY files .
 
-# need to use 1.16.4 due to regression bug in 1.16.5
-# https://github.com/swaggo/swag/issues/2042
-RUN go install github.com/swaggo/swag/cmd/swag@v1.16.4
+RUN go install github.com/swaggo/swag/cmd/swag@latest
 RUN /go/bin/swag init --generalInfo internal/server/restapi.go --output docs
 
 ENV GOFLAGS="-mod=vendor"
