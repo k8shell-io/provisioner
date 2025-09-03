@@ -37,12 +37,6 @@ jobs:
           echo "VERSION=$VERSION" >> $GITHUB_ENV
           echo "COMMIT_ID=$COMMIT_ID" >> $GITHUB_ENV
 
-      - name: Install swag CLI
-        run: go install github.com/swaggo/swag/cmd/swag@latest
-
-      - name: Generate Swagger docs
-        run: swag init -g main.go -o ./docs
-
       - name: Vendor Go modules
         run: |
           go mod vendor
@@ -52,7 +46,7 @@ jobs:
       - name: Copy sources to docker context
         run: |
           cp go.mod go.sum main.go -t docker/provisioner/files/
-          cp -r pkg internal docs docker/provisioner/files/
+          cp -r pkg internal docker/provisioner/files/
           echo -n "k8shell-base/provisioner:$VERSION" > docker/provisioner/BUILD
 
       - name: Load REPO_NAME from docker/provisioner/BUILD

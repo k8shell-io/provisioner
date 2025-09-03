@@ -25,13 +25,10 @@ import (
 	log "github.com/k8shell-io/common/logger"
 	"github.com/k8shell-io/common/models"
 	identity "github.com/k8shell-io/identity/pkg/client"
-	_ "github.com/k8shell-io/provisioner/docs"
 	"github.com/k8shell-io/provisioner/internal/blueprint"
 	ws "github.com/k8shell-io/provisioner/internal/workspace"
 	provModels "github.com/k8shell-io/provisioner/pkg/models"
 	"github.com/rs/zerolog"
-	swaggerFiles "github.com/swaggo/files"
-	ginSwagger "github.com/swaggo/gin-swagger"
 )
 
 // RESTApiService represents the REST API service for the K8Shell Provisioner server.
@@ -40,7 +37,7 @@ type RESTApiService struct {
 	log    *zerolog.Logger
 	engine *gin.Engine
 }
- 
+
 // ErrorResponse represents an error response
 type ErrorResponse struct {
 	Error string `json:"error" example:"Error message"`
@@ -150,9 +147,6 @@ func (a *RESTApiService) initializeRouter() {
 		}
 	}
 
-	// Swagger documentation (no auth required)
-	a.engine.GET("/swagger/*any", ginSwagger.WrapHandler(swaggerFiles.Handler))
-
 	// 404 handler
 	a.engine.NoRoute(func(c *gin.Context) {
 		a.log.Debug().Msgf("404 Not Found: %s %s", c.Request.Method, c.Request.URL.Path)
@@ -207,16 +201,6 @@ func (a *RESTApiService) Serve(ctx context.Context) {
 // *** Blueprints
 
 // GetBlueprints handles the GET request for blueprints
-// @Summary      List available blueprints
-// @Description  Get a list of all available blueprint names
-// @Tags         blueprints
-// @Accept       json
-// @Produce      json
-// @Security     BearerAuth
-// @Success      200  {object}  BlueprintListResponse  "List of available blueprints"
-// @Failure      404  {object}  ErrorResponse          "No blueprints found"
-// @Failure      401  {object}  ErrorResponse          "Unauthorized"
-// @Router       /api/v1/blueprints [get]
 func (a *RESTApiService) GetBlueprints(c *gin.Context) {
 	blueprints := a.server.bpManager.ListBlueprintNames()
 	if len(blueprints) == 0 {
@@ -238,20 +222,6 @@ func (a *RESTApiService) GetBlueprints(c *gin.Context) {
 }
 
 // GetBlueprint handles the GET request for a specific blueprint
-// @Summary      Get a specific blueprint
-// @Description  Get a blueprint by name with user scope applied
-// @Tags         blueprints
-// @Accept       json
-// @Produce      json
-// @Security     BearerAuth
-// @Param        name      path    string  true   "Blueprint name"
-// @Param        username  query   string  true   "Username for scope resolution"
-// @Success      200       {object}  object  "Blueprint details"
-// @Failure      400       {object}  ErrorResponse     "Bad request - missing username"
-// @Failure      404       {object}  ErrorResponse     "Blueprint not found"
-// @Failure      401       {object}  ErrorResponse     "Unauthorized"
-// @Failure      500       {object}  ErrorResponse     "Internal server error"
-// @Router       /api/v1/blueprints/{name} [get]
 func (a *RESTApiService) GetBlueprint(c *gin.Context) {
 	name := c.Param("name")
 	username := c.Query("username")
@@ -279,17 +249,6 @@ func (a *RESTApiService) GetBlueprint(c *gin.Context) {
 }
 
 // GetRawBlueprint handles the GET request for a specific raw blueprint
-// @Summary      Get raw blueprint
-// @Description  Get the raw blueprint configuration without scope processing
-// @Tags         blueprints
-// @Accept       json
-// @Produce      json
-// @Security     BearerAuth
-// @Param        name  path    string  true  "Blueprint name"
-// @Success      200   {object}  object  "Raw blueprint configuration"
-// @Failure      404   {object}  ErrorResponse        	 "Blueprint not found"
-// @Failure      401   {object}  ErrorResponse        	 "Unauthorized"
-// @Router       /api/v1/blueprints/{name}/raw [get]
 func (a *RESTApiService) GetRawBlueprint(c *gin.Context) {
 	name := c.Param("name")
 
@@ -303,20 +262,6 @@ func (a *RESTApiService) GetRawBlueprint(c *gin.Context) {
 }
 
 // ComposeBlueprint handles the POST request to compose a blueprint
-// @Summary      Compose a custom blueprint
-// @Description  Compose a custom blueprint YAML with user scope
-// @Tags         blueprints
-// @Accept       text/yaml,application/x-yaml
-// @Produce      json
-// @Security     BearerAuth
-// @Param        username  query   string  true   "Username for scope resolution"
-// @Param        blueprint body    string  true   "Custom blueprint YAML"
-// @Success      200       {object}  object  "Composed blueprint"
-// @Failure      400       {object}  ErrorResponse     "Bad request - validation failed"
-// @Failure      415       {object}  ErrorResponse     "Unsupported media type"
-// @Failure      401       {object}  ErrorResponse     "Unauthorized"
-// @Failure      500       {object}  ErrorResponse     "Internal server error"
-// @Router       /api/v1/blueprints/compose [post]
 func (a *RESTApiService) ComposeBlueprint(c *gin.Context) {
 	contentType := c.GetHeader("Content-Type")
 	username := c.Query("username")
@@ -417,19 +362,6 @@ func (a *RESTApiService) resolveBlueprintFromRequest(c *gin.Context,
 // *** Workspaces
 
 // GetWorkspaces handles the GET request for workspaces
-// @Summary      List workspaces
-// @Description  Get a list of workspaces, optionally filtered by username and/or blueprint
-// @Tags         workspaces
-// @Accept       json
-// @Produce      json
-// @Security     BearerAuth
-// @Param        username   query   string  false  "Filter by username"
-// @Param        blueprint  query   string  false  "Filter by blueprint name"
-// @Success      200        {array}   provModels.WorkspaceInfo  "List of workspaces"
-// @Failure      400        {object}  ErrorResponse      "Bad request - invalid parameters"
-// @Failure      401        {object}  ErrorResponse      "Unauthorized"
-// @Failure      500        {object}  ErrorResponse      "Internal server error"
-// @Router       /api/v1/workspaces [get]
 func (a *RESTApiService) GetWorkspaces(c *gin.Context) {
 	username := c.Query("username")
 	blueprint := c.Query("blueprint")
@@ -450,19 +382,6 @@ func (a *RESTApiService) GetWorkspaces(c *gin.Context) {
 }
 
 // GetWorkspace handles the GET request for a specific workspace
-// @Summary      Get a specific workspace
-// @Description  Get details of a workspace by name
-// @Tags         workspaces
-// @Accept       json
-// @Produce      json
-// @Security     BearerAuth
-// @Param        name  path    string  true  "Workspace name"
-// @Success      200   {object}  provModels.WorkspaceInfo  "Workspace details"
-// @Failure      404   {object}  ErrorResponse      "Workspace not found"
-// @Failure      409   {object}  ErrorResponse      "Multiple workspaces found with same name"
-// @Failure      401   {object}  ErrorResponse      "Unauthorized"
-// @Failure      500   {object}  ErrorResponse      "Internal server error"
-// @Router       /api/v1/workspaces/{name} [get]
 func (a *RESTApiService) GetWorkspace(c *gin.Context) {
 	name := c.Param("name")
 
@@ -498,19 +417,6 @@ func (a *RESTApiService) GetWorkspace(c *gin.Context) {
 }
 
 // GetWorkspaceStatus handles the GET request for workspace status
-// @Summary      Get workspace status
-// @Description  Get the current status of a workspace including pod status and IP
-// @Tags         workspaces
-// @Accept       json
-// @Produce      json
-// @Security     BearerAuth
-// @Param        name  path    string  true  "Workspace name"
-// @Success      200   {object}  provModels.WorkspaceStatus  "Workspace status details"
-// @Failure      400   {object}  ErrorResponse              "Bad request - invalid parameters"
-// @Failure      404   {object}  ErrorResponse              "Workspace not found"
-// @Failure      401   {object}  ErrorResponse              "Unauthorized"
-// @Failure      500   {object}  ErrorResponse              "Internal server error"
-// @Router       /api/v1/workspaces/{name}/status [get]
 func (a *RESTApiService) GetWorkspaceStatus(c *gin.Context) {
 	name := c.Param("name")
 	status, err := ws.GetWorkspaceStatus(c.Request.Context(), a.server.helm, name)
@@ -522,22 +428,6 @@ func (a *RESTApiService) GetWorkspaceStatus(c *gin.Context) {
 }
 
 // TemplateWorkspace renders workspace templates
-// @Summary      Template workspace
-// @Description  Generate Kubernetes manifests for a workspace without provisioning
-// @Tags         workspaces
-// @Accept       text/yaml,application/x-yaml
-// @Produce      text/yaml
-// @Security     BearerAuth
-// @Param        username   query   string  true   "Username for scope resolution"
-// @Param        blueprint  query   string  false  "Blueprint name (required if no payload)"
-// @Param        blueprint  body    string  false  "Custom blueprint YAML (alternative to query parameter)"
-// @Success      200        {string}  string       "Rendered Kubernetes manifests in YAML format"
-// @Failure      400        {object}  ErrorResponse  "Bad request - missing parameters or validation failed"
-// @Failure      404        {object}  ErrorResponse  "Blueprint not found"
-// @Failure      415        {object}  ErrorResponse  "Unsupported media type"
-// @Failure      401        {object}  ErrorResponse  "Unauthorized"
-// @Failure      500        {object}  ErrorResponse  "Internal server error"
-// @Router       /api/v1/workspaces/template [post]
 func (a *RESTApiService) TemplateWorkspace(c *gin.Context) {
 	username := c.Query("username")
 
@@ -598,22 +488,6 @@ func (a *RESTApiService) TemplateWorkspace(c *gin.Context) {
 }
 
 // ProvisionWorkspace provisions a new workspace
-// @Summary      Provision workspace
-// @Description  Create and deploy a new workspace to Kubernetes
-// @Tags         workspaces
-// @Accept       json
-// @Produce      json,application/x-ndjson
-// @Security     BearerAuth
-// @Param        userstr    query   string  true   "User string in format 'username~blueprint' or 'username~repo=org/repo'"
-// @Param        timeout    query   int     false  "Timeout in seconds (default: 20)"
-// @Param        stream     query   bool    false  "Enable streaming updates (default: false)"
-// @Success      200        {object}  provModels.StreamEvent     "Streaming events (when stream=true)"
-// @Success      201        {object}  provModels.WorkspaceStatus "Workspace status (when stream=false)"
-// @Failure      400        {object}  ErrorResponse           "Bad request - missing parameters or validation failed"
-// @Failure      404        {object}  ErrorResponse           "Blueprint not found"
-// @Failure      401        {object}  ErrorResponse           "Unauthorized"
-// @Failure      500        {object}  ErrorResponse           "Internal server error"
-// @Router       /api/v1/workspaces [post]
 func (a *RESTApiService) ProvisionWorkspace(c *gin.Context) {
 	userstrParam := c.Query("userstr")
 	stream := c.Query("stream") == "true"

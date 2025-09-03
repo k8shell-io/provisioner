@@ -9,9 +9,6 @@ LABEL COMMIT_ID=$COMMIT_ID
 WORKDIR /go/src/provisioner
 COPY files .
 
-RUN go install github.com/swaggo/swag/cmd/swag@latest
-RUN /go/bin/swag init --generalInfo internal/server/restapi.go --output docs
-
 ENV GOFLAGS="-mod=vendor"
 
 RUN CGO_ENABLED=0 go build -ldflags="-s -w -X main.PROVISIONER_VERSION=$VERSION -X main.PROVISIONER_COMMIT=$COMMIT_ID" \
@@ -21,7 +18,6 @@ FROM gcr.io/distroless/static-debian12
 
 WORKDIR /app
 COPY --from=build /go/bin/provisioner /app/provisioner
-COPY --from=build /go/src/provisioner/docs /app/docs
 
 USER nonroot:nonroot
 ENTRYPOINT ["/app/provisioner"]
