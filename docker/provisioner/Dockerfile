@@ -14,10 +14,9 @@ ENV GOFLAGS="-mod=vendor"
 RUN CGO_ENABLED=0 go build -ldflags="-s -w -X main.PROVISIONER_VERSION=$VERSION -X main.PROVISIONER_COMMIT=$COMMIT_ID" \
     -o /go/bin/provisioner main.go
 
-FROM gcr.io/distroless/static-debian12
+FROM alpine:3.21.3
+
+RUN mkdir /app
+COPY --from=build /go/bin/provisioner /app
 
 WORKDIR /app
-COPY --from=build /go/bin/provisioner /app/provisioner
-
-USER nonroot:nonroot
-ENTRYPOINT ["/app/provisioner"]
