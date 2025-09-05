@@ -14,7 +14,6 @@ import (
 	"helm.sh/helm/v3/pkg/cli"
 	"helm.sh/helm/v3/pkg/release"
 	"k8s.io/apimachinery/pkg/api/errors"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 )
@@ -97,27 +96,13 @@ func (c *Client) EnsureBase(ctx context.Context) error {
 		return fmt.Errorf("target namespace is not set")
 	}
 
-	// check if namespace exists
-	var found bool = false
-	_, err := c.kubeClient.CoreV1().Namespaces().Get(ctx, c.targetNamespace, metav1.GetOptions{})
+	r, err := c.ListWithSelector(c.targetNamespace, "app.kubernetes.io/name="+BASE_WORKSPACE_CHART_NAME)
 	if err != nil {
-		if errors.IsNotFound(err) {
-			found = false
-		} else {
-			return fmt.Errorf("failed to check if namespace exists: %w", err)
-		}
-	} else {
-		found = true
-	}
-
-	if found {
-		r, err := c.ListWithSelector(c.targetNamespace, "app.kubernetes.io/name="+BASE_WORKSPACE_CHART_NAME)
-		if err != nil {
+		if !errors.IsNotFound(err) {
 			return fmt.Errorf("failed to list releases in namespace %s: %w", c.targetNamespace, err)
 		}
-		if len(r) > 0 {
-			return nil
-		}
+	} else if len(r) > 0 {
+		return nil
 	}
 
 	labels := map[string]string{
@@ -135,14 +120,13 @@ func (c *Client) EnsureBase(ctx context.Context) error {
 	err = c.Install(ctx, BASE_WORKSPACE_CHART_NAME, InstallOptions{
 		ReleaseName:     BASE_WORKSPACE_CHART_NAME,
 		ChartName:       BASE_WORKSPACE_CHART_NAME,
-		CreateNamespace: true,
+		CreateNamespace: false,
 		Values:          values,
 		Wait:            true,
 		Labels:          labels,
 	})
 
 	return err
-
 }
 
 func (c *Client) Template(ctx context.Context, chartName string, opts InstallOptions) (string, error) {
