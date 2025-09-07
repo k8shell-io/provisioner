@@ -36,9 +36,16 @@ func NewServer(configFile string) (*Server, error) {
 		return nil, fmt.Errorf("failed to load configuration: %w", err)
 	}
 
-	server.log.Info().Msgf("Loading blueprints from directory: %s", server.config.Blueprints.Directory)
+	var blueprintDir string
+	if filepath.IsAbs(server.config.Blueprints.Directory) {
+		blueprintDir = server.config.Blueprints.Directory
+	} else {
+		blueprintDir = filepath.Join(server.config.BaseDir, server.config.Blueprints.Directory)
+	}
+
+	server.log.Info().Msgf("Loading blueprints from directory: %s", blueprintDir)
 	server.bpManager, err = blueprint.NewBlueprintManager(blueprint.LoadOptions{
-		Dir:         filepath.Join(server.config.BaseDir, server.config.Blueprints.Directory),
+		Dir:         blueprintDir,
 		EnableWatch: true,
 	})
 	if err != nil {
