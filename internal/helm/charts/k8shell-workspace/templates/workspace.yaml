@@ -137,7 +137,7 @@ spec:
         - --group=$(DOCKER_GROUP_GID)
       env:
         - name: DOCKER_GROUP_GID
-          value: "{{ .Values.docker.group_id }}"
+          value: "{{ .Values.docker.groupId }}"
       volumeMounts:
         - name: docker-sock
           mountPath: /var/run/docker
@@ -164,7 +164,7 @@ spec:
       {{- end }}
       {{- end }}
       {{- if .Values.docker.extFiles }}
-      {{- range $path, $content := .Values.docker.ext_files }}
+      {{- range $path, $content := .Values.docker.extFiles }}
         - name: docker-ext-files-volume
           mountPath: {{ $path }}
           subPath: {{ $path | replace "/" "__" }}
