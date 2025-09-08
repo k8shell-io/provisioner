@@ -217,6 +217,7 @@ func (bm *BlueprintManager) GetBlueprint(name string, scope *BlueprintScope) (*m
 	rawBp, exists := bm.rawBlueprints[name]
 	bm.mu.RUnlock()
 
+	scope.Metadata.Name = rawBp.Name
 	if !exists {
 		return nil, fmt.Errorf("blueprint %s not found: %w", name, ErrBlueprintNotFound)
 	}

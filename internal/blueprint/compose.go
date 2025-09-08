@@ -103,6 +103,7 @@ func (bm *BlueprintManager) ComposeWithScope(customBlueprint *models.CustomBluep
 		return nil, err
 	}
 
+	scope.Metadata.Name = rawBp.Name
 	var tmpl yamlcel.CELTemplate
 	if err := rawBp.Node.Decode(&tmpl); err != nil {
 		return nil, fmt.Errorf("failed to decode CEL template for %s: %w", rawBp.Name, err)

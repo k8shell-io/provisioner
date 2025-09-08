@@ -233,7 +233,7 @@ func (a *RESTApiService) GetBlueprint(c *gin.Context) {
 		return
 	}
 
-	scope, errx := a.server.GetBlueprintScope(c.Request.Context(), username, nil)
+	scope, errx := a.server.GetBlueprintScope(c.Request.Context(), "", username, nil)
 	if errx != nil {
 		errToJSONError(c, errx)
 		return
@@ -301,7 +301,7 @@ func (a *RESTApiService) ComposeBlueprint(c *gin.Context) {
 	}
 
 	// Get the user's blueprint scope
-	scope, errx := a.server.GetBlueprintScope(c.Request.Context(), username, nil)
+	scope, errx := a.server.GetBlueprintScope(c.Request.Context(), "", username, nil)
 	if errx != nil {
 		errToJSONError(c, errx)
 		return
@@ -438,7 +438,7 @@ func (a *RESTApiService) TemplateWorkspace(c *gin.Context) {
 		return
 	}
 
-	scope, errx := a.server.GetBlueprintScope(c.Request.Context(), username, nil)
+	scope, errx := a.server.GetBlueprintScope(c.Request.Context(), "", username, nil)
 	if errx != nil {
 		errToJSONError(c, errx)
 		return
@@ -550,7 +550,7 @@ func (a *RESTApiService) ProvisionWorkspace(c *gin.Context) {
 			return
 		}
 
-		scope, errx := a.server.GetBlueprintScope(c.Request.Context(), userstr.Username, &customBlueprint.Metadata)
+		scope, errx := a.server.GetBlueprintScope(c.Request.Context(), "", userstr.Username, &customBlueprint.Metadata)
 		if errx != nil {
 			errToJSONError(c, errx)
 			return
@@ -566,7 +566,7 @@ func (a *RESTApiService) ProvisionWorkspace(c *gin.Context) {
 
 		user = scope.User
 	} else {
-		scope, errx := a.server.GetBlueprintScope(c.Request.Context(), userstr.Username, nil)
+		scope, errx := a.server.GetBlueprintScope(c.Request.Context(), userstr.Blueprint, userstr.Username, nil)
 		if errx != nil {
 			errToJSONError(c, errx)
 			return

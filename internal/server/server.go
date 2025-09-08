@@ -80,7 +80,7 @@ func NewServer(configFile string) (*Server, error) {
 	return server, nil
 }
 
-func (s *Server) GetBlueprintScope(ctx context.Context, username string,
+func (s *Server) GetBlueprintScope(ctx context.Context, blueprintName string, username string,
 	metadata *models.BlueprintMetadata) (*blueprint.BlueprintScope, error) {
 
 	var repoName = "noreponame"
@@ -103,10 +103,15 @@ func (s *Server) GetBlueprintScope(ctx context.Context, username string,
 		return nil, fmt.Errorf("failed to get user: %w", err)
 	}
 
+	bpName := blueprintName
+	if bpName == "" {
+		bpName = "default"
+	}
+
 	scope := &blueprint.BlueprintScope{
 		User: user,
 		Metadata: &models.BlueprintMetadata{
-			Name:        "testblueprint",
+			Name:        bpName,
 			RepoName:    repoName,
 			RepoOwner:   ownerName,
 			RepoAddress: repoAddress,
