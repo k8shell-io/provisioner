@@ -7,7 +7,7 @@ blueprint:
     cpu: 16
     memory: 16Gi
   network:
-    networkPolicy: system
+    networkPolicy: workspace
 
   initScripts:
     - init_repo@&: |
