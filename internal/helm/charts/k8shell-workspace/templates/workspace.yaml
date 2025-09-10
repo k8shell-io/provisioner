@@ -62,6 +62,12 @@ spec:
         value: {{ .Values.__workspace__ }}
       - name: BLUEPRINT
         value: {{ .Values.__blueprint__ }}
+      - name: USERNAME
+        value: {{ .Values.__user__.username }}
+      - name: USEREMAIL
+        value: {{ .Values.__user__.email }}
+      - name: USERFULLNAME
+        value: {{ .Values.__user__.fullname }}
       - name: A1K
         valueFrom:
           secretKeyRef:
