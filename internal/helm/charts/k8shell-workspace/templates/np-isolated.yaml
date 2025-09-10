@@ -1,4 +1,4 @@
-{{- if eq .Values.betwork.networkPolicy "isolated" }}
+{{- if eq .Values.network.networkPolicy "isolated" }}
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
