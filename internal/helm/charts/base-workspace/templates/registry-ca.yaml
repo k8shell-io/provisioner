@@ -6,5 +6,5 @@ metadata:
   namespace: {{ .Release.Namespace }}
 data:
   registry-ca.pem: |
-    {{ .Values.__registry__.certCA }}
+    {{ .Values.__registry__.certCA | indent 4 }}
 {{ end }}
