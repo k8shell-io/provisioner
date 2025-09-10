@@ -6,5 +6,5 @@ metadata:
   namespace: {{ .Release.Namespace }}
 data:
   registry-ca.pem: |
-    {{ .Values.__registry__.certCA | b64enc | quote }}
+    {{ .Values.__registry__.certCA }}
 {{ end }}
