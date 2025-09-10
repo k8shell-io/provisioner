@@ -1,4 +1,4 @@
-{{- if eq .Values.networkPolicy "isolated" }}
+{{- if eq .Values.betwork.networkPolicy "isolated" }}
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -20,10 +20,10 @@ spec:
     - from:
         - podSelector:
             matchLabels:
-              app: k8shell-proxy 
+              app: ssh-proxy 
   egress:
-{{- if .Values.allow_egress }}
-{{- range $cidr := .Values.allow_egress }}
+{{- if .Values.network.allowEgress }}
+{{- range $cidr := .Values.network.allowEgress }}
     - to:
         - ipBlock:
             cidr: {{ $cidr }}

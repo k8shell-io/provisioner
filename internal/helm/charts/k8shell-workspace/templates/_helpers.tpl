@@ -14,7 +14,7 @@ k8shell.io/username: "{{ .Values.__username__ }}"
 - to:
     - podSelector:
         matchLabels:
-          app: k8shell-proxy 
+          app: ssh-proxy 
     - podSelector:
         matchLabels:
           type: backend

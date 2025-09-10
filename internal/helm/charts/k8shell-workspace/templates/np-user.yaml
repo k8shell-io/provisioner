@@ -1,4 +1,4 @@
-{{- if eq .Values.networkPolicy "user" }}
+{{- if eq .Values.network.networkPolicy "user" }}
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -25,10 +25,10 @@ spec:
               username: {{ .Values.__username__ }}
         - podSelector:
             matchLabels:
-              app: k8shell-proxy 
+              app: ssh-proxy 
   egress:
-{{- if .Values.allow_egress }}
-{{- range $cidr := .Values.allow_egress }}
+{{- if .Values.network.allowEgress }}
+{{- range $cidr := .Values.network.allowEgress }}
     - to:
         - ipBlock:
             cidr: {{ $cidr }}
