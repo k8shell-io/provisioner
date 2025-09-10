@@ -12,7 +12,7 @@ blueprint:
   initScripts:
     - init_repo@&: |
         go env -w GOPRIVATE=github.com/k8shell-io/*
-        cd $HOME/common
+        cd $HOME/provisioner
         GOPATH="$HOME/go" go mod tidy
 
 
