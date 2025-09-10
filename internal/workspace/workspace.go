@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"fmt"
+	"os"
 	"strings"
 
 	log "github.com/k8shell-io/common/logger"
@@ -248,6 +249,7 @@ func (w *Workspace) Values() (map[string]interface{}, error) {
 	values["__tlskey__"] = key
 	values["__a1key__"] = base64.StdEncoding.EncodeToString([]byte(a1key))
 	values["__registry__"] = w.client.Registry.ToValues()
+	values["__namespace__"] = getNamespace()
 
 	return values, nil
 }
@@ -434,4 +436,12 @@ func getFailedMessage(pod *corev1.Pod) string {
 	}
 
 	return "Pod failed"
+}
+
+func getNamespace() string {
+	data, err := os.ReadFile("/var/run/secrets/kubernetes.io/serviceaccount/namespace")
+	if err != nil {
+		return ""
+	}
+	return string(data)
 }

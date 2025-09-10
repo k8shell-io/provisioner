@@ -15,7 +15,7 @@ data:
       pprof: false
 
       # api server 
-      apiServer: http://api-internal
+      apiServer: http://api-server.{{ .Values.__namespace__ }}
 
     # workspace user
     user:
