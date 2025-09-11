@@ -1,7 +1,7 @@
 # Provisioner service configuration
 
 # Namespace for the k8shell workspace
-targetNamespace: k8shell-workspace
+targetNamespace: ${TARGET_NAMESPACE}
 
 defaultRegistry:
   host: ${WORKSPACE_REGISTRY}
@@ -16,7 +16,7 @@ http:
 
 # Identity service configuration
 identity:
-  baseURL: http://10.42.3.4:9090
+  baseURL: ${IDENTITY_SERVICE_URL}
   APIKey: !file ${SECRET_FILES}/identity_key
   timeout: 1000 
 
