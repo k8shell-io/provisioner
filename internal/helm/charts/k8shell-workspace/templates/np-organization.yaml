@@ -9,8 +9,8 @@ metadata:
 spec:
   podSelector:
     matchLabels:
-      app: k8shell-workspace
-      org: {{ .Values.__organization__ }}
+      k8shell.io/app: k8shell-workspace
+      k8shell.io/organization: {{ .Values.__organization__ }}
   policyTypes:
     - Ingress
     - Egress
@@ -19,8 +19,8 @@ spec:
     - from:
         - podSelector:
             matchLabels:
-              app: k8shell-workspace
-              org: {{ .Values.__organization__ }}
+              k8shell.io/app: k8shell-workspace
+              k8shell.io/organization: {{ .Values.__organization__ }}
         - podSelector:
             matchLabels:
               app: ssh-proxy 
@@ -35,8 +35,8 @@ spec:
     - to:
         - podSelector:
             matchLabels:
-              app: k8shell-workspace
-              org: {{ .Values.__organization__ }}
-              blueprint: {{ .Values.__blueprint__ }}
+              k8shell.io/app: k8shell-workspace
+              k8shell.io/organization: {{ .Values.__organization__ }}
+              k8shell.io/blueprint: {{ .Values.__blueprint__ }}
 {{ include "default.egress" . | nindent 4 }}  
 {{- end }}
