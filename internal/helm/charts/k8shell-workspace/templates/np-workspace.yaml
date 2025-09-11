@@ -28,7 +28,7 @@ spec:
               kubernetes.io/metadata.name: {{ .Values.__namespace__ }}
             podSelector:
               matchLabels:
-                app: ssh-proxy
+                k8shell.io/app: ssh-proxy
   egress:
 {{- if .Values.network.allowEgress }}
 {{- range $cidr := .Values.network.allowEgress }}
