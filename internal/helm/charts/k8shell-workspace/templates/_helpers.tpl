@@ -12,9 +12,12 @@ k8shell.io/username: "{{ .Values.__username__ }}"
 {{/* default networkpolicy egress rules */}}
 {{- define "default.egress" -}}
 - to:
-    - podSelector:
+    - namespaceSelector:
         matchLabels:
-          app: ssh-proxy 
+          kubernetes.io/metadata.name: {{ .Values.__namespace__ }}
+        podSelector:
+          matchLabels:
+            app: ssh-proxy
     - podSelector:
         matchLabels:
           type: backend

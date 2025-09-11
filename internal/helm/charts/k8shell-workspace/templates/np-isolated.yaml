@@ -18,9 +18,12 @@ spec:
 
   ingress:
     - from:
-        - podSelector:
+        - namespaceSelector:
             matchLabels:
-              app: ssh-proxy 
+              kubernetes.io/metadata.name: {{ .Values.__namespace__ }}
+            podSelector:
+              matchLabels:
+                app: ssh-proxy
   egress:
 {{- if .Values.network.allowEgress }}
 {{- range $cidr := .Values.network.allowEgress }}
