@@ -5,7 +5,10 @@ blueprints:
 
     image: <image:tag>
     imagePullPolicy: Always
-    
+
+    subdomain: !cel "user.organization"
+    hostname: !cel "user.username + '-' + metadata.name"
+
     k8shelld: 
       image: k8shell-base/k8shelld:v0.11.2
       imagePullPolicy: Always

@@ -11,6 +11,9 @@ blueprint:
   #     ? "admin-sa"
   #     : "default"
 
+  subdomain: !cel "metadata.repoOwner"
+  hostname: !cel "user.username + '-' + metadata.repoName"
+
   env:
     GIT_ADDRESS: !cel "metadata.repoAddress"
     GIT_REPOOWNER: !cel "metadata.repoOwner"

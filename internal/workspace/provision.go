@@ -125,6 +125,10 @@ func (w *Workspace) doInstallation(ctx context.Context, opts *ProvisionOptions) 
 		return nil, err
 	}
 
+	if err := w.createHeadlessService(ctx, values); err != nil {
+		return nil, fmt.Errorf("failed to create headless service: %w", err)
+	}
+
 	startTime := time.Now()
 	err = w.client.Install(ctx, helm.WORKSPACE_CHART_NAME, helm.InstallOptions{
 		ReleaseName:     w.Name(),
@@ -149,6 +153,52 @@ func (w *Workspace) doInstallation(ctx context.Context, opts *ProvisionOptions) 
 		w.log.Info().Msgf("Workspace %s is now running, provisioned in %s", w.Name(), provisionTime)
 	}
 	return status, nil
+}
+
+// createHeadlessService creates a headless service if subdomain and hostname are defined
+func (w *Workspace) createHeadlessService(ctx context.Context, values map[string]interface{}) error {
+	subdomain, hasSubdomain := values["subdomain"].(string)
+	hostname, hasHostname := values["hostname"].(string)
+
+	if !hasSubdomain || !hasHostname || subdomain == "" || hostname == "" {
+		w.log.Debug().Msg("Subdomain or hostname not defined, skipping headless service creation")
+		return nil
+	}
+
+	serviceName := subdomain
+	namespace := w.client.TargetNamespace()
+
+	_, err := w.client.GetKubeClient().CoreV1().Services(namespace).Get(ctx, serviceName, metav1.GetOptions{})
+	if err == nil {
+		w.log.Debug().Msgf("Headless service %s already exists", serviceName)
+		return nil
+	}
+
+	service := &corev1.Service{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      serviceName,
+			Namespace: namespace,
+			Labels: map[string]string{
+				"app.kubernetes.io/managed-by": "k8shell-provisioner",
+				"k8shell.io/component":         "headless-service",
+				"k8shell.io/subdomain":         subdomain,
+			},
+		},
+		Spec: corev1.ServiceSpec{
+			ClusterIP: "None",
+			Selector: map[string]string{
+				"k8shell.io/subdomain": subdomain,
+			},
+		},
+	}
+
+	_, err = w.client.GetKubeClient().CoreV1().Services(namespace).Create(ctx, service, metav1.CreateOptions{})
+	if err != nil {
+		return fmt.Errorf("failed to create headless service %s: %w", serviceName, err)
+	}
+
+	w.log.Info().Msgf("Created headless service %s for subdomain", serviceName)
+	return nil
 }
 
 // waitForPodRunning with quick failure detection

@@ -4,7 +4,10 @@ metadata:
   name: {{ .Values.__workspace__ }}
   namespace: {{ .Release.Namespace }} 
   labels:
-    {{- include "workspace.labels" . | nindent 4 }}  
+    {{- include "workspace.labels" . | nindent 4 }} 
+    {{- if and .Values.subdomain .Values.hostname }}
+    k8shell.io/subdomain: {{ .Values.subdomain }}
+    {{- end }}
 spec:
   {{ if .Values.__registry__.regcred }}
   imagePullSecrets:
@@ -13,6 +16,11 @@ spec:
   {{ if .Values.serviceAccount }}
   serviceAccountName: {{ .Values.serviceAccount }}
   {{ end }}
+  {{- if and .Values.subdomain .Values.hostname }}
+  hostname: {{ .Values.hostname }}
+  subdomain: {{ .Values.subdomain }}
+  {{- end }}
+
   initContainers:
     #### init container to initialize the workspace
     - name: init-base
