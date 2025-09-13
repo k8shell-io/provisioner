@@ -499,3 +499,28 @@ func (c *Client) GetWorkspaceStatus(ctx context.Context, name string) (*provMode
 
 	return &status, nil
 }
+
+// DeleteWorkspace deletes a specific workspace by name
+func (c *Client) DeleteWorkspace(ctx context.Context, name string) error {
+	req, err := http.NewRequestWithContext(ctx, "DELETE", c.baseURL+"/api/v1/workspaces/"+name, nil)
+	if err != nil {
+		return fmt.Errorf("failed to create request: %w", err)
+	}
+
+	req.Header.Set("Authorization", "Bearer "+c.apiKey)
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("failed to make request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusNoContent {
+		if resp.StatusCode == http.StatusNotFound {
+			return fmt.Errorf("%w: %s", provModels.ErrWorkspaceNotFound, name)
+		}
+		return c.handleErrorResponse(resp)
+	}
+
+	return nil
+}
