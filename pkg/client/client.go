@@ -20,7 +20,7 @@ import (
 // Config represents the client configuration
 type Config struct {
 	BaseURL string `json:"baseURL"`
-	APIKey  string `json:"apiKey"`
+	APIKey  string `json:"APIKey"`
 	Timeout int    `json:"timeout"`
 }
 
