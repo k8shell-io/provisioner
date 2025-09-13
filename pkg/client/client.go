@@ -19,9 +19,9 @@ import (
 
 // Config represents the client configuration
 type Config struct {
-	BaseURL string `json:"baseURL"`
-	APIKey  string `json:"APIKey"`
-	Timeout int    `json:"timeout"`
+	BaseURL string `yaml:"baseURL"`
+	APIKey  string `yaml:"APIKey"`
+	Timeout int    `yaml:"timeout"`
 }
 
 // Client represents the provisioner API client
