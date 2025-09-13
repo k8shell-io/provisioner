@@ -63,32 +63,55 @@ func (w *Workspace) Provision(ctx context.Context, opts *ProvisionOptions) (*pro
 	return w.provisionWithLock(ctx, opts)
 }
 
-// provisionWithLock provisions the workspace with a distributed lock
-func (w *Workspace) provisionWithLock(ctx context.Context, opts *ProvisionOptions) (*provModels.PodStatus, error) {
-	workspaceLock := NewWorkspaceLock(w.client.GetKubeClient(), w.client.TargetNamespace(), w.Name())
+// Lock acquires a distributed lock for the workspace
+func (w *Workspace) Lock(timeout time.Duration) error {
+	if w.workspaceLock != nil {
+		return nil
+	}
+	w.workspaceLock = NewWorkspaceLock(w.client.GetKubeClient(), w.client.TargetNamespace(), w.Name())
 
-	w.log.Info().Msgf("Acquiring lock for workspace %s provisioning", w.Name())
-	lockCtx, cancel := context.WithTimeout(ctx, time.Duration(opts.LockTimeout)*time.Second)
+	w.log.Debug().Msgf("Acquiring lock for workspace %s", w.Name())
+	lockCtx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
-	acquired, err := workspaceLock.Acquire(lockCtx)
+	acquired, err := w.workspaceLock.Acquire(lockCtx)
 	if err != nil {
-		return nil, fmt.Errorf("failed to acquire lock for workspace %s: %w", w.Name(), err)
+		return fmt.Errorf("failed to acquire lock for workspace %s: %w", w.Name(), err)
 	}
 
 	if !acquired {
-		return nil, fmt.Errorf("timeout acquiring lock for workspace %s after %d seconds", w.Name(), opts.LockTimeout)
+		return fmt.Errorf("timeout acquiring lock for workspace %s after %f seconds", w.Name(), timeout.Seconds())
 	}
 
+	return nil
+}
+
+// Unlock releases the distributed lock for the workspace
+func (w *Workspace) Unlock() error {
+	if w.workspaceLock == nil {
+		return nil
+	}
+	if releaseErr := w.workspaceLock.Release(context.Background()); releaseErr != nil {
+		w.log.Error().Err(releaseErr).Msgf("Failed to release lock for workspace %s", w.Name())
+	} else {
+		w.log.Debug().Msgf("Released lock for workspace %s", w.Name())
+	}
+	w.workspaceLock = nil
+	return nil
+}
+
+// provisionWithLock provisions the workspace with a distributed lock
+func (w *Workspace) provisionWithLock(ctx context.Context, opts *ProvisionOptions) (*provModels.PodStatus, error) {
+	if err := w.Lock(time.Duration(opts.LockTimeout) * time.Second); err != nil {
+		return nil, err
+	}
 	defer func() {
-		if releaseErr := workspaceLock.Release(context.Background()); releaseErr != nil {
+		if releaseErr := w.Unlock(); releaseErr != nil {
 			w.log.Error().Err(releaseErr).Msgf("Failed to release lock for workspace %s", w.Name())
-		} else {
-			w.log.Debug().Msgf("Released lock for workspace %s", w.Name())
 		}
 	}()
 
-	w.log.Info().Msgf("Acquired lock for workspace %s", w.Name())
+	w.log.Debug().Msgf("Acquired lock for workspace %s", w.Name())
 
 	exists, err := w.IsInstalled(ctx)
 	if err != nil {

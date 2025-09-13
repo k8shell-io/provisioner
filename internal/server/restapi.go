@@ -141,6 +141,7 @@ func (a *RESTApiService) initializeRouter() {
 		{
 			workspaces.GET("", a.GetWorkspaces)
 			workspaces.GET("/:name", a.GetWorkspace)
+			workspaces.DELETE("/:name", a.DeleteWorkspace)
 			workspaces.GET("/:name/status", a.GetWorkspaceStatus)
 			workspaces.POST("/template", a.TemplateWorkspace)
 			workspaces.POST("", a.ProvisionWorkspace)
@@ -741,5 +742,38 @@ func errToJSONError(c *gin.Context, err error) {
 
 	c.JSON(http.StatusInternalServerError, gin.H{
 		"error": fmt.Sprintf("%v", err),
+	})
+}
+
+func (a *RESTApiService) DeleteWorkspace(c *gin.Context) {
+	name := c.Param("name")
+	timeoutStr := c.Query("timeout")
+
+	var timeout int = 15
+	if timeoutStr != "" {
+		var err error
+		timeout, err = strconv.Atoi(timeoutStr)
+		if err != nil || timeout <= 0 {
+			c.JSON(http.StatusBadRequest, gin.H{
+				"error": "Invalid timeout value",
+			})
+			return
+		}
+	}
+
+	w, err := ws.NewWorkspaceFromHelmRelease(c.Request.Context(), name, a.server.helm, a.server.Identity)
+	if err != nil {
+		errToJSONError(c, err)
+		return
+	}
+
+	err = w.Uninstall(c.Request.Context(), time.Duration(timeout)*time.Second)
+	if err != nil {
+		errToJSONError(c, err)
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message": fmt.Sprintf("Workspace %s deleted successfully", name),
 	})
 }

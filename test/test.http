@@ -1,13 +1,16 @@
 
 ### Variables
-@token=4343afe34e324093253465464523342343242132112
+@token=6f16982b35ac2168f86c7978b7b42967528939b066598326139e0963510a
 @username=bruckins
 @blueprint=sql
 @workspacename=dev-bruckins
 
 ### Get All Workspaces
-
 GET http://localhost:9201/api/v1/workspaces
+Authorization: Bearer {{token}}
+
+### Delete Workspace
+DELETE http://localhost:9201/api/v1/workspaces/vitvatom-3aaeba5
 Authorization: Bearer {{token}}
 
 ### Get Single Workspace

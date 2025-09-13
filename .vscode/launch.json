@@ -17,8 +17,8 @@
                 "WORKSPACE_STORAGE_CLASS": "zfs-csi-k8shell-test",
                 //"TARGET_NAMESPACE": "workspaces-test", // k8shell-workspace
                 "TARGET_NAMESPACE": "k8shell-workspace",
-                //"IDENTITY_SERVICE_URL": "http://identity.k8shell-test:9090", 
-                "IDENTITY_SERVICE_URL": "http://10.42.3.57:9090",
+                "IDENTITY_SERVICE_URL": "http://identity.k8shell-test:9090",
+                //"IDENTITY_SERVICE_URL": "http://10.42.3.57:9090",
                 "HELM_DEBUG": "true",
                 "HELM_DEBUG_MANIFEST": "true",
             },

@@ -7,9 +7,11 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"time"
 
 	log "github.com/k8shell-io/common/logger"
 	"github.com/k8shell-io/common/models"
+	identity "github.com/k8shell-io/identity/pkg/client"
 	"github.com/k8shell-io/provisioner/internal/helm"
 	provModels "github.com/k8shell-io/provisioner/pkg/models"
 	"github.com/rs/zerolog"
@@ -22,10 +24,11 @@ import (
 
 // Workspace represents a workspace with Helm client
 type Workspace struct {
-	log       *zerolog.Logger
-	client    *helm.Client
-	blueprint *models.Blueprint
-	user      *models.User
+	log           *zerolog.Logger
+	client        *helm.Client
+	blueprint     *models.Blueprint
+	user          *models.User
+	workspaceLock *WorkspaceLock
 }
 
 // GetWorkspaceInfo retrieves information about workspaces
@@ -182,11 +185,73 @@ func NewWorkspace(blueprint *models.Blueprint, user *models.User, client *helm.C
 	}, nil
 }
 
+// NewWorkspaceFromHelmRelease creates a workspace instance from an existing Helm release
+func NewWorkspaceFromHelmRelease(ctx context.Context, name string, helmClient *helm.Client,
+	identityClient *identity.Client) (*Workspace, error) {
+
+	labels := map[string]string{
+		"app.kubernetes.io/name":     helm.WORKSPACE_CHART_NAME,
+		"app.kubernetes.io/instance": name,
+	}
+
+	selector := GetSelector(labels)
+	releases, err := helmClient.ListWithSelector(helmClient.TargetNamespace(), selector)
+	if err != nil {
+		if strings.Contains(err.Error(), "unable to parse") {
+			return nil, fmt.Errorf("failed to list releases: %w", provModels.ErrInvalidParameters)
+		}
+		return nil, fmt.Errorf("failed to list releases: %w", err)
+	}
+
+	if len(releases) == 0 {
+		return nil, fmt.Errorf("%w: %s", provModels.ErrWorkspaceNotFound, name)
+	}
+	if len(releases) > 1 {
+		return nil, fmt.Errorf("multiple releases found for workspace %s", name)
+	}
+
+	release := releases[0]
+	username := release.Labels["k8shell.io/username"]
+	blueprintName := release.Labels["k8shell.io/blueprint"]
+	workspaceName := release.Labels["app.kubernetes.io/instance"]
+
+	user, err := identityClient.GetUser(ctx, username)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get user %s: %w", username, err)
+	}
+
+	values := releases[0].Config
+	blueprint := &models.Blueprint{}
+	yamlBytes, err := yaml.Marshal(values)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal blueprint values: %w", err)
+	}
+	if err := yaml.Unmarshal(yamlBytes, blueprint); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal blueprint values: %w", err)
+	}
+	blueprint.Name = blueprintName
+
+	ws := &Workspace{
+		log:       log.NewLogger("workspace"),
+		client:    helmClient,
+		blueprint: blueprint,
+		user:      user,
+	}
+
+	if ws.Name() != workspaceName {
+		return nil, fmt.Errorf("workspace name mismatch: expected %s, got %s", ws.Name(), workspaceName)
+	}
+
+	return ws, nil
+}
+
 // Name returns the name of the workspace
 func (w *Workspace) Name() string {
-	hash := sha256.Sum256([]byte(w.blueprint.Name + w.user.Username))
+	blueprintName := strings.ToLower(w.blueprint.Name)
+	username := strings.ToLower(w.user.Username)
+	hash := sha256.Sum256([]byte(blueprintName + username))
 	hashStr := fmt.Sprintf("%x", hash)
-	return w.user.Username + "-" + hashStr[:7]
+	return username + "-" + hashStr[:7]
 }
 
 func (w *Workspace) Labels() map[string]string {
@@ -276,7 +341,7 @@ func (w *Workspace) GetPodStatus(ctx context.Context) (*provModels.PodStatus, er
 		if k8sErrors.IsNotFound(err) {
 			return nil, fmt.Errorf("%w: %s", provModels.ErrWorkspaceNotFound, w.Name())
 		}
-		return nil, fmt.Errorf("failed to get pod status %s: %w", w.Name(), err)
+		return nil, fmt.Errorf("failed to get workspace pod status %s: %w", w.Name(), err)
 	}
 	return &provModels.PodStatus{
 		Created: pod.CreationTimestamp.Time,
@@ -294,6 +359,22 @@ func (w *Workspace) IsInstalled(ctx context.Context) (bool, error) {
 		return false, err
 	}
 	return true, nil
+}
+
+func (w *Workspace) Uninstall(ctx context.Context, timeout time.Duration) error {
+	err := w.Lock(timeout)
+	if err != nil {
+		return fmt.Errorf("failed to acquire lock: %w", err)
+	}
+	defer func() {
+		if releaseErr := w.Unlock(); releaseErr != nil {
+			w.log.Error().Err(releaseErr).Msgf("Failed to release lock for workspace %s", w.Name())
+		}
+	}()
+	if err := w.client.Uninstall(w.Name(), int(timeout.Seconds())); err != nil {
+		return fmt.Errorf("failed to uninstall workspace: %w", err)
+	}
+	return nil
 }
 
 // ToMap converts any struct to a map[string]interface{} representation
