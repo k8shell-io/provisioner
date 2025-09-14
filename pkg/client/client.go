@@ -139,7 +139,6 @@ func (c *Client) handleErrorResponse(resp *http.Response) error {
 
 	var errResp ErrorResponse
 	if err := json.Unmarshal(body, &errResp); err != nil {
-		// If we can't parse the error response, return the raw body
 		return fmt.Errorf("API error (status %d): %s", resp.StatusCode, string(body))
 	}
 
@@ -515,7 +514,7 @@ func (c *Client) DeleteWorkspace(ctx context.Context, name string) error {
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusAccepted {
+	if resp.StatusCode >= 400 {
 		if resp.StatusCode == http.StatusNotFound {
 			return fmt.Errorf("%w: %s", provModels.ErrWorkspaceNotFound, name)
 		}
