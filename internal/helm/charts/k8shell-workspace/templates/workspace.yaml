@@ -41,8 +41,10 @@ spec:
       securityContext:
         runAsUser: 0
         runAsGroup: 0
+        {{- if len(.Values.capabilities) > 0 }}
         capabilities:
-          add: ["NET_ADMIN","NET_RAW"]
+          add: {{ toYaml .Values.capabilities | nindent 12 }}
+        {{- end }}
       command: ["/usr/local/bin/k8shelld"] 
       imagePullPolicy: {{ .Values.imagePullPolicy }}
       resizePolicy:
