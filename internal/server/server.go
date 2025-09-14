@@ -83,6 +83,14 @@ func NewServer(configFile string) (*Server, error) {
 func (s *Server) GetBlueprintScope(ctx context.Context, blueprintName string, user *models.User,
 	metadata *models.BlueprintMetadata) (*blueprint.BlueprintScope, error) {
 
+	if blueprintName == "" && metadata != nil {
+		blueprintName = metadata.Name
+	}
+
+	if blueprintName == "" {
+		return nil, fmt.Errorf("blueprint name is required to create scope")
+	}
+
 	var repoName = "noreponame"
 	var ownerName = "norepoowner"
 	var repoAddress = "noaddress"
@@ -98,15 +106,10 @@ func (s *Server) GetBlueprintScope(ctx context.Context, blueprintName string, us
 	s.log.Debug().Msgf("Creating blueprint scope for user: %s, repo: %s, owner: %s, address: %s",
 		user.Username, repoName, ownerName, repoAddress)
 
-	bpName := blueprintName
-	if bpName == "" {
-		bpName = "default"
-	}
-
 	scope := &blueprint.BlueprintScope{
 		User: user,
 		Metadata: &models.BlueprintMetadata{
-			Name:        bpName,
+			Name:        blueprintName,
 			RepoName:    repoName,
 			RepoOwner:   ownerName,
 			RepoAddress: repoAddress,

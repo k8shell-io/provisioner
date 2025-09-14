@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io/fs"
 	"path/filepath"
+	"sort"
 	"sync"
 	"time"
 
@@ -22,9 +23,10 @@ import (
 
 // RawBlueprint represents an unprocessed blueprint with CEL expressions intact.
 type RawBlueprint struct {
-	Name     string
-	Template string
-	Node     *yaml.Node
+	Name       string
+	Template   string
+	IsTemplate bool
+	Node       *yaml.Node
 }
 
 type BlueprintScope struct {
@@ -279,6 +281,33 @@ func (bm *BlueprintManager) ListBlueprintNames() []string {
 	return names
 }
 
+func (bm *BlueprintManager) GetDefaultUserBlueprint(user *models.User) (string, error) {
+	if user == nil {
+		return "", fmt.Errorf("user cannot be nil")
+	}
+
+	if len(user.Blueprints) == 0 {
+		return "", fmt.Errorf("no blueprints defined for user %s", user.Username)
+	}
+
+	bm.mu.RLock()
+	defer bm.mu.RUnlock()
+
+	blueprintNames := make([]string, 0, len(bm.rawBlueprints))
+	for name := range bm.rawBlueprints {
+		blueprintNames = append(blueprintNames, name)
+	}
+	sort.Strings(blueprintNames)
+
+	for _, bp := range blueprintNames {
+		if user.HasBlueprint(bp) && !bm.rawBlueprints[bp].IsTemplate {
+			return bp, nil
+		}
+	}
+
+	return "", fmt.Errorf("no accessible blueprints found for user %s", user.Username)
+}
+
 // GetAllBlueprints evaluates all blueprints with the given scope.
 func (bm *BlueprintManager) GetAllBlueprints(scope *BlueprintScope) (map[string]*models.Blueprint, error) {
 	bm.mu.RLock()
@@ -399,10 +428,16 @@ func (bm *BlueprintManager) extractSingleRawBlueprint(node *yaml.Node, _ string)
 		template = t
 	}
 
+	isTemplate := false
+	if t, ok := bpData["isTemplate"].(bool); ok {
+		isTemplate = t
+	}
+
 	bm.rawBlueprints[name] = &RawBlueprint{
-		Name:     name,
-		Template: template,
-		Node:     node,
+		Name:       name,
+		Template:   template,
+		IsTemplate: isTemplate,
+		Node:       node,
 	}
 
 	return nil
