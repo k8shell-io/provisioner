@@ -410,8 +410,23 @@ func (a *RESTApiService) GetWorkspaces(c *gin.Context) {
 	username := c.Query("username")
 	blueprint := c.Query("blueprint")
 
-	// TODO: check if the user is a valid user first in identity
-	// TODO: there could be inconsistencies, there could be workspaces of users that do not exist
+	user, err := a.server.Identity.GetUser(c.Request.Context(), username)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{
+			"error": fmt.Sprintf("Failed to get user: %v", err),
+		})
+		return
+	}
+
+	if blueprint == "" {
+		blueprint, err = a.server.bpManager.GetDefaultUserBlueprint(user)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{
+				"error": fmt.Sprintf("No blueprint specified in userstr and no default blueprint found for user: %v", err),
+			})
+			return
+		}
+	}
 
 	workspaces, err := ws.GetWorkspaceInfo(a.server.helm, "", username, blueprint)
 	if err != nil {
@@ -428,9 +443,6 @@ func (a *RESTApiService) GetWorkspaces(c *gin.Context) {
 // GetWorkspace handles the GET request for a specific workspace
 func (a *RESTApiService) GetWorkspace(c *gin.Context) {
 	name := c.Param("name")
-
-	// TODO: check if the user is a valid user first in identity
-	// TODO: there could be inconsistencies, there could be workspaces of users that do not exist
 
 	info, err := ws.GetWorkspaceInfo(a.server.helm, name, "", "")
 	if err != nil {
