@@ -17,6 +17,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -234,7 +235,30 @@ func (a *RESTApiService) GetBlueprint(c *gin.Context) {
 		return
 	}
 
-	scope, errx := a.server.GetBlueprintScope(c.Request.Context(), "", username, nil)
+	user, err := a.server.Identity.GetUser(c.Request.Context(), username)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{
+			"error": fmt.Sprintf("Failed to get user: %v", err),
+		})
+		return
+	}
+
+	if len(user.Blueprints) == 0 {
+		c.JSON(http.StatusForbidden, gin.H{
+			"error": "No blueprints defined for user",
+		})
+		return
+	}
+
+	if !slices.Contains(user.Blueprints, "*") && !slices.Contains(user.Blueprints, name) {
+		c.JSON(http.StatusForbidden, gin.H{
+			"error": fmt.Sprintf("User %s does not have access to blueprint %s",
+				user.Username, name),
+		})
+		return
+	}
+
+	scope, errx := a.server.GetBlueprintScope(c.Request.Context(), "", user, nil)
 	if errx != nil {
 		errToJSONError(c, errx)
 		return
@@ -274,6 +298,21 @@ func (a *RESTApiService) ComposeBlueprint(c *gin.Context) {
 		return
 	}
 
+	user, err := a.server.Identity.GetUser(c.Request.Context(), username)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{
+			"error": fmt.Sprintf("Failed to get user: %v", err),
+		})
+		return
+	}
+
+	if len(user.Blueprints) == 0 {
+		c.JSON(http.StatusForbidden, gin.H{
+			"error": "No blueprints defined for user",
+		})
+		return
+	}
+
 	body, err := io.ReadAll(c.Request.Body)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
@@ -301,8 +340,16 @@ func (a *RESTApiService) ComposeBlueprint(c *gin.Context) {
 		return
 	}
 
+	if !slices.Contains(user.Blueprints, "*") && !slices.Contains(user.Blueprints, customBlueprint.Template) {
+		c.JSON(http.StatusForbidden, gin.H{
+			"error": fmt.Sprintf("User %s does not have access to blueprint's template %s",
+				user.Username, customBlueprint.Template),
+		})
+		return
+	}
+
 	// Get the user's blueprint scope
-	scope, errx := a.server.GetBlueprintScope(c.Request.Context(), "", username, nil)
+	scope, errx := a.server.GetBlueprintScope(c.Request.Context(), "", user, nil)
 	if errx != nil {
 		errToJSONError(c, errx)
 		return
@@ -350,13 +397,28 @@ func (a *RESTApiService) resolveBlueprintFromRequest(c *gin.Context,
 			return nil, fmt.Errorf("blueprint validation failed: %s", strings.Join(validationErrors, "; "))
 		}
 
+		if !slices.Contains(scope.User.Blueprints, "*") && !slices.Contains(scope.User.Blueprints, customBlueprint.Template) {
+			return nil, fmt.Errorf("user %s does not have access to custom blueprint's template %s",
+				scope.User.Username, customBlueprint.Template)
+		}
+
 		return a.server.bpManager.ComposeWithScope(customBlueprint, scope)
 	} else {
 		if blueprintName == "" {
 			return nil, fmt.Errorf("blueprint query parameter is required when no payload is provided")
 		}
 
-		return a.server.bpManager.GetBlueprint(blueprintName, scope)
+		bp, err := a.server.bpManager.GetBlueprint(blueprintName, scope)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get blueprint: %w", err)
+		}
+
+		if !slices.Contains(scope.User.Blueprints, "*") && !slices.Contains(scope.User.Blueprints, bp.Name) {
+			return nil, fmt.Errorf("user %s does not have access to blueprint's template %s",
+				scope.User.Username, bp.Name)
+		}
+
+		return bp, nil
 	}
 }
 
@@ -439,7 +501,22 @@ func (a *RESTApiService) TemplateWorkspace(c *gin.Context) {
 		return
 	}
 
-	scope, errx := a.server.GetBlueprintScope(c.Request.Context(), "", username, nil)
+	user, err := a.server.Identity.GetUser(c.Request.Context(), username)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{
+			"error": fmt.Sprintf("Failed to get user: %v", err),
+		})
+		return
+	}
+
+	if len(user.Blueprints) == 0 {
+		c.JSON(http.StatusForbidden, gin.H{
+			"error": "No blueprints defined for user",
+		})
+		return
+	}
+
+	scope, errx := a.server.GetBlueprintScope(c.Request.Context(), "", user, nil)
 	if errx != nil {
 		errToJSONError(c, errx)
 		return
@@ -461,6 +538,10 @@ func (a *RESTApiService) TemplateWorkspace(c *gin.Context) {
 			c.JSON(http.StatusUnsupportedMediaType, gin.H{
 				"error": err.Error(),
 			})
+		} else if strings.Contains(err.Error(), "does not have access") {
+			c.JSON(http.StatusForbidden, gin.H{
+				"error": err.Error(),
+			})
 		} else {
 			c.JSON(http.StatusInternalServerError, gin.H{
 				"error": err.Error(),
@@ -469,7 +550,7 @@ func (a *RESTApiService) TemplateWorkspace(c *gin.Context) {
 		return
 	}
 
-	ws, err := ws.NewWorkspace(blueprint, scope.User, a.server.helm)
+	ws, err := ws.NewWorkspace(blueprint, user, a.server.helm)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"error": fmt.Sprintf("Failed to create workspace: %v", err),
@@ -524,8 +605,30 @@ func (a *RESTApiService) ProvisionWorkspace(c *gin.Context) {
 		return
 	}
 
+	user, err := a.server.Identity.GetUser(c.Request.Context(), userstr.Username)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{
+			"error": fmt.Sprintf("Failed to get user: %v", err),
+		})
+		return
+	}
+
+	if len(user.Blueprints) == 0 {
+		c.JSON(http.StatusForbidden, gin.H{
+			"error": "No blueprints defined for user",
+		})
+		return
+	}
+
+	bpName := userstr.Blueprint
+	if bpName == "" {
+		bpName = user.Blueprints[0]
+		if bpName == "*" {
+			bpName = a.server.bpManager.ListBlueprintNames()[0]
+		}
+	}
+
 	var blueprintObj *models.Blueprint
-	var user *models.User
 
 	if userstr.HasCustomBlueprint {
 		customBlueprint, err := a.server.Identity.GetBlueprintByUserStr(c.Request.Context(), userstrParam)
@@ -551,7 +654,15 @@ func (a *RESTApiService) ProvisionWorkspace(c *gin.Context) {
 			return
 		}
 
-		scope, errx := a.server.GetBlueprintScope(c.Request.Context(), "", userstr.Username, &customBlueprint.Metadata)
+		if !slices.Contains(user.Blueprints, "*") && !slices.Contains(user.Blueprints, customBlueprint.Template) {
+			c.JSON(http.StatusForbidden, gin.H{
+				"error": fmt.Sprintf("User %s does not have access to custom blueprint's template %s",
+					userstr.Username, customBlueprint.Template),
+			})
+			return
+		}
+
+		scope, errx := a.server.GetBlueprintScope(c.Request.Context(), "", user, &customBlueprint.Metadata)
 		if errx != nil {
 			errToJSONError(c, errx)
 			return
@@ -567,9 +678,16 @@ func (a *RESTApiService) ProvisionWorkspace(c *gin.Context) {
 
 		user = scope.User
 	} else {
-		scope, errx := a.server.GetBlueprintScope(c.Request.Context(), userstr.Blueprint, userstr.Username, nil)
+		scope, errx := a.server.GetBlueprintScope(c.Request.Context(), userstr.Blueprint, user, nil)
 		if errx != nil {
 			errToJSONError(c, errx)
+			return
+		}
+
+		if !slices.Contains(user.Blueprints, "*") && !slices.Contains(user.Blueprints, bpName) {
+			c.JSON(http.StatusForbidden, gin.H{
+				"error": fmt.Sprintf("User %s does not have access to blueprint %s", userstr.Username, bpName),
+			})
 			return
 		}
 
