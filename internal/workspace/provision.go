@@ -134,7 +134,7 @@ func (w *Workspace) provisionWithLock(ctx context.Context, opts *ProvisionOption
 		}
 
 		w.log.Debug().Msgf("Workspace %s still not running after acquiring lock, proceeding with reinstall", w.Name())
-		if err := w.client.Uninstall(w.Name(), int(opts.Timeout)); err != nil {
+		if err := w.client.Uninstall(w.Name(), int(opts.Timeout), true); err != nil {
 			return nil, fmt.Errorf("failed to delete workspace: %w", err)
 		}
 	}

@@ -361,7 +361,7 @@ func (w *Workspace) IsInstalled(ctx context.Context) (bool, error) {
 	return true, nil
 }
 
-func (w *Workspace) Uninstall(ctx context.Context, timeout time.Duration) error {
+func (w *Workspace) Uninstall(ctx context.Context, timeout time.Duration, wait bool) error {
 	err := w.Lock(timeout)
 	if err != nil {
 		return fmt.Errorf("failed to acquire lock: %w", err)
@@ -371,7 +371,7 @@ func (w *Workspace) Uninstall(ctx context.Context, timeout time.Duration) error 
 			w.log.Error().Err(releaseErr).Msgf("Failed to release lock for workspace %s", w.Name())
 		}
 	}()
-	if err := w.client.Uninstall(w.Name(), int(timeout.Seconds())); err != nil {
+	if err := w.client.Uninstall(w.Name(), int(timeout.Seconds()), wait); err != nil {
 		return fmt.Errorf("failed to uninstall workspace: %w", err)
 	}
 	return nil
@@ -525,4 +525,5 @@ func getNamespace() string {
 		return ""
 	}
 	return string(data)
+	// return "k8shell-test"
 }

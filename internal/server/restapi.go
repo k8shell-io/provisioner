@@ -748,6 +748,7 @@ func errToJSONError(c *gin.Context, err error) {
 func (a *RESTApiService) DeleteWorkspace(c *gin.Context) {
 	name := c.Param("name")
 	timeoutStr := c.Query("timeout")
+	waitStr := c.Query("wait")
 
 	var timeout int = 15
 	if timeoutStr != "" {
@@ -761,19 +762,31 @@ func (a *RESTApiService) DeleteWorkspace(c *gin.Context) {
 		}
 	}
 
+	wait := false
+	if waitStr != "" {
+		var err error
+		wait, err = strconv.ParseBool(waitStr)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{
+				"error": "Invalid wait value, must be true or false",
+			})
+			return
+		}
+	}
+
 	w, err := ws.NewWorkspaceFromHelmRelease(c.Request.Context(), name, a.server.helm, a.server.Identity)
 	if err != nil {
 		errToJSONError(c, err)
 		return
 	}
 
-	err = w.Uninstall(c.Request.Context(), time.Duration(timeout)*time.Second)
+	err = w.Uninstall(c.Request.Context(), time.Duration(timeout)*time.Second, wait)
 	if err != nil {
 		errToJSONError(c, err)
 		return
 	}
 
 	c.JSON(http.StatusOK, gin.H{
-		"message": fmt.Sprintf("Workspace %s deleted successfully", name),
+		"message": fmt.Sprintf("Request to delete the workspace %s was submitted", name),
 	})
 }
