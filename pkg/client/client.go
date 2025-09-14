@@ -515,7 +515,7 @@ func (c *Client) DeleteWorkspace(ctx context.Context, name string) error {
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusNoContent {
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusAccepted {
 		if resp.StatusCode == http.StatusNotFound {
 			return fmt.Errorf("%w: %s", provModels.ErrWorkspaceNotFound, name)
 		}
