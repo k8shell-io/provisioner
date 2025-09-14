@@ -465,10 +465,16 @@ func (bm *BlueprintManager) extractMultipleRawBlueprints(node *yaml.Node, path s
 			template = t
 		}
 
+		isTemplate := false
+		if t, ok := item["isTemplate"].(bool); ok {
+			isTemplate = t
+		}
+
 		bm.rawBlueprints[name] = &RawBlueprint{
-			Name:     name,
-			Template: template,
-			Node:     childNode,
+			Name:       name,
+			Template:   template,
+			IsTemplate: isTemplate,
+			Node:       childNode,
 		}
 	}
 

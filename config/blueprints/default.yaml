@@ -1,6 +1,7 @@
 blueprints:
   - name: default
     shell: /bin/bash
+    isTemplate: true
     sudo: false
 
     image: <image:tag>
