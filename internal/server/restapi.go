@@ -678,7 +678,7 @@ func (a *RESTApiService) ProvisionWorkspace(c *gin.Context) {
 
 		user = scope.User
 	} else {
-		scope, errx := a.server.GetBlueprintScope(c.Request.Context(), userstr.Blueprint, user, nil)
+		scope, errx := a.server.GetBlueprintScope(c.Request.Context(), bpName, user, nil)
 		if errx != nil {
 			errToJSONError(c, errx)
 			return
@@ -691,7 +691,7 @@ func (a *RESTApiService) ProvisionWorkspace(c *gin.Context) {
 			return
 		}
 
-		blueprintObj, err = a.server.bpManager.GetBlueprint(userstr.Blueprint, scope)
+		blueprintObj, err = a.server.bpManager.GetBlueprint(bpName, scope)
 		if err != nil {
 			c.JSON(http.StatusNotFound, gin.H{
 				"error": fmt.Sprintf("Blueprint not found: %s", userstr.Blueprint),
