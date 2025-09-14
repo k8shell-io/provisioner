@@ -786,7 +786,7 @@ func (a *RESTApiService) DeleteWorkspace(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{
+	c.JSON(http.StatusAccepted, gin.H{
 		"message": fmt.Sprintf("Request to delete the workspace %s was submitted", name),
 	})
 }
