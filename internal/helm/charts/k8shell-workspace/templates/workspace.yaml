@@ -41,7 +41,7 @@ spec:
       securityContext:
         runAsUser: 0
         runAsGroup: 0
-        {{- if len(.Values.capabilities) > 0 }}
+        {{- if .Values.capabilities }}
         capabilities:
           add: {{ toYaml .Values.capabilities | nindent 12 }}
         {{- end }}
