@@ -119,6 +119,18 @@ func (w *Watcher) watchLoop() {
 			if !ok {
 				return
 			}
+
+			base := filepath.Base(event.Name)
+
+			// Special-case the ConfigMap flip: ..data symlink changes mean new content.
+			if base == "..data" && (event.Op&(fsnotify.Rename|fsnotify.Create)) != 0 {
+				w.log.Debug().Msg("Detected ..data symlink flip; scheduling reload")
+				// rescan watches if we add/remove subdirs dynamically.
+				// w.scheduleReinit() // only if we need to rebuild watches
+				w.scheduleReload()
+				continue
+			}
+
 			if event.Op&fsnotify.Chmod == fsnotify.Chmod || isKubeShadow(event.Name) {
 				continue
 			}
