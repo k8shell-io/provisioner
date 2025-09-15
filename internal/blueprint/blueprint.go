@@ -12,7 +12,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/fsnotify/fsnotify"
 	"github.com/k8shell-io/common/config"
 	log "github.com/k8shell-io/common/logger"
 	"github.com/k8shell-io/common/models"
@@ -67,13 +66,8 @@ type BlueprintManager struct {
 	knownFields   bool                     // Whether to allow unknown fields in YAML decoding
 	strategies    MergeStrategies          // Custom strategies for merging lists in blueprints
 	processor     *config.Processor        // YAML processor for parsing and validating blueprints
-	watcher       *fsnotify.Watcher        // File system watcher for monitoring blueprint directory changes
-	watchDir      string                   // Directory to watch for blueprint changes
-	watchEnabled  bool                     // Whether file watching is enabled
-	mu            sync.RWMutex             // Mutex for synchronizing access to blueprints
-	reloadTimer   *time.Timer              // Timer for debouncing reloads after file changes
-	reloadDelay   time.Duration            // Delay before reloading blueprints after file changes
-	stopChan      chan struct{}            // Channel to signal stopping the watcher
+	watcher       *Watcher                 // the file watcher
+	mu            sync.RWMutex             // Mutex for thread-safe access to rawBlueprints
 }
 
 // TestScope creates a minimal BlueprintScope for testing purposes.
@@ -114,7 +108,7 @@ func NewBlueprintManager(opts LoadOptions) (*BlueprintManager, error) {
 		opts.Strategies = MergeStrategies{}
 	}
 
-	manager := &BlueprintManager{
+	bm := &BlueprintManager{
 		log:           log.NewLogger("blueprint"),
 		rawBlueprints: make(map[string]*RawBlueprint),
 		knownFields:   true,
@@ -123,25 +117,33 @@ func NewBlueprintManager(opts LoadOptions) (*BlueprintManager, error) {
 			EnableEnvVarExpansion: false,
 			EnableFileTag:         true,
 		}),
-		watchDir:     opts.Dir,
-		watchEnabled: opts.EnableWatch,
-		reloadDelay:  500 * time.Millisecond,
-		stopChan:     make(chan struct{}),
-	}
-
-	if err := manager.loadAndValidateBlueprints(); err != nil {
-		return nil, fmt.Errorf("validation failed: %w", err)
+		mu: sync.RWMutex{},
 	}
 
 	if opts.EnableWatch {
-		if err := manager.setupWatcher(); err != nil {
+		bm.watcher = &Watcher{
+			watchDir:    opts.Dir,
+			reloadDelay: 500 * time.Millisecond,
+			log:         log.NewLogger("watcher"),
+			stopChan:    make(chan struct{}),
+			onReload: func() error {
+				return bm.loadAndValidateBlueprints()
+			},
+		}
+
+		if err := bm.loadAndValidateBlueprints(); err != nil {
+			return nil, fmt.Errorf("initial load failed: %w", err)
+		}
+
+		err := bm.watcher.Setup()
+		if err != nil {
 			return nil, fmt.Errorf("failed to setup file watcher: %w", err)
 		}
 	}
 
-	manager.log.Info().Msgf("Loaded %d blueprints from %s, watch enabled: %v", len(manager.rawBlueprints),
-		opts.Dir, manager.watchEnabled)
-	return manager, nil
+	bm.log.Info().Msgf("Loaded %d blueprints from %s, watch enabled: %v", len(bm.rawBlueprints),
+		opts.Dir, bm.watcher != nil)
+	return bm, nil
 }
 
 // loadAndValidateBlueprints loads and validates all blueprints atomically
@@ -162,7 +164,7 @@ func (bm *BlueprintManager) loadAndValidateBlueprints() (err error) {
 		}
 	}()
 
-	if err = bm.loadRawBlueprints(bm.watchDir); err != nil {
+	if err = bm.loadRawBlueprints(bm.watcher.watchDir); err != nil {
 		return fmt.Errorf("failed to load blueprints: %w", err)
 	}
 
