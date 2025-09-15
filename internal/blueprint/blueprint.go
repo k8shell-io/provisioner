@@ -121,15 +121,9 @@ func NewBlueprintManager(opts LoadOptions) (*BlueprintManager, error) {
 	}
 
 	if opts.EnableWatch {
-		bm.watcher = &Watcher{
-			watchDir:    opts.Dir,
-			reloadDelay: 500 * time.Millisecond,
-			log:         log.NewLogger("watcher"),
-			stopChan:    make(chan struct{}),
-			onReload: func() error {
-				return bm.loadAndValidateBlueprints()
-			},
-		}
+		bm.watcher = NewWatcher(opts.Dir, 500*time.Millisecond, func() error {
+			return bm.loadAndValidateBlueprints()
+		})
 
 		if err := bm.loadAndValidateBlueprints(); err != nil {
 			return nil, fmt.Errorf("initial load failed: %w", err)

@@ -4,30 +4,48 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/fsnotify/fsnotify"
+	log "github.com/k8shell-io/common/logger"
 	"github.com/rs/zerolog"
 )
 
+// Watcher watches a directory tree for YAML changes and calls onReload() debounced.
 type Watcher struct {
-	watcher     *fsnotify.Watcher
-	watchDir    string
-	log         *zerolog.Logger
-	stopChan    chan struct{}
-	reloadTimer *time.Timer
-	reloadDelay time.Duration
+	watcher      *fsnotify.Watcher
+	watchDir     string
+	log          *zerolog.Logger
+	stopChan     chan struct{}
+	reloadTimer  *time.Timer
+	reloadDelay  time.Duration
+	watchEnabled bool
 
 	mu          sync.Mutex
-	watchedDirs map[string]struct{} // track dirs with active watches
-	reinitOnce  bool                // guard to avoid overlapping reinit
+	watchedDirs map[string]struct{}
+	reinitOnce  bool
 
-	// Callbacks into your blueprint manager
 	onReload func() error
 }
 
+// NewWatcher constructs a watcher. Call w.Setup() to start.
+func NewWatcher(watchDir string, reloadDelay time.Duration, onReload func() error) *Watcher {
+	return &Watcher{
+		log:          log.NewLogger("watcher"),
+		watchDir:     watchDir,
+		reloadDelay:  reloadDelay,
+		watchEnabled: true,
+		onReload:     onReload,
+	}
+}
+
+// Setup initializes fsnotify and starts the event loop.
 func (w *Watcher) Setup() error {
+	if w.stopChan == nil {
+		w.stopChan = make(chan struct{})
+	}
 	fsW, err := fsnotify.NewWatcher()
 	if err != nil {
 		return err
@@ -45,6 +63,9 @@ func (w *Watcher) Setup() error {
 }
 
 func (w *Watcher) addWatch(path string) {
+	if isKubeShadow(path) {
+		return
+	}
 	if _, ok := w.watchedDirs[path]; ok {
 		return
 	}
@@ -61,7 +82,7 @@ func (w *Watcher) removeWatch(path string) {
 		return
 	}
 	if err := w.watcher.Remove(path); err != nil {
-		w.log.Debug().Err(err).Msgf("Remove watch failed: %s", path)
+		w.log.Debug().Err(err).Msgf("Remove watch benign race: %s", path)
 	}
 	delete(w.watchedDirs, path)
 	w.log.Debug().Msgf("Unwatched: %s", path)
@@ -75,6 +96,12 @@ func (w *Watcher) addInitialWatches() error {
 	return filepath.WalkDir(w.watchDir, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			w.log.Warn().Err(err).Msgf("Error accessing %s", path)
+			return nil
+		}
+		if isKubeShadow(path) {
+			if d.IsDir() {
+				return filepath.SkipDir
+			}
 			return nil
 		}
 		if !d.IsDir() || path == w.watchDir {
@@ -92,6 +119,10 @@ func (w *Watcher) watchLoop() {
 			if !ok {
 				return
 			}
+			if event.Op&fsnotify.Chmod == fsnotify.Chmod || isKubeShadow(event.Name) {
+				continue
+			}
+
 			w.log.Debug().Msgf("File event: %s %s", event.Op, event.Name)
 
 			if (event.Op&(fsnotify.Remove|fsnotify.Rename) != 0) && event.Name == w.watchDir {
@@ -101,13 +132,14 @@ func (w *Watcher) watchLoop() {
 			}
 
 			if event.Op&fsnotify.Create == fsnotify.Create {
-				if info, err := os.Stat(event.Name); err == nil && info.IsDir() {
+				if info, err := os.Stat(event.Name); err == nil && info.IsDir() && !isKubeShadow(event.Name) {
 					w.mu.Lock()
 					w.addWatch(event.Name)
 					w.mu.Unlock()
 				}
 			}
-			if event.Op&(fsnotify.Remove|fsnotify.Rename) != 0 {
+
+			if event.Op&(fsnotify.Remove|fsnotify.Rename) != 0 && !isKubeShadow(event.Name) {
 				w.mu.Lock()
 				w.removeWatch(event.Name)
 				w.mu.Unlock()
@@ -181,7 +213,9 @@ func (w *Watcher) scheduleReload() {
 }
 
 func (w *Watcher) Close() error {
-	close(w.stopChan)
+	if w.stopChan != nil {
+		close(w.stopChan)
+	}
 	w.mu.Lock()
 	if w.reloadTimer != nil {
 		w.reloadTimer.Stop()
@@ -190,9 +224,15 @@ func (w *Watcher) Close() error {
 	w.watcher = nil
 	w.watchedDirs = nil
 	w.mu.Unlock()
+
 	if fw != nil {
 		return fw.Close()
 	}
 	w.log.Info().Msg("Watcher closed")
 	return nil
+}
+
+func isKubeShadow(path string) bool {
+	base := filepath.Base(path)
+	return strings.HasPrefix(base, "..")
 }
