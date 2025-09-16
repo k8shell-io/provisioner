@@ -154,7 +154,7 @@ func (w *Workspace) doInstallation(ctx context.Context, opts *ProvisionOptions) 
 	}
 
 	startTime := time.Now()
-	session, err := w.identify.CreateSSHSession(ctx, "system", w.Name(), "nota", 1, "")
+	session, err := w.identify.CreateSSHSession(ctx, "system", w.Name(), "nota", 1, "10.0.0.1")
 	if err != nil {
 		w.log.Error().Err(err).Msg("Failed to create SSH session to store provisioning information")
 	}
