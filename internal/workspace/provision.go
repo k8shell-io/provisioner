@@ -142,6 +142,7 @@ func (w *Workspace) provisionWithLock(ctx context.Context, opts *ProvisionOption
 	return w.doInstallation(ctx, opts)
 }
 
+// doInstallation performs the actual installation of the workspace
 func (w *Workspace) doInstallation(ctx context.Context, opts *ProvisionOptions) (*provModels.PodStatus, error) {
 	values, err := w.Values()
 	if err != nil {
@@ -153,6 +154,24 @@ func (w *Workspace) doInstallation(ctx context.Context, opts *ProvisionOptions) 
 	}
 
 	startTime := time.Now()
+	session, err := w.identify.CreateSSHSession(ctx, "system", w.Name(), "", 0, "")
+	if err != nil {
+		w.log.Error().Err(err).Msg("Failed to create SSH session to store provisioning information")
+	}
+
+	defer func() {
+		if session != nil {
+			if err := w.identify.UpdateSSHSession(ctx, "system", session.SessionID, 0, 0, "",
+				float32(time.Since(startTime).Seconds()), []string{}); err != nil {
+				w.log.Error().Err(err).Msg("Failed to close SSH session after provisioning")
+			}
+			err = w.identify.EndSSHSession(ctx, "system", session.SessionID)
+			if err != nil {
+				w.log.Error().Err(err).Msg("Failed to end SSH session after provisioning")
+			}
+		}
+	}()
+
 	err = w.client.Install(ctx, helm.WORKSPACE_CHART_NAME, helm.InstallOptions{
 		ReleaseName:     w.Name(),
 		Values:          values,

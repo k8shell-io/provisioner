@@ -26,6 +26,7 @@ import (
 type Workspace struct {
 	log           *zerolog.Logger
 	client        *helm.Client
+	identify      *identity.Client
 	blueprint     *models.Blueprint
 	user          *models.User
 	workspaceLock *WorkspaceLock
@@ -176,10 +177,12 @@ func GetSelector(labels map[string]string) string {
 // *** Workspace methods
 
 // NewWorkspace creates a new workspace with the specified Helm chart
-func NewWorkspace(blueprint *models.Blueprint, user *models.User, client *helm.Client) (*Workspace, error) {
+func NewWorkspace(blueprint *models.Blueprint, user *models.User, helmClient *helm.Client,
+	identityClient *identity.Client) (*Workspace, error) {
 	return &Workspace{
 		log:       log.NewLogger("workspace"),
-		client:    client,
+		client:    helmClient,
+		identify:  identityClient,
 		blueprint: blueprint,
 		user:      user,
 	}, nil
@@ -234,6 +237,7 @@ func NewWorkspaceFromHelmRelease(ctx context.Context, name string, helmClient *h
 	ws := &Workspace{
 		log:       log.NewLogger("workspace"),
 		client:    helmClient,
+		identify:  identityClient,
 		blueprint: blueprint,
 		user:      user,
 	}

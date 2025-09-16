@@ -536,7 +536,7 @@ func (a *RESTApiService) TemplateWorkspace(c *gin.Context) {
 		return
 	}
 
-	ws, err := ws.NewWorkspace(blueprint, user, a.server.helm)
+	ws, err := ws.NewWorkspace(blueprint, user, a.server.helm, a.server.Identity)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"error": fmt.Sprintf("Failed to create workspace: %v", err),
@@ -681,7 +681,7 @@ func (a *RESTApiService) ProvisionWorkspace(c *gin.Context) {
 		}
 	}
 
-	workspace, err := ws.NewWorkspace(blueprintObj, user, a.server.helm)
+	workspace, err := ws.NewWorkspace(blueprintObj, user, a.server.helm, a.server.Identity)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"error": fmt.Sprintf("Failed to create workspace: %v", err),
