@@ -332,7 +332,7 @@ func (a *RESTApiService) ComposeBlueprint(c *gin.Context) {
 	}
 
 	// Get the user's blueprint scope
-	scope, errx := a.server.GetBlueprintScope(c.Request.Context(), "", user, nil)
+	scope, errx := a.server.GetBlueprintScope(c.Request.Context(), "noname", user, nil)
 	if errx != nil {
 		errToJSONError(c, errx)
 		return

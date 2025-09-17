@@ -15,7 +15,7 @@
                 "SECRET_FILES": "/opt/shared/provisioner/secrets",
                 "WORKSPACE_REGISTRY": "fitcr.ksi.in.fit.cvut.cz",
                 "WORKSPACE_STORAGE_CLASS": "zfs-csi-k8shell-test",
-                //"TARGET_NAMESPACE": "workspaces-test", // k8shell-workspace
+                // "TARGET_NAMESPACE": "workspaces-test", // k8shell-workspace
                 "TARGET_NAMESPACE": "workspaces-test",
                 "IDENTITY_SERVICE_URL": "http://identity.k8shell-test:9090",
                 //"IDENTITY_SERVICE_URL": "http://10.42.3.57:9090",

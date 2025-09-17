@@ -71,11 +71,11 @@ func NewServer(configFile string) (*Server, error) {
 		return nil, fmt.Errorf("failed to create Helm client: %w", err)
 	}
 
-	server.log.Info().Msgf("Ensuring workspace base, namespace %s", server.config.TargetNamespace)
-	err = server.helm.EnsureBase(context.Background())
-	if err != nil {
-		return nil, fmt.Errorf("failed to ensure base namespace: %w", err)
-	}
+	// server.log.Info().Msgf("Ensuring workspace base, namespace %s", server.config.TargetNamespace)
+	// err = server.helm.EnsureBase(context.Background())
+	// if err != nil {
+	// 	return nil, fmt.Errorf("failed to ensure base namespace: %w", err)
+	// }
 
 	return server, nil
 }

@@ -25,3 +25,27 @@ Authorization: Bearer {{token}}
 ### Provision Workspace
 POST http://localhost:9201/api/v1/workspaces?stream=true&username={{username}}&blueprint={{blueprint}}
 Authorization: Bearer {{token}}
+
+### Compose blueprint
+POST http://localhost:9201/api/v1/blueprints/compose?username=vitvatom
+Authorization: Bearer {{token}}
+Content-Type: text/yaml
+
+blueprint:
+  template: development
+  image: workspaces/dev:1.10
+  shell: /bin/zsh
+  sudo: true
+  network:
+    networkPolicy: system
+  resources:
+    cpu: 8
+    memory: 8Gi
+
+  initScripts:
+    - init_repo@&: |
+        go env -w GOPRIVATE=github.com/k8shell-io/*
+        cd $HOME/provisioner
+        GOPATH="$HOME/go" go mod tidy
+
+

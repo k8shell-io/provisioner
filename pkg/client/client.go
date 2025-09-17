@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/gin-gonic/gin"
 	"github.com/k8shell-io/common/models"
 	provModels "github.com/k8shell-io/provisioner/pkg/models"
 )
@@ -72,6 +73,45 @@ func NewClient(config Config) *Client {
 			Timeout: time.Duration(config.Timeout) * time.Second,
 		},
 	}
+}
+
+// ForwardRequest forwards a HTTP request to the provisioner API
+func (c *Client) ForwardRequest(cg *gin.Context, url string) {
+	downstreamURL := c.baseURL + url
+
+	req, err := http.NewRequest(cg.Request.Method, downstreamURL, cg.Request.Body)
+	if err != nil {
+		cg.JSON(http.StatusInternalServerError, gin.H{"msg": "Failed to create forward request"})
+		cg.Abort()
+		return
+	}
+
+	for k, v := range cg.Request.Header {
+		if strings.ToLower(k) == "authorization" {
+			continue
+		}
+		for _, vv := range v {
+			req.Header.Add(k, vv)
+		}
+	}
+	req.Header.Set("Authorization", "Bearer "+c.apiKey)
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		cg.JSON(http.StatusBadGateway, gin.H{"msg": "Forward request failed"})
+		cg.Abort()
+		return
+	}
+	defer resp.Body.Close()
+
+	for k, v := range resp.Header {
+		for _, vv := range v {
+			cg.Writer.Header().Add(k, vv)
+		}
+	}
+	cg.Status(resp.StatusCode)
+	io.Copy(cg.Writer, resp.Body)
+	cg.Abort()
 }
 
 // makeRequest makes an HTTP request to the API
