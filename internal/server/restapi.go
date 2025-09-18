@@ -277,7 +277,7 @@ func (a *RESTApiService) GetRawBlueprint(c *gin.Context) {
 	c.JSON(http.StatusOK, rawBp)
 }
 
-// ComposeBlueprint handles the POST request to compose a blueprint
+// ComposeBlueprint handles the POST request to compose a blueprint using a custom blueprint YAML
 func (a *RESTApiService) ComposeBlueprint(c *gin.Context) {
 	contentType := c.GetHeader("Content-Type")
 	username := c.Query("username")
