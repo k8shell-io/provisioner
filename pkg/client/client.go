@@ -7,29 +7,18 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"net/http"
 	"net/url"
 	"strconv"
 	"strings"
-	"time"
 
-	"github.com/gin-gonic/gin"
+	"github.com/k8shell-io/common/apiclient"
 	"github.com/k8shell-io/common/models"
 	provModels "github.com/k8shell-io/provisioner/pkg/models"
 )
 
-// Config represents the client configuration
-type Config struct {
-	BaseURL string `yaml:"baseURL"`
-	APIKey  string `yaml:"APIKey"`
-	Timeout int    `yaml:"timeout"`
-}
-
 // Client represents the provisioner API client
 type Client struct {
-	baseURL    string
-	apiKey     string
-	httpClient *http.Client
+	*apiclient.Client
 }
 
 // BlueprintListResponse represents the response for listing blueprints
@@ -39,11 +28,6 @@ type BlueprintListResponse map[string]BlueprintInfo
 type BlueprintInfo struct {
 	Name string `json:"name"`
 	URL  string `json:"url"`
-}
-
-// ErrorResponse represents an API error response
-type ErrorResponse struct {
-	Error string `json:"error"`
 }
 
 // ProvisionOptions represents options for workspace provisioning
@@ -60,140 +44,15 @@ type TemplateOptions struct {
 	CustomBlueprint []byte
 }
 
-// NewClient creates a new provisioner API client
-func NewClient(config Config) *Client {
-	if config.Timeout == 0 {
-		config.Timeout = 30
-	}
-
-	return &Client{
-		baseURL: strings.TrimSuffix(config.BaseURL, "/"),
-		apiKey:  config.APIKey,
-		httpClient: &http.Client{
-			Timeout: time.Duration(config.Timeout) * time.Second,
-		},
-	}
-}
-
-// ForwardRequest forwards a HTTP request to the provisioner API
-func (c *Client) ForwardRequest(cg *gin.Context, url string) {
-	downstreamURL := c.baseURL + url
-
-	req, err := http.NewRequest(cg.Request.Method, downstreamURL, cg.Request.Body)
-	if err != nil {
-		cg.JSON(http.StatusInternalServerError, gin.H{"msg": "Failed to create forward request"})
-		cg.Abort()
-		return
-	}
-
-	for k, v := range cg.Request.Header {
-		if strings.ToLower(k) == "authorization" {
-			continue
-		}
-		for _, vv := range v {
-			req.Header.Add(k, vv)
-		}
-	}
-	req.Header.Set("Authorization", "Bearer "+c.apiKey)
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		cg.JSON(http.StatusBadGateway, gin.H{"msg": "Forward request failed"})
-		cg.Abort()
-		return
-	}
-	defer resp.Body.Close()
-
-	for k, v := range resp.Header {
-		for _, vv := range v {
-			cg.Writer.Header().Add(k, vv)
-		}
-	}
-	cg.Status(resp.StatusCode)
-	io.Copy(cg.Writer, resp.Body)
-	cg.Abort()
-}
-
-// makeRequest makes an HTTP request to the API
-func (c *Client) makeRequest(ctx context.Context, method, endpoint string, body io.Reader, contentType string) (*http.Response, error) {
-	url := c.baseURL + endpoint
-
-	req, err := http.NewRequestWithContext(ctx, method, url, body)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create request: %w", err)
-	}
-
-	req.Header.Set("Authorization", "Bearer "+c.apiKey)
-	req.Header.Set("User-Agent", "k8shell-provisioner-client/1.0")
-
-	if contentType != "" {
-		req.Header.Set("Content-Type", contentType)
-	}
-
-	if method == "GET" || method == "DELETE" {
-		req.Header.Set("Accept", "application/json")
-	}
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("request failed: %w", err)
-	}
-
-	return resp, nil
-}
-
-// handleResponse handles API response and error parsing
-func (c *Client) handleResponse(resp *http.Response, v interface{}) error {
-	defer resp.Body.Close()
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return fmt.Errorf("failed to read response body: %w", err)
-	}
-
-	if resp.StatusCode >= 400 {
-		var errResp ErrorResponse
-		if err := json.Unmarshal(body, &errResp); err != nil {
-			return fmt.Errorf("API error (status %d): %s", resp.StatusCode, string(body))
-		}
-		return fmt.Errorf("API error (status %d): %s", resp.StatusCode, errResp.Error)
-	}
-
-	if v != nil {
-		if err := json.Unmarshal(body, v); err != nil {
-			return fmt.Errorf("failed to decode response: %w", err)
-		}
-	}
-
-	return nil
-}
-
-// handleErrorResponse handles error responses from the API
-func (c *Client) handleErrorResponse(resp *http.Response) error {
-	defer resp.Body.Close()
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return fmt.Errorf("API error (status %d): failed to read error response: %w", resp.StatusCode, err)
-	}
-
-	var errResp ErrorResponse
-	if err := json.Unmarshal(body, &errResp); err != nil {
-		return fmt.Errorf("API error (status %d): %s", resp.StatusCode, string(body))
-	}
-
-	return fmt.Errorf("API error (status %d): %s", resp.StatusCode, errResp.Error)
-}
-
 // ListBlueprints lists all available blueprints
 func (c *Client) ListBlueprints(ctx context.Context) (BlueprintListResponse, error) {
-	resp, err := c.makeRequest(ctx, "GET", "/api/v1/blueprints", nil, "")
+	resp, err := c.MakeRequest(ctx, "GET", "/api/v1/blueprints", nil, "")
 	if err != nil {
 		return nil, err
 	}
 
 	var result BlueprintListResponse
-	err = c.handleResponse(resp, &result)
+	err = c.HandleResponse(resp, &result)
 	return result, err
 }
 
@@ -209,13 +68,13 @@ func (c *Client) GetBlueprint(ctx context.Context, name, username string) (*mode
 	endpoint := fmt.Sprintf("/api/v1/blueprints/%s?username=%s",
 		url.QueryEscape(name), url.QueryEscape(username))
 
-	resp, err := c.makeRequest(ctx, "GET", endpoint, nil, "")
+	resp, err := c.MakeRequest(ctx, "GET", endpoint, nil, "")
 	if err != nil {
 		return nil, err
 	}
 
 	var result models.Blueprint
-	err = c.handleResponse(resp, &result)
+	err = c.HandleResponse(resp, &result)
 	return &result, err
 }
 
@@ -227,13 +86,13 @@ func (c *Client) GetRawBlueprint(ctx context.Context, name string) (map[string]i
 
 	endpoint := fmt.Sprintf("/api/v1/blueprints/%s/raw", url.QueryEscape(name))
 
-	resp, err := c.makeRequest(ctx, "GET", endpoint, nil, "")
+	resp, err := c.MakeRequest(ctx, "GET", endpoint, nil, "")
 	if err != nil {
 		return nil, err
 	}
 
 	var result map[string]interface{}
-	err = c.handleResponse(resp, &result)
+	err = c.HandleResponse(resp, &result)
 	return result, err
 }
 
@@ -248,13 +107,13 @@ func (c *Client) ComposeBlueprint(ctx context.Context, username string, blueprin
 
 	endpoint := fmt.Sprintf("/api/v1/blueprints/compose?username=%s", url.QueryEscape(username))
 
-	resp, err := c.makeRequest(ctx, "POST", endpoint, bytes.NewReader(blueprintYAML), "text/yaml")
+	resp, err := c.MakeRequest(ctx, "POST", endpoint, bytes.NewReader(blueprintYAML), "text/yaml")
 	if err != nil {
 		return nil, err
 	}
 
 	var result models.Blueprint
-	err = c.handleResponse(resp, &result)
+	err = c.HandleResponse(resp, &result)
 	return &result, err
 }
 
@@ -288,7 +147,7 @@ func (c *Client) TemplateWorkspace(ctx context.Context, opts *TemplateOptions) (
 			url.QueryEscape(opts.Username), url.QueryEscape(opts.Blueprint))
 	}
 
-	resp, err := c.makeRequest(ctx, "POST", endpoint, body, contentType)
+	resp, err := c.MakeRequest(ctx, "POST", endpoint, body, contentType)
 	if err != nil {
 		return "", err
 	}
@@ -297,7 +156,7 @@ func (c *Client) TemplateWorkspace(ctx context.Context, opts *TemplateOptions) (
 
 	if resp.StatusCode >= 400 {
 		bodyBytes, _ := io.ReadAll(resp.Body)
-		var errResp ErrorResponse
+		var errResp apiclient.ErrorResponse
 		if err := json.Unmarshal(bodyBytes, &errResp); err != nil {
 			return "", fmt.Errorf("API error (status %d): %s", resp.StatusCode, string(bodyBytes))
 		}
@@ -334,13 +193,13 @@ func (c *Client) ProvisionWorkspace(ctx context.Context, opts *ProvisionOptions)
 
 	endpoint = fmt.Sprintf("/api/v1/workspaces?%s", params.Encode())
 
-	resp, err := c.makeRequest(ctx, "POST", endpoint, body, contentType)
+	resp, err := c.MakeRequest(ctx, "POST", endpoint, body, contentType)
 	if err != nil {
 		return nil, err
 	}
 
 	var result *provModels.WorkspaceStatus
-	err = c.handleResponse(resp, &result)
+	err = c.HandleResponse(resp, &result)
 	return result, err
 }
 
@@ -368,7 +227,7 @@ func (c *Client) ProvisionWorkspaceStream(ctx context.Context, opts *ProvisionOp
 
 	endpoint = fmt.Sprintf("/api/v1/workspaces?%s", params.Encode())
 
-	resp, err := c.makeRequest(ctx, "POST", endpoint, body, contentType)
+	resp, err := c.MakeRequest(ctx, "POST", endpoint, body, contentType)
 	if err != nil {
 		return err
 	}
@@ -376,7 +235,7 @@ func (c *Client) ProvisionWorkspaceStream(ctx context.Context, opts *ProvisionOp
 
 	if resp.StatusCode >= 400 {
 		bodyBytes, _ := io.ReadAll(resp.Body)
-		var errResp ErrorResponse
+		var errResp apiclient.ErrorResponse
 		if err := json.Unmarshal(bodyBytes, &errResp); err != nil {
 			return fmt.Errorf("API error (status %d): %s", resp.StatusCode, string(bodyBytes))
 		}
@@ -420,7 +279,7 @@ func (c *Client) ProvisionWorkspaceStream(ctx context.Context, opts *ProvisionOp
 
 // Ping checks if the API server is reachable
 func (c *Client) Ping(ctx context.Context) error {
-	resp, err := c.makeRequest(ctx, "GET", "/api/v1/blueprints", nil, "")
+	resp, err := c.MakeRequest(ctx, "GET", "/api/v1/blueprints", nil, "")
 	if err != nil {
 		return fmt.Errorf("ping failed: %w", err)
 	}
@@ -433,133 +292,123 @@ func (c *Client) Ping(ctx context.Context) error {
 	return nil
 }
 
-// SetTimeout sets the HTTP client timeout
-func (c *Client) SetTimeout(timeout time.Duration) {
-	c.httpClient.Timeout = timeout
-}
-
-// GetBaseURL returns the base URL of the client
-func (c *Client) GetBaseURL() string {
-	return c.baseURL
-}
-
 // GetWorkspaces retrieves a list of workspaces, optionally filtered by username and/or blueprint
-func (c *Client) GetWorkspaces(ctx context.Context, username, blueprint string) ([]provModels.WorkspaceInfo, error) {
-	req, err := http.NewRequestWithContext(ctx, "GET", c.baseURL+"/api/v1/workspaces", nil)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create request: %w", err)
-	}
+// func (c *Client) GetWorkspaces(ctx context.Context, username, blueprint string) ([]provModels.WorkspaceInfo, error) {
+// 	req, err := http.NewRequestWithContext(ctx, "GET", c.baseURL+"/api/v1/workspaces", nil)
+// 	if err != nil {
+// 		return nil, fmt.Errorf("failed to create request: %w", err)
+// 	}
 
-	q := req.URL.Query()
-	if username != "" {
-		q.Add("username", username)
-	}
-	if blueprint != "" {
-		q.Add("blueprint", blueprint)
-	}
-	req.URL.RawQuery = q.Encode()
+// 	q := req.URL.Query()
+// 	if username != "" {
+// 		q.Add("username", username)
+// 	}
+// 	if blueprint != "" {
+// 		q.Add("blueprint", blueprint)
+// 	}
+// 	req.URL.RawQuery = q.Encode()
 
-	req.Header.Set("Authorization", "Bearer "+c.apiKey)
+// 	req.Header.Set("Authorization", "Bearer "+c.apiKey)
 
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("failed to make request: %w", err)
-	}
-	defer resp.Body.Close()
+// 	resp, err := c.httpClient.Do(req)
+// 	if err != nil {
+// 		return nil, fmt.Errorf("failed to make request: %w", err)
+// 	}
+// 	defer resp.Body.Close()
 
-	if resp.StatusCode != http.StatusOK {
-		return nil, c.handleErrorResponse(resp)
-	}
+// 	if resp.StatusCode != http.StatusOK {
+// 		return nil, c.handleErrorResponse(resp)
+// 	}
 
-	var workspaces []provModels.WorkspaceInfo
-	if err := json.NewDecoder(resp.Body).Decode(&workspaces); err != nil {
-		return nil, fmt.Errorf("failed to decode response: %w", err)
-	}
+// 	var workspaces []provModels.WorkspaceInfo
+// 	if err := json.NewDecoder(resp.Body).Decode(&workspaces); err != nil {
+// 		return nil, fmt.Errorf("failed to decode response: %w", err)
+// 	}
 
-	return workspaces, nil
-}
+// 	return workspaces, nil
+// }
 
-// GetWorkspace retrieves details of a specific workspace by name
-func (c *Client) GetWorkspace(ctx context.Context, name string) (*provModels.WorkspaceInfo, error) {
-	req, err := http.NewRequestWithContext(ctx, "GET", c.baseURL+"/api/v1/workspaces/"+name, nil)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create request: %w", err)
-	}
+// // GetWorkspace retrieves details of a specific workspace by name
+// func (c *Client) GetWorkspace(ctx context.Context, name string) (*provModels.WorkspaceInfo, error) {
+// 	req, err := http.NewRequestWithContext(ctx, "GET", c.baseURL+"/api/v1/workspaces/"+name, nil)
+// 	if err != nil {
+// 		return nil, fmt.Errorf("failed to create request: %w", err)
+// 	}
 
-	req.Header.Set("Authorization", "Bearer "+c.apiKey)
+// 	req.Header.Set("Authorization", "Bearer "+c.apiKey)
 
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("failed to make request: %w", err)
-	}
-	defer resp.Body.Close()
+// 	resp, err := c.httpClient.Do(req)
+// 	if err != nil {
+// 		return nil, fmt.Errorf("failed to make request: %w", err)
+// 	}
+// 	defer resp.Body.Close()
 
-	if resp.StatusCode != http.StatusOK {
-		if resp.StatusCode == http.StatusNotFound {
-			return nil, fmt.Errorf("%w: %s", provModels.ErrWorkspaceNotFound, name)
-		}
-		return nil, c.handleErrorResponse(resp)
-	}
+// 	if resp.StatusCode != http.StatusOK {
+// 		if resp.StatusCode == http.StatusNotFound {
+// 			return nil, fmt.Errorf("%w: %s", provModels.ErrWorkspaceNotFound, name)
+// 		}
+// 		return nil, c.HandleErrorResponse(resp)
+// 	}
 
-	var workspace provModels.WorkspaceInfo
-	if err := json.NewDecoder(resp.Body).Decode(&workspace); err != nil {
-		return nil, fmt.Errorf("failed to decode response: %w", err)
-	}
+// 	var workspace provModels.WorkspaceInfo
+// 	if err := json.NewDecoder(resp.Body).Decode(&workspace); err != nil {
+// 		return nil, fmt.Errorf("failed to decode response: %w", err)
+// 	}
 
-	return &workspace, nil
-}
+// 	return &workspace, nil
+// }
 
-// GetWorkspaceStatus retrieves the current status of a workspace
-func (c *Client) GetWorkspaceStatus(ctx context.Context, name string) (*provModels.WorkspaceStatus, error) {
-	req, err := http.NewRequestWithContext(ctx, "GET", c.baseURL+"/api/v1/workspaces/"+name+"/status", nil)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create request: %w", err)
-	}
+// // GetWorkspaceStatus retrieves the current status of a workspace
+// func (c *Client) GetWorkspaceStatus(ctx context.Context, name string) (*provModels.WorkspaceStatus, error) {
+// 	req, err := http.NewRequestWithContext(ctx, "GET", c.baseURL+"/api/v1/workspaces/"+name+"/status", nil)
+// 	if err != nil {
+// 		return nil, fmt.Errorf("failed to create request: %w", err)
+// 	}
 
-	req.Header.Set("Authorization", "Bearer "+c.apiKey)
+// 	req.Header.Set("Authorization", "Bearer "+c.apiKey)
 
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("failed to make request: %w", err)
-	}
-	defer resp.Body.Close()
+// 	resp, err := c.httpClient.Do(req)
+// 	if err != nil {
+// 		return nil, fmt.Errorf("failed to make request: %w", err)
+// 	}
+// 	defer resp.Body.Close()
 
-	if resp.StatusCode != http.StatusOK {
-		if resp.StatusCode == http.StatusNotFound {
-			return nil, fmt.Errorf("%w: %s", provModels.ErrWorkspaceNotFound, name)
-		}
-		return nil, c.handleErrorResponse(resp)
-	}
+// 	if resp.StatusCode != http.StatusOK {
+// 		if resp.StatusCode == http.StatusNotFound {
+// 			return nil, fmt.Errorf("%w: %s", provModels.ErrWorkspaceNotFound, name)
+// 		}
+// 		return nil, c.HandleErrorResponse(resp)
+// 	}
 
-	var status provModels.WorkspaceStatus
-	if err := json.NewDecoder(resp.Body).Decode(&status); err != nil {
-		return nil, fmt.Errorf("failed to decode response: %w", err)
-	}
+// 	var status provModels.WorkspaceStatus
+// 	if err := json.NewDecoder(resp.Body).Decode(&status); err != nil {
+// 		return nil, fmt.Errorf("failed to decode response: %w", err)
+// 	}
 
-	return &status, nil
-}
+// 	return &status, nil
+// }
 
-// DeleteWorkspace deletes a specific workspace by name
-func (c *Client) DeleteWorkspace(ctx context.Context, name string) error {
-	req, err := http.NewRequestWithContext(ctx, "DELETE", c.baseURL+"/api/v1/workspaces/"+name, nil)
-	if err != nil {
-		return fmt.Errorf("failed to create request: %w", err)
-	}
+// // DeleteWorkspace deletes a specific workspace by name
+// func (c *Client) DeleteWorkspace(ctx context.Context, name string) error {
+// 	req, err := http.NewRequestWithContext(ctx, "DELETE", c.baseURL+"/api/v1/workspaces/"+name, nil)
+// 	if err != nil {
+// 		return fmt.Errorf("failed to create request: %w", err)
+// 	}
 
-	req.Header.Set("Authorization", "Bearer "+c.apiKey)
+// 	req.Header.Set("Authorization", "Bearer "+c.apiKey)
 
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return fmt.Errorf("failed to make request: %w", err)
-	}
-	defer resp.Body.Close()
+// 	resp, err := c.httpClient.Do(req)
+// 	if err != nil {
+// 		return fmt.Errorf("failed to make request: %w", err)
+// 	}
+// 	defer resp.Body.Close()
 
-	if resp.StatusCode >= 400 {
-		if resp.StatusCode == http.StatusNotFound {
-			return fmt.Errorf("%w: %s", provModels.ErrWorkspaceNotFound, name)
-		}
-		return c.handleErrorResponse(resp)
-	}
+// 	if resp.StatusCode >= 400 {
+// 		if resp.StatusCode == http.StatusNotFound {
+// 			return fmt.Errorf("%w: %s", provModels.ErrWorkspaceNotFound, name)
+// 		}
+// 		return c.HandleErrorResponse(resp)
+// 	}
 
-	return nil
-}
+// 	return nil
+// }

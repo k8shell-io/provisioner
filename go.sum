@@ -191,6 +191,10 @@ github.com/json-iterator/go v1.1.12 h1:PV8peI4a0ysnczrg+LtxykD8LfKY9ML6u2jnxaEnr
 github.com/json-iterator/go v1.1.12/go.mod h1:e30LSqwooZae/UwlEbR2852Gd8hjQvJoHmT4TnhNGBo=
 github.com/k8shell-io/common v0.11.32 h1:ncJhggZeUIyZuTWqbEhzHFE2QzDSdL3yVV/hYqO/YFs=
 github.com/k8shell-io/common v0.11.32/go.mod h1:VUdmC/yJECg1kU4LrFljJsaVweJFEOH0wpte6in4pzk=
+github.com/k8shell-io/common v0.11.33 h1:iA8G+rNjQeOzvntAe7sW41p4sm1mADZvVFtx8SZNjwE=
+github.com/k8shell-io/common v0.11.33/go.mod h1:sMuPIX0mrul5Czz9GFN2t/Ul0Q6pq8KMx7sBReKWEwM=
+github.com/k8shell-io/common v0.11.35 h1:NF9XHGoZSDLccjVFKdRqUl3gAGYfQhglQbvMX9Ps6co=
+github.com/k8shell-io/common v0.11.35/go.mod h1:sMuPIX0mrul5Czz9GFN2t/Ul0Q6pq8KMx7sBReKWEwM=
 github.com/k8shell-io/identity v0.11.9 h1:ClNM3aALX29Ic8jrkkTBISbwLLtJVV3JE2pZr3pTqgQ=
 github.com/k8shell-io/identity v0.11.9/go.mod h1:EaUK2pKhHMNTEJt+O7LtNT/vfQ3HO0FGTxY9zf13gPc=
 github.com/k8shell-io/yaml-cel v0.2.6 h1:Te7o2b1Y/9Gm6Z3j29zGKzOnGn3NoDu1tpq4ib3mua0=
