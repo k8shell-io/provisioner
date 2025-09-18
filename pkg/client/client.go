@@ -103,18 +103,14 @@ func (c *Client) GetRawBlueprint(ctx context.Context, name string) (map[string]i
 }
 
 // ComposeBlueprint composes a custom blueprint YAML with user scope
-func (c *Client) ComposeBlueprint(ctx context.Context, username string,
-	customBlueprint *models.CustomBlueprint) (*models.Blueprint, error) {
+func (c *Client) ComposeBlueprint(ctx context.Context, username string, blueprintYAML []byte) (*models.Blueprint, error) {
 	if username == "" {
 		return nil, fmt.Errorf("username is required")
 	}
-	if customBlueprint == nil {
-		return nil, fmt.Errorf("custom blueprint is required")
+	if len(blueprintYAML) == 0 {
+		return nil, fmt.Errorf("blueprint YAML is required")
 	}
-	blueprintYAML, err := json.Marshal(customBlueprint)
-	if err != nil {
-		return nil, fmt.Errorf("failed to marshal custom blueprint: %w", err)
-	}
+
 	endpoint := fmt.Sprintf("/api/v1/blueprints/compose?username=%s", url.QueryEscape(username))
 
 	resp, err := c.MakeRequest(ctx, "POST", endpoint, bytes.NewReader(blueprintYAML), "text/yaml")

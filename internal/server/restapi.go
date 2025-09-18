@@ -29,6 +29,7 @@ import (
 	ws "github.com/k8shell-io/provisioner/internal/workspace"
 	provModels "github.com/k8shell-io/provisioner/pkg/models"
 	"github.com/rs/zerolog"
+	"github.com/stretchr/testify/assert/yaml"
 )
 
 // RESTApiService represents the REST API service for the K8Shell Provisioner server.
@@ -277,7 +278,7 @@ func (a *RESTApiService) GetRawBlueprint(c *gin.Context) {
 	c.JSON(http.StatusOK, rawBp)
 }
 
-// ComposeBlueprint handles the POST request to compose a blueprint using a custom blueprint YAML
+// ComposeBlueprint handles the POST request to compose a blueprint using a k8shell file YAML
 func (a *RESTApiService) ComposeBlueprint(c *gin.Context) {
 	contentType := c.GetHeader("Content-Type")
 	username := c.Query("username")
@@ -305,18 +306,16 @@ func (a *RESTApiService) ComposeBlueprint(c *gin.Context) {
 		return
 	}
 
-	var blueprintYAML []byte
-	if strings.Contains(contentType, "text/yaml") || strings.Contains(contentType, "application/x-yaml") {
-		blueprintYAML = body
-	} else {
+	if !strings.Contains(contentType, "text/yaml") && !strings.Contains(contentType, "application/x-yaml") {
 		c.JSON(http.StatusUnsupportedMediaType, gin.H{
 			"error": "Unsupported content type, expected text/yaml or application/x-yaml",
 		})
 		return
 	}
 
-	// Validate the custom blueprint YAML
-	customBlueprint, validationErrors := models.ValidateCustomBlueprint(blueprintYAML)
+	var k8shellFile models.K8shellFile
+	yaml.Unmarshal(body, &k8shellFile)
+	customBlueprint, validationErrors := models.ValidateK8shellFile(k8shellFile)
 	if len(validationErrors) > 0 {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"error": fmt.Sprintf("Blueprint validation failed: %s", strings.Join(validationErrors, "; ")),
@@ -355,7 +354,6 @@ func (a *RESTApiService) resolveBlueprintFromRequest(c *gin.Context,
 	scope *blueprint.BlueprintScope) (*models.Blueprint, error) {
 	blueprintName := c.Query("blueprint")
 
-	// Check if request has body
 	if c.Request.ContentLength > 0 {
 		if blueprintName != "" {
 			return nil, fmt.Errorf("cannot use both blueprint query parameter and request payload")
@@ -368,14 +366,13 @@ func (a *RESTApiService) resolveBlueprintFromRequest(c *gin.Context,
 			return nil, fmt.Errorf("failed to read request body: %w", err)
 		}
 
-		var blueprintYAML []byte
-		if strings.Contains(contentType, "text/yaml") || strings.Contains(contentType, "application/x-yaml") {
-			blueprintYAML = body
-		} else {
+		if !strings.Contains(contentType, "text/yaml") && !strings.Contains(contentType, "application/x-yaml") {
 			return nil, fmt.Errorf("unsupported content type, expected text/yaml or application/x-yaml")
 		}
 
-		customBlueprint, validationErrors := models.ValidateCustomBlueprint(blueprintYAML)
+		var k8shellFile models.K8shellFile
+		yaml.Unmarshal(body, &k8shellFile)
+		customBlueprint, validationErrors := models.ValidateK8shellFile(k8shellFile)
 		if len(validationErrors) > 0 {
 			return nil, fmt.Errorf("blueprint validation failed: %s", strings.Join(validationErrors, "; "))
 		}
