@@ -161,9 +161,14 @@ func (w *Workspace) doInstallation(ctx context.Context, opts *ProvisionOptions) 
 
 	defer func() {
 		if session != nil {
+			provTime := time.Since(startTime).Seconds()
+			if ctx.Err() != nil {
+				provTime = 0
+				w.log.Warn().Err(ctx.Err()).Msg("Context error, setting provisioning time to 0")
+			}
 			newCtx := context.Background()
 			if err := w.identify.UpdateSSHSession(newCtx, "system", session.SessionID, 0, 0, "",
-				float32(time.Since(startTime).Seconds()), []string{}); err != nil {
+				float32(provTime), []string{}); err != nil {
 				w.log.Error().Err(err).Msg("Failed to close SSH session after provisioning")
 			}
 			err = w.identify.EndSSHSession(newCtx, "system", session.SessionID)
