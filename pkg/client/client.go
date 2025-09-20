@@ -266,3 +266,86 @@ func (c *Client) ProvisionWorkspaceStream(ctx context.Context, opts *ProvisionOp
 
 	return nil
 }
+
+// GetWorkspaces retrieves a list of workspaces, optionally filtered by username and/or blueprint
+func (c *Client) GetWorkspaces(ctx context.Context, username, blueprint string) ([]provModels.WorkspaceInfo, error) {
+	params := url.Values{}
+	if username != "" {
+		params.Set("username", username)
+	}
+	if blueprint != "" {
+		params.Set("blueprint", blueprint)
+	}
+
+	endpoint := "/api/v1/workspaces"
+	if len(params) > 0 {
+		endpoint += "?" + params.Encode()
+	}
+
+	resp, err := c.MakeRequest(ctx, "GET", endpoint, nil, "")
+	if err != nil {
+		return nil, err
+	}
+
+	var workspaces []provModels.WorkspaceInfo
+	err = c.HandleResponse(resp, &workspaces)
+	return workspaces, err
+}
+
+// GetWorkspace retrieves details of a specific workspace by name
+func (c *Client) GetWorkspace(ctx context.Context, name string) (*provModels.WorkspaceInfo, error) {
+	endpoint := fmt.Sprintf("/api/v1/workspaces/%s", url.QueryEscape(name))
+
+	resp, err := c.MakeRequest(ctx, "GET", endpoint, nil, "")
+	if err != nil {
+		return nil, err
+	}
+
+	var workspace provModels.WorkspaceInfo
+	err = c.HandleResponse(resp, &workspace)
+	if err != nil {
+		if strings.Contains(err.Error(), "404") {
+			return nil, fmt.Errorf("%w: %s", provModels.ErrWorkspaceNotFound, name)
+		}
+		return nil, err
+	}
+
+	return &workspace, nil
+}
+
+// GetWorkspaceStatus retrieves the current status of a workspace
+func (c *Client) GetWorkspaceStatus(ctx context.Context, name string) (*provModels.WorkspaceStatus, error) {
+	endpoint := fmt.Sprintf("/api/v1/workspaces/%s/status", url.QueryEscape(name))
+
+	resp, err := c.MakeRequest(ctx, "GET", endpoint, nil, "")
+	if err != nil {
+		return nil, err
+	}
+
+	var status provModels.WorkspaceStatus
+	err = c.HandleResponse(resp, &status)
+	if err != nil {
+		if strings.Contains(err.Error(), "404") {
+			return nil, fmt.Errorf("%w: %s", provModels.ErrWorkspaceNotFound, name)
+		}
+		return nil, err
+	}
+
+	return &status, nil
+}
+
+// DeleteWorkspace deletes a specific workspace by name
+func (c *Client) DeleteWorkspace(ctx context.Context, name string) error {
+	endpoint := fmt.Sprintf("/api/v1/workspaces/%s", url.QueryEscape(name))
+
+	resp, err := c.MakeRequest(ctx, "DELETE", endpoint, nil, "")
+	if err != nil {
+		if strings.Contains(err.Error(), "404") {
+			return fmt.Errorf("%w: %s", provModels.ErrWorkspaceNotFound, name)
+		}
+		return err
+	}
+
+	defer resp.Body.Close()
+	return nil
+}
