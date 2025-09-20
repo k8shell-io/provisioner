@@ -143,6 +143,15 @@ func GetWorkspaceStatus(ctx context.Context, helmClient *helm.Client,
 		return nil, fmt.Errorf("failed to get tls cert from secret %s", name)
 	}
 
+	var splash string
+	if splashAnnotation, exists := pod.Annotations["workspace.k8shell.io/splash"]; exists {
+		if decoded, err := base64.StdEncoding.DecodeString(splashAnnotation); err == nil {
+			splash = string(decoded)
+		} else {
+			splash = ""
+		}
+	}
+
 	status := &provModels.WorkspaceStatus{
 		PodStatus: provModels.PodStatus{
 			Created: pod.CreationTimestamp.Time,
@@ -155,6 +164,7 @@ func GetWorkspaceStatus(ctx context.Context, helmClient *helm.Client,
 		Port:      int(podService.Spec.Ports[0].Port),
 		AccessKey: string(accessKey),
 		TLSCert:   string(tlsCert),
+		Splash:    splash,
 	}
 
 	return status, nil

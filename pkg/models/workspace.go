@@ -26,12 +26,13 @@ type PodStatus struct {
 // the workspace-specific details such host, port and access key and TLS certificate.
 type WorkspaceStatus struct {
 	PodStatus
-	Name      string `json:"name" example:"dev-user123"`
-	Host      string `json:"host" example:"dev-john.k8shell-workspace"`
-	PodIP     string `json:"podIP" example:"10.42.0.123"`
-	Port      int    `json:"port" example:"2822"`
-	AccessKey string `json:"accessKey" example:"abc123"`
-	TLSCert   string `json:"tlsCert" example:"-----BEGIN CERTIFICATE-----\nMIID...IDAQAB\n-----END CERTIFICATE-----"`
+	Name      string `json:"name"`
+	Host      string `json:"host"`
+	PodIP     string `json:"podIP"`
+	Port      int    `json:"port"`
+	AccessKey string `json:"accessKey"`
+	TLSCert   string `json:"tlsCert"`
+	Splash    string `json:"splash"`
 }
 
 // StreamEvent represents a streaming event response
