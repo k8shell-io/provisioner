@@ -215,11 +215,11 @@ func (bm *BlueprintManager) GetBlueprint(name string, scope *BlueprintScope) (*m
 	rawBp, exists := bm.rawBlueprints[name]
 	bm.mu.RUnlock()
 
-	scope.Metadata.Name = rawBp.Name
 	if !exists {
 		return nil, fmt.Errorf("blueprint %s not found: %w", name, ErrBlueprintNotFound)
 	}
 
+	scope.Metadata.Name = rawBp.Name
 	var tmpl yamlcel.CELTemplate
 	if err := rawBp.Node.Decode(&tmpl); err != nil {
 		return nil, fmt.Errorf("failed to decode CEL template for %s: %w", name, err)
