@@ -58,7 +58,7 @@ func (c *Client) ListBlueprints(ctx context.Context) (BlueprintListResponse, err
 	}
 
 	var result BlueprintListResponse
-	err = c.HandleResponse(resp, &result)
+	_, err = c.HandleResponse(resp, &result)
 	return result, err
 }
 
@@ -80,7 +80,7 @@ func (c *Client) GetBlueprint(ctx context.Context, name, username string) (*mode
 	}
 
 	var result models.Blueprint
-	err = c.HandleResponse(resp, &result)
+	_, err = c.HandleResponse(resp, &result)
 	return &result, err
 }
 
@@ -98,7 +98,7 @@ func (c *Client) GetRawBlueprint(ctx context.Context, name string) (map[string]i
 	}
 
 	var result map[string]interface{}
-	err = c.HandleResponse(resp, &result)
+	_, err = c.HandleResponse(resp, &result)
 	return result, err
 }
 
@@ -119,7 +119,7 @@ func (c *Client) ComposeBlueprint(ctx context.Context, username string, blueprin
 	}
 
 	var result models.Blueprint
-	err = c.HandleResponse(resp, &result)
+	_, err = c.HandleResponse(resp, &result)
 	return &result, err
 }
 
@@ -156,23 +156,8 @@ func (c *Client) TemplateWorkspace(ctx context.Context, opts *TemplateOptions) (
 		return "", err
 	}
 
-	defer resp.Body.Close()
-
-	if resp.StatusCode >= 400 {
-		bodyBytes, _ := io.ReadAll(resp.Body)
-		var errResp apiclient.ErrorResponse
-		if err := json.Unmarshal(bodyBytes, &errResp); err != nil {
-			return "", fmt.Errorf("API error (status %d): %s", resp.StatusCode, string(bodyBytes))
-		}
-		return "", fmt.Errorf("API error (status %d): %s", resp.StatusCode, errResp.Error)
-	}
-
-	yamlBytes, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return "", fmt.Errorf("failed to read response: %w", err)
-	}
-
-	return string(yamlBytes), nil
+	content, err := c.HandleResponse(resp, nil)
+	return content, err
 }
 
 // ProvisionWorkspace provisions a new workspace
@@ -197,7 +182,7 @@ func (c *Client) ProvisionWorkspace(ctx context.Context, opts *ProvisionOptions)
 	}
 
 	var result *provModels.WorkspaceStatus
-	err = c.HandleResponse(resp, &result)
+	_, err = c.HandleResponse(resp, &result)
 	return result, err
 }
 
@@ -225,13 +210,9 @@ func (c *Client) ProvisionWorkspaceStream(ctx context.Context, opts *ProvisionOp
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode >= 400 {
-		bodyBytes, _ := io.ReadAll(resp.Body)
-		var errResp apiclient.ErrorResponse
-		if err := json.Unmarshal(bodyBytes, &errResp); err != nil {
-			return fmt.Errorf("API error (status %d): %s", resp.StatusCode, string(bodyBytes))
-		}
-		return fmt.Errorf("API error (status %d): %s", resp.StatusCode, errResp.Error)
+	err = c.CheckError(resp)
+	if err != nil {
+		return err
 	}
 
 	scanner := bufio.NewScanner(resp.Body)
@@ -288,7 +269,7 @@ func (c *Client) GetWorkspaces(ctx context.Context, username, blueprint string) 
 	}
 
 	var workspaces []provModels.WorkspaceInfo
-	err = c.HandleResponse(resp, &workspaces)
+	_, err = c.HandleResponse(resp, &workspaces)
 	return workspaces, err
 }
 
@@ -302,9 +283,9 @@ func (c *Client) GetWorkspace(ctx context.Context, name string) (*provModels.Wor
 	}
 
 	var workspace provModels.WorkspaceInfo
-	err = c.HandleResponse(resp, &workspace)
+	_, err = c.HandleResponse(resp, &workspace)
 	if err != nil {
-		if strings.Contains(err.Error(), "404") {
+		if apiErr, ok := err.(*apiclient.APIError); ok && apiErr.StatusCode == 404 {
 			return nil, fmt.Errorf("%w: %s", provModels.ErrWorkspaceNotFound, name)
 		}
 		return nil, err
@@ -323,9 +304,9 @@ func (c *Client) GetWorkspaceStatus(ctx context.Context, name string) (*provMode
 	}
 
 	var status provModels.WorkspaceStatus
-	err = c.HandleResponse(resp, &status)
+	_, err = c.HandleResponse(resp, &status)
 	if err != nil {
-		if strings.Contains(err.Error(), "404") {
+		if apiErr, ok := err.(*apiclient.APIError); ok && apiErr.StatusCode == 404 {
 			return nil, fmt.Errorf("%w: %s", provModels.ErrWorkspaceNotFound, name)
 		}
 		return nil, err
@@ -340,7 +321,7 @@ func (c *Client) DeleteWorkspace(ctx context.Context, name string) error {
 
 	resp, err := c.MakeRequest(ctx, "DELETE", endpoint, nil, "")
 	if err != nil {
-		if strings.Contains(err.Error(), "404") {
+		if apiErr, ok := err.(*apiclient.APIError); ok && apiErr.StatusCode == 404 {
 			return fmt.Errorf("%w: %s", provModels.ErrWorkspaceNotFound, name)
 		}
 		return err
