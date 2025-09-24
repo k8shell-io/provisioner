@@ -20,6 +20,11 @@ blueprints:
         annotations:
           zfs-csi.k8shell.io/squash: "no_root_squash"
 
+  - name: sql
+    template: default
+    image: workspaces/sql:0.8-3.2
+    sudo: false
+
   - name: dev
     template: default
     image: workspaces/dev:0.8-1.1

@@ -194,7 +194,7 @@ func (w *Workspace) doInstallation(ctx context.Context, opts *ProvisionOptions) 
 
 	status, err := w.waitForPodRunning(ctx, startTime, opts)
 	if err != nil {
-		return nil, fmt.Errorf("failed waiting for workspace to be running: %w", err)
+		return nil, err
 	}
 
 	if status.Status == "Running" {
@@ -349,8 +349,7 @@ func (w *Workspace) watchEvents(ctx context.Context, podName string, criticalErr
 						opts.Messages <- eventMessage
 					}
 
-					if w.isCriticalError(eventMessage.Message) {
-						criticalErr := fmt.Errorf("provisioning error")
+					if criticalErr := w.isCriticalError(eventMessage.Message); criticalErr != nil {
 						criticalErrorChan <- criticalErr
 						return
 					}
@@ -360,25 +359,26 @@ func (w *Workspace) watchEvents(ctx context.Context, podName string, criticalErr
 	}
 }
 
-// isCriticalError determines if an event message indicates a critical error
-func (w *Workspace) isCriticalError(message string) bool {
-	criticalErrors := []string{
-		"Failed to pull image",
-		"ImagePullBackOff",
-		"ErrImagePull",
-		"InvalidImageName",
-		"image not found",
-		"authentication required",
-		"insufficient memory",
-		"insufficient cpu",
-		"no nodes available",
+// isCriticalError determines if an event message indicates a critical error and returns a user-friendly error
+func (w *Workspace) isCriticalError(message string) error {
+	criticalErrors := map[string]string{
+		"Failed to pull image":    "Unable to download the workspace image.",
+		"ImagePullBackOff":        "Unable to download the workspace image.",
+		"ErrImagePull":            "Unable to download the workspace image.",
+		"InvalidImageName":        "The workspace image name is invalid.",
+		"image not found":         "The specified workspace image was not found in the registry.",
+		"authentication required": "Authentication failed when accessing the workspace image.",
+		"insufficient memory":     "Not enough memory available to run the workspace.",
+		"insufficient cpu":        "Not enough CPU resources available to run the workspace.",
+		"no nodes available":      "No suitable servers are available to run the workspace.",
 	}
 
 	messageLower := strings.ToLower(message)
-	for _, criticalError := range criticalErrors {
+	for criticalError, userMessage := range criticalErrors {
 		if strings.Contains(messageLower, strings.ToLower(criticalError)) {
-			return true
+			w.log.Error().Msgf("Critical error detected: %s", message)
+			return fmt.Errorf("%s", userMessage)
 		}
 	}
-	return false
+	return nil
 }

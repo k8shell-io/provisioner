@@ -752,7 +752,6 @@ func (a *RESTApiService) provisionWithStreaming(c *gin.Context, workspace *ws.Wo
 		})
 
 		if err != nil {
-			a.log.Error().Err(err).Msgf("Provisioning failed for workspace %s", workspace.Name())
 			errorChan <- err
 			return
 		}
