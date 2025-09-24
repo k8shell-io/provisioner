@@ -376,8 +376,9 @@ func (w *Workspace) isCriticalError(message string) error {
 	messageLower := strings.ToLower(message)
 	for criticalError, userMessage := range criticalErrors {
 		if strings.Contains(messageLower, strings.ToLower(criticalError)) {
-			w.log.Error().Msgf("Critical error detected: %s", message)
-			return fmt.Errorf("%s", userMessage)
+			w.log.Error().Msgf("Provisioning error detected: %s", message)
+			provError := fmt.Sprintf("Provisioning error: %s", userMessage)
+			return fmt.Errorf("%s", provError)
 		}
 	}
 	return nil
