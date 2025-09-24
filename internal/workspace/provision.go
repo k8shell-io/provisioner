@@ -10,6 +10,7 @@ import (
 	"github.com/k8shell-io/provisioner/internal/helm"
 	provModels "github.com/k8shell-io/provisioner/pkg/models"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/watch"
 )
@@ -216,12 +217,6 @@ func (w *Workspace) createHeadlessService(ctx context.Context, values map[string
 	serviceName := subdomain
 	namespace := w.client.TargetNamespace()
 
-	_, err := w.client.GetKubeClient().CoreV1().Services(namespace).Get(ctx, serviceName, metav1.GetOptions{})
-	if err == nil {
-		w.log.Debug().Msgf("Headless service %s already exists", serviceName)
-		return nil
-	}
-
 	service := &corev1.Service{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      serviceName,
@@ -240,8 +235,12 @@ func (w *Workspace) createHeadlessService(ctx context.Context, values map[string
 		},
 	}
 
-	_, err = w.client.GetKubeClient().CoreV1().Services(namespace).Create(ctx, service, metav1.CreateOptions{})
+	_, err := w.client.GetKubeClient().CoreV1().Services(namespace).Create(ctx, service, metav1.CreateOptions{})
 	if err != nil {
+		if apierrors.IsAlreadyExists(err) {
+			w.log.Info().Msgf("Headless service %s already exists", serviceName)
+			return nil
+		}
 		return fmt.Errorf("failed to create headless service %s: %w", serviceName, err)
 	}
 

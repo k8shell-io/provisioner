@@ -1,7 +1,6 @@
 package server
 
 import (
-	"context"
 	"fmt"
 	"path/filepath"
 	"time"
@@ -80,7 +79,7 @@ func NewServer(configFile string) (*Server, error) {
 	return server, nil
 }
 
-func (s *Server) GetBlueprintScope(ctx context.Context, blueprintName string, user *models.User,
+func (s *Server) GetBlueprintScope(blueprintName string, user *models.User,
 	metadata *models.BlueprintMetadata) (*blueprint.BlueprintScope, error) {
 
 	if blueprintName == "" && metadata != nil {

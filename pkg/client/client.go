@@ -236,7 +236,7 @@ func (c *Client) ProvisionWorkspaceStream(ctx context.Context, opts *ProvisionOp
 		case eventChan <- event:
 		}
 
-		if event.Type == "status" {
+		if event.Type == "status" && event.Status != "Starting" {
 			break
 		}
 	}
