@@ -616,7 +616,7 @@ func (a *RESTApiService) ProvisionWorkspace(c *gin.Context) {
 			var eresp identity.ErrorResponse
 			if errors.As(err, &eresp) && eresp.Status == http.StatusNotFound {
 				c.JSON(http.StatusBadRequest, gin.H{
-					"error": "No blueprint specified in userstr and no custom blueprint found for user",
+					"error": fmt.Sprintf("No blueprint was provided, and no default blueprint is configured for user %q.", userstr.Username),
 				})
 				return
 			}
@@ -628,14 +628,14 @@ func (a *RESTApiService) ProvisionWorkspace(c *gin.Context) {
 
 		if customBlueprint == nil {
 			c.JSON(http.StatusBadRequest, gin.H{
-				"error": "No blueprint specified in userstr and no custom blueprint found for user",
+				"error": fmt.Sprintf("No blueprint was provided, and no default blueprint found for user %q.", userstr.Username),
 			})
 			return
 		}
 
 		if !user.HasBlueprint(customBlueprint.Template) {
 			c.JSON(http.StatusNotFound, gin.H{
-				"error": fmt.Sprintf("Blueprint template %s not found for user %s", customBlueprint.Template, user.Username),
+				"error": fmt.Sprintf("Access denied: user %q is not authorized to use blueprint's template %q", userstr.Username, customBlueprint.Template),
 			})
 			return
 		}
@@ -649,7 +649,7 @@ func (a *RESTApiService) ProvisionWorkspace(c *gin.Context) {
 		blueprintObj, err = a.server.bpManager.ComposeWithScope(customBlueprint, scope)
 		if err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{
-				"error": fmt.Sprintf("Failed to compose custom blueprint: %v", err),
+				"error": fmt.Sprintf("Failed to compose blueprint: %v", err),
 			})
 			return
 		}
@@ -708,7 +708,33 @@ func (a *RESTApiService) provisionWithStreaming(c *gin.Context, workspace *ws.Wo
 		return
 	}
 
+	pushInternalEvent := func(status string, message string) {
+		msg := gin.H{
+			"type":       "status",
+			"timestamp":  time.Now().Format("2006-01-02 15:04:05"),
+			"objectName": workspace.Name(),
+			"status":     status,
+			"message":    message,
+		}
+		data, _ := json.Marshal(msg)
+		fmt.Fprintf(c.Writer, "%s\n", data)
+		flusher.Flush()
+	}
+
+	pushStreamEvent := func(event provModels.StreamEvent) {
+		msg := gin.H{
+			"type":       "event",
+			"timestamp":  event.Timestamp,
+			"objectName": event.ObjectName,
+			"message":    event.Message,
+		}
+		data, _ := json.Marshal(msg)
+		fmt.Fprintf(c.Writer, "%s\n", data)
+		flusher.Flush()
+	}
+
 	c.Status(http.StatusOK)
+	pushInternalEvent("Starting", "Provisioning started")
 
 	messages := make(chan provModels.StreamEvent, 100)
 
@@ -743,44 +769,17 @@ func (a *RESTApiService) provisionWithStreaming(c *gin.Context, workspace *ws.Wo
 			if !ok {
 				continue
 			}
-
-			event := gin.H{
-				"type":       "event",
-				"timestamp":  msg.Timestamp,
-				"objectName": msg.ObjectName,
-				"message":    msg.Message,
-			}
-			data, _ := json.Marshal(event)
-			c.Writer.Write([]byte(fmt.Sprintf("%s\n", data)))
-			flusher.Flush()
+			pushStreamEvent(msg)
 
 		case status := <-done:
 			if status != nil {
-				final := gin.H{
-					"type":       "status",
-					"timestamp":  time.Now().Format("2006-01-02 15:04:05"),
-					"objectName": workspace.Name(),
-					"status":     status.Status,
-					"message":    status.Message,
-				}
-				data, _ := json.Marshal(final)
-				c.Writer.Write([]byte(fmt.Sprintf("%s\n", data)))
-				flusher.Flush()
+				pushInternalEvent(status.Status, status.Message)
 			}
 			return
 
 		case err := <-errorChan:
 			if err != nil {
-				errEvent := gin.H{
-					"type":       "status",
-					"timestamp":  time.Now().Format("2006-01-02 15:04:05"),
-					"objectName": workspace.Name(),
-					"status":     "Error",
-					"message":    err.Error(),
-				}
-				data, _ := json.Marshal(errEvent)
-				c.Writer.Write([]byte(fmt.Sprintf("%s\n", data)))
-				flusher.Flush()
+				pushInternalEvent("Error", err.Error())
 			}
 			return
 		}
