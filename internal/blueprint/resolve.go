@@ -121,7 +121,9 @@ func (bm *BlueprintManager) mergeYAMLNodesWithTags(parent, child *yaml.Node) (*y
 			key := keyNode.Value
 
 			if !processedKeys[key] {
-				result.Content = append(result.Content, keyNode, valueNode)
+				if key != "isTemplate" {
+					result.Content = append(result.Content, keyNode, valueNode)
+				}
 			}
 		}
 	}
