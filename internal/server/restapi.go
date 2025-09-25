@@ -616,7 +616,7 @@ func (a *RESTApiService) ProvisionWorkspace(c *gin.Context) {
 			var eresp identity.ErrorResponse
 			if errors.As(err, &eresp) && eresp.Status == http.StatusNotFound {
 				c.JSON(http.StatusBadRequest, gin.H{
-					"error": fmt.Sprintf("No blueprint was provided, and no default blueprint is configured for user %q.", userstr.Username),
+					"error": fmt.Sprintf("No blueprint was provided, and no default blueprint is configured for user %s.", userstr.Username),
 				})
 				return
 			}
@@ -628,14 +628,14 @@ func (a *RESTApiService) ProvisionWorkspace(c *gin.Context) {
 
 		if customBlueprint == nil {
 			c.JSON(http.StatusBadRequest, gin.H{
-				"error": fmt.Sprintf("No blueprint was provided, and no default blueprint found for user %q.", userstr.Username),
+				"error": fmt.Sprintf("No blueprint was provided, and no default blueprint found for user %s.", userstr.Username),
 			})
 			return
 		}
 
 		if !user.HasBlueprint(customBlueprint.Template) {
 			c.JSON(http.StatusNotFound, gin.H{
-				"error": fmt.Sprintf("Access denied: user %q is not authorized to use blueprint's template %q.", userstr.Username, customBlueprint.Template),
+				"error": fmt.Sprintf("Access denied: user %s is not authorized to use blueprint's template %s.", userstr.Username, customBlueprint.Template),
 			})
 			return
 		}
@@ -664,7 +664,7 @@ func (a *RESTApiService) ProvisionWorkspace(c *gin.Context) {
 
 		if !user.HasBlueprint(bpName) {
 			c.JSON(http.StatusForbidden, gin.H{
-				"error": fmt.Sprintf("Access denied: user %q is not authorized to use blueprint %q.",
+				"error": fmt.Sprintf("Access denied: user %s is not authorized to use blueprint %s.",
 					userstr.Username, bpName),
 			})
 			return
@@ -673,14 +673,14 @@ func (a *RESTApiService) ProvisionWorkspace(c *gin.Context) {
 		blueprintObj, err = a.server.bpManager.GetBlueprint(bpName, scope)
 		if err != nil {
 			c.JSON(http.StatusNotFound, gin.H{
-				"error": fmt.Sprintf("Blueprint %q not found.", userstr.Blueprint),
+				"error": fmt.Sprintf("Blueprint %s not found.", userstr.Blueprint),
 			})
 			return
 		}
 
 		if blueprintObj.IsTemplate {
 			c.JSON(http.StatusBadRequest, gin.H{
-				"error": fmt.Sprintf("Blueprint %q is a template and cannot be used to provision a workspace.",
+				"error": fmt.Sprintf("Blueprint %s is a template and cannot be used to provision a workspace.",
 					userstr.Blueprint),
 			})
 			return
