@@ -95,10 +95,6 @@ spec:
         value: {{ $envValue }}
       {{- end }}
       {{- end }}
-      {{- if .Values.docker.enabled }}
-      - name: DOCKER_HOST
-        value: unix:///var/run/docker/docker.sock
-      {{- end }}
       
       volumeMounts:
       - name: bin-volume
@@ -144,7 +140,8 @@ spec:
       {{- end }}
       {{- if .Values.docker.enabled }}
       - name: docker-sock
-        mountPath: /var/run/docker
+        mountPath: /var/run/docker.sock
+        subPath: docker.sock
       {{- end }}
 
     #### docker container
@@ -155,14 +152,15 @@ spec:
         privileged: true
       args:
         - dockerd
-        - --host=unix:///var/run/docker/docker.sock
+        - --host=unix:///var/run/docker.sock
         - --group=$(DOCKER_GROUP_GID)
       env:
         - name: DOCKER_GROUP_GID
           value: "{{ .Values.docker.groupId }}"
       volumeMounts:
         - name: docker-sock
-          mountPath: /var/run/docker
+          mountPath: /var/run/docker.sock
+          subPath: docker.sock
       {{- if .Values.__registry__.certCA }}
         - name: docker-ca-cert
           mountPath: /etc/ssl/certs/registry-ca.pem
