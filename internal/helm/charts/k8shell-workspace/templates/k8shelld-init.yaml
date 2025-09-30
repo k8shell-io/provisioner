@@ -26,7 +26,7 @@ data:
 
     {{- if .Values.docker.enabled }}
     echo "Creating docker.sock"
-    mkdir -p /shared/docker
+    mkdir -p /shared
     : > /shared/docker.sock
     chgrp {{ .Values.docker.groupId }} /shared/docker.sock
     chmod 660 /shared/docker.sock

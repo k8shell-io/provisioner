@@ -38,7 +38,7 @@ spec:
         - name: bin-volume
           mountPath: /usr/local/bin
         - name: docker-sock
-          mountPath: /tmp/docker        
+          mountPath: /shared     
         - name: k8shelld-init
           mountPath: /init                             
           readOnly: true
