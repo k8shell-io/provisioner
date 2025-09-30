@@ -22,9 +22,9 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	apiclient "github.com/k8shell-io/common/apiclient"
 	log "github.com/k8shell-io/common/logger"
 	"github.com/k8shell-io/common/models"
-	identity "github.com/k8shell-io/identity/pkg/client"
 	"github.com/k8shell-io/provisioner/internal/blueprint"
 	ws "github.com/k8shell-io/provisioner/internal/workspace"
 	provModels "github.com/k8shell-io/provisioner/pkg/models"
@@ -612,9 +612,8 @@ func (a *RESTApiService) ProvisionWorkspace(c *gin.Context) {
 	if userstr.HasCustomBlueprint {
 		customBlueprint, err := a.server.Identity.GetBlueprintByUserStr(c.Request.Context(), userstrParam)
 		if err != nil {
-			// Check if it's a "not found" error
-			var eresp identity.ErrorResponse
-			if errors.As(err, &eresp) && eresp.Status == http.StatusNotFound {
+			var eresp *apiclient.APIError
+			if errors.As(err, &eresp) && eresp.StatusCode == http.StatusNotFound {
 				c.JSON(http.StatusBadRequest, gin.H{
 					"error": fmt.Sprintf("No blueprint was provided, and no default blueprint is configured for user %s.", userstr.Username),
 				})
@@ -815,10 +814,10 @@ func (a *RESTApiService) provisionSync(c *gin.Context, workspace *ws.Workspace, 
 }
 
 func errToJSONError(c *gin.Context, err error) {
-	var eresp identity.ErrorResponse
+	var eresp *apiclient.APIError
 	if errors.As(err, &eresp) {
-		c.JSON(eresp.Status, gin.H{
-			"error": eresp.Msg,
+		c.JSON(eresp.StatusCode, gin.H{
+			"error": eresp.Message,
 		})
 		return
 	}

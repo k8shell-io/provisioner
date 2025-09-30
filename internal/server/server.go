@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"time"
 
+	apiclient "github.com/k8shell-io/common/apiclient"
 	log "github.com/k8shell-io/common/logger"
 	"github.com/k8shell-io/common/models"
 	identity "github.com/k8shell-io/identity/pkg/client"
@@ -52,7 +53,7 @@ func NewServer(configFile string) (*Server, error) {
 	}
 
 	server.log.Info().Msgf("Creating identity client with base URL: %s", server.config.Identity.BaseURL)
-	server.Identity = identity.NewClient(identity.Config{
+	server.Identity = identity.NewClient(apiclient.Config{
 		BaseURL: server.config.Identity.BaseURL,
 		APIKey:  server.config.Identity.APIKey,
 		Timeout: int(time.Duration(server.config.Identity.Timeout) * time.Millisecond),

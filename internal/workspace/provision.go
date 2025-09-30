@@ -155,21 +155,16 @@ func (w *Workspace) doInstallation(ctx context.Context, opts *ProvisionOptions) 
 	}
 
 	startTime := time.Now()
-	session, err := w.identify.CreateSSHSession(ctx, "system", w.Name(), "nota", 1, "10.0.0.1")
+	session, err := w.identify.CreateSSHSession(ctx, "system", w.Name(), w.blueprint.Name, "nota", 1, "10.0.0.1")
 	if err != nil {
 		w.log.Error().Err(err).Msg("Failed to create SSH session to store provisioning information")
 	}
 
 	defer func() {
 		if session != nil {
-			provTime := time.Since(startTime).Seconds()
-			if ctx.Err() != nil {
-				provTime = 0
-				w.log.Warn().Err(ctx.Err()).Msg("Context error, setting provisioning time to 0")
-			}
 			newCtx := context.Background()
 			if err := w.identify.UpdateSSHSession(newCtx, "system", session.SessionID, 0, 0, "",
-				float32(provTime), []string{}); err != nil {
+				[]string{}); err != nil {
 				w.log.Error().Err(err).Msg("Failed to close SSH session after provisioning")
 			}
 			err = w.identify.EndSSHSession(newCtx, "system", session.SessionID)
