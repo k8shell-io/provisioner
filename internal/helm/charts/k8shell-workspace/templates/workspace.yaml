@@ -49,7 +49,7 @@ spec:
         capabilities:
           add: {{ toYaml .Values.capabilities | nindent 12 }}
         {{- end }}
-      command: ["/usr/local/bin/k8shelld"] 
+      command: [\"/usr/local/bin/k8shelld\"] 
       imagePullPolicy: {{ .Values.imagePullPolicy }}
       resizePolicy:
       - resourceName: cpu
@@ -94,6 +94,10 @@ spec:
       - name: {{ $envName }}
         value: {{ $envValue }}
       {{- end }}
+      {{- end }}
+      {{- if .Values.docker.enabled }}
+      - name: DOCKER_HOST
+        value: unix:///var/run/docker.sock
       {{- end }}
       
       volumeMounts:
@@ -152,15 +156,14 @@ spec:
         privileged: true
       args:
         - dockerd
-        - --host=unix:///var/run/docker.sock
+        - --host=unix:///shared/docker.sock
         - --group=$(DOCKER_GROUP_GID)
       env:
         - name: DOCKER_GROUP_GID
           value: "{{ .Values.docker.groupId }}"
       volumeMounts:
         - name: docker-sock
-          mountPath: /var/run/docker.sock
-          subPath: docker.sock
+          mountPath: /shared
       {{- if .Values.__registry__.certCA }}
         - name: docker-ca-cert
           mountPath: /etc/ssl/certs/registry-ca.pem
