@@ -95,10 +95,6 @@ spec:
         value: {{ $envValue }}
       {{- end }}
       {{- end }}
-      {{- if .Values.docker.enabled }}
-      - name: DOCKER_HOST
-        value: unix:///var/run/docker/docker.sock
-      {{- end }}
       
       volumeMounts:
       - name: bin-volume
