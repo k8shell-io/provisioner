@@ -33,11 +33,16 @@ spec:
       securityContext:
         runAsUser: 0
         runAsGroup: 0
-      command: ["/bin/sh", "-c", "/k8shell/dist/scripts/init-base" ]
+      command: ["/bin/sh", "-c", "/init/init-base" ]
       volumeMounts:
         - name: bin-volume
           mountPath: /usr/local/bin
-
+        - name: docker-sock
+          mountPath: /tmp/docker        
+        - name: k8shelld-init
+          mountPath: /init                             
+          readOnly: true
+          
   containers:
     #### main container
     - name: k8shell-main
@@ -197,6 +202,10 @@ spec:
 
   ####  list of volumes to mount into the containers
   volumes:
+  - name: k8shelld-init
+    configMap:
+      name: {{ .Values.__workspace__ }}-k8shelld-init
+      defaultMode: 0755  
   - name: bin-volume
     emptyDir: {}
   - name: config-volume
