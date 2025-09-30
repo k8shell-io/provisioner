@@ -24,8 +24,12 @@ data:
     cp $SOURCE/kbox $DEST/kbox || exit 1
     cp $SOURCE/sftp $DEST/sftp || exit 1
 
+    {{- if .Values.docker.enabled }}
     echo "Creating docker.sock"
-    mkdir -p /tmp/docker
-    touch /shared/docker.sock
+    mkdir -p /shared/docker
+    : > /shared/docker.sock
+    chgrp {{ .Values.docker.groupId }} /shared/docker.sock
+    chmod 660 /shared/docker.sock
+    {{- end }}
 
     echo "Initialization complete"
