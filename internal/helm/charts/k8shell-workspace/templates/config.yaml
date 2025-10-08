@@ -33,10 +33,10 @@ data:
           gid: {{ if and (ne .Values.docker.subgid 0) }}{{ add .Values.docker.subgid .Values.docker.groupId -1 }}{{ else }}{{ .Values.docker.groupId }}{{ end }}
       {{- end }}
 
-    {{- if .Values.k8shelld.portForward }}
+    {{- if .Values.portForwarding }}
     # port forwarding rules
     portForwarding:
-    {{- range .Values.k8shelld.portForward }}
+    {{- range .Values.portForwarding }}
       - {{ . }}
     {{- end }}
     {{- end }}
