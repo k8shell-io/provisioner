@@ -22,9 +22,9 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	apiclient "github.com/k8shell-io/common/apiclient"
-	log "github.com/k8shell-io/common/logger"
-	"github.com/k8shell-io/common/models"
+	apiclient "github.com/k8shell-io/common/pkg/apiclient"
+	log "github.com/k8shell-io/common/pkg/logger"
+	"github.com/k8shell-io/common/pkg/models"
 	"github.com/k8shell-io/provisioner/internal/blueprint"
 	ws "github.com/k8shell-io/provisioner/internal/workspace"
 	provModels "github.com/k8shell-io/provisioner/pkg/models"
@@ -533,7 +533,7 @@ func (a *RESTApiService) TemplateWorkspace(c *gin.Context) {
 		return
 	}
 
-	ws, err := ws.NewWorkspace(blueprint, user, a.server.helm, a.server.Identity)
+	ws, err := ws.NewWorkspace(blueprint, user, a.server.helm, a.server.Identity, a.server.Session)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"error": fmt.Sprintf("Failed to create workspace: %v", err),
@@ -686,7 +686,7 @@ func (a *RESTApiService) ProvisionWorkspace(c *gin.Context) {
 		}
 	}
 
-	workspace, err := ws.NewWorkspace(blueprintObj, user, a.server.helm, a.server.Identity)
+	workspace, err := ws.NewWorkspace(blueprintObj, user, a.server.helm, a.server.Identity, a.server.Session)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"error": fmt.Sprintf("Failed to create workspace: %v", err),

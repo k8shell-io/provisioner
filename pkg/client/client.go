@@ -11,8 +11,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/k8shell-io/common/apiclient"
-	"github.com/k8shell-io/common/models"
+	"github.com/k8shell-io/common/pkg/apiclient"
+	"github.com/k8shell-io/common/pkg/models"
 	provModels "github.com/k8shell-io/provisioner/pkg/models"
 )
 

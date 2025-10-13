@@ -9,11 +9,12 @@ import (
 	"strings"
 	"time"
 
-	log "github.com/k8shell-io/common/logger"
-	"github.com/k8shell-io/common/models"
+	log "github.com/k8shell-io/common/pkg/logger"
+	"github.com/k8shell-io/common/pkg/models"
 	identity "github.com/k8shell-io/identity/pkg/client"
 	"github.com/k8shell-io/provisioner/internal/helm"
 	provModels "github.com/k8shell-io/provisioner/pkg/models"
+	session "github.com/k8shell-io/session/pkg/api"
 	"github.com/rs/zerolog"
 	"golang.org/x/sync/errgroup"
 	"gopkg.in/yaml.v3"
@@ -27,6 +28,7 @@ type Workspace struct {
 	log           *zerolog.Logger
 	client        *helm.Client
 	identify      *identity.Client
+	session       *session.Client
 	blueprint     *models.Blueprint
 	user          *models.User
 	workspaceLock *WorkspaceLock
@@ -188,12 +190,13 @@ func GetSelector(labels map[string]string) string {
 
 // NewWorkspace creates a new workspace with the specified Helm chart
 func NewWorkspace(blueprint *models.Blueprint, user *models.User, helmClient *helm.Client,
-	identityClient *identity.Client) (*Workspace, error) {
+	identityClient *identity.Client, sessionClient *session.Client) (*Workspace, error) {
 	return &Workspace{
 		log:       log.NewLogger("workspace"),
 		client:    helmClient,
 		identify:  identityClient,
 		blueprint: blueprint,
+		session:   sessionClient,
 		user:      user,
 	}, nil
 }

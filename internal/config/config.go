@@ -4,7 +4,8 @@ import (
 	"fmt"
 	"path/filepath"
 
-	"github.com/k8shell-io/common/config"
+	"github.com/k8shell-io/common/pkg/config"
+	"github.com/k8shell-io/common/pkg/gapi"
 )
 
 // Config represents the server configuration
@@ -13,6 +14,7 @@ type Config struct {
 	DefaultRegistry DefaultRegistry      `yaml:"defaultRegistry"`
 	Http            HttpConfig           `yaml:"http"`
 	Identity        IdentityConfig       `yaml:"identity"`
+	Session         gapi.ClientConfig    `yaml:"session"`
 	Blueprints      BlueprintsFileConfig `yaml:"blueprints"`
 	BaseDir         string               `yaml:"baseDir"`
 }

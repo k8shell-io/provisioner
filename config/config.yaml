@@ -20,6 +20,10 @@ identity:
   APIKey: !file ${SECRET_FILES}/identity_key
   timeout: 1000 
 
+session:
+  address: session:9010
+  tokenFilePath: /var/run/secrets/k8shell.io/session
+
 # Blueprints configuration
 blueprints:
   directory: blueprints

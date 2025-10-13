@@ -12,9 +12,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/k8shell-io/common/config"
-	log "github.com/k8shell-io/common/logger"
-	"github.com/k8shell-io/common/models"
+	"github.com/k8shell-io/common/pkg/config"
+	log "github.com/k8shell-io/common/pkg/logger"
+	"github.com/k8shell-io/common/pkg/models"
 	"github.com/k8shell-io/yaml-cel/pkg/yamlcel"
 	"github.com/rs/zerolog"
 	"gopkg.in/yaml.v3"

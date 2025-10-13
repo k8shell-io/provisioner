@@ -5,13 +5,14 @@ import (
 	"path/filepath"
 	"time"
 
-	apiclient "github.com/k8shell-io/common/apiclient"
-	log "github.com/k8shell-io/common/logger"
-	"github.com/k8shell-io/common/models"
+	apiclient "github.com/k8shell-io/common/pkg/apiclient"
+	log "github.com/k8shell-io/common/pkg/logger"
+	"github.com/k8shell-io/common/pkg/models"
 	identity "github.com/k8shell-io/identity/pkg/client"
 	"github.com/k8shell-io/provisioner/internal/blueprint"
 	"github.com/k8shell-io/provisioner/internal/config"
 	"github.com/k8shell-io/provisioner/internal/helm"
+	session "github.com/k8shell-io/session/pkg/api"
 	"github.com/rs/zerolog"
 )
 
@@ -19,6 +20,7 @@ type Server struct {
 	config         *config.Config
 	log            *zerolog.Logger
 	Identity       *identity.Client
+	Session        *session.Client
 	RESTApiService *RESTApiService
 	bpManager      *blueprint.BlueprintManager
 	helm           *helm.Client
@@ -58,6 +60,10 @@ func NewServer(configFile string) (*Server, error) {
 		APIKey:  server.config.Identity.APIKey,
 		Timeout: int(time.Duration(server.config.Identity.Timeout) * time.Millisecond),
 	})
+	server.Session, err = session.NewClient(server.config.Session)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create session client: %w", err)
+	}
 
 	server.log.Info().Msg("Creating REST API service")
 	server.RESTApiService, err = NewRESTAPI(server)

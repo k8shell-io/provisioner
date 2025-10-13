@@ -4,7 +4,7 @@ import (
 	"bytes"
 	"fmt"
 
-	"github.com/k8shell-io/common/models"
+	"github.com/k8shell-io/common/pkg/models"
 	"github.com/k8shell-io/yaml-cel/pkg/yamlcel"
 	"gopkg.in/yaml.v3"
 )

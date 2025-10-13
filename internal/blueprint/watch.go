@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"github.com/fsnotify/fsnotify"
-	log "github.com/k8shell-io/common/logger"
+	log "github.com/k8shell-io/common/pkg/logger"
 	"github.com/rs/zerolog"
 )
 

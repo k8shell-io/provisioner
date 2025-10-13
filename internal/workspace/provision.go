@@ -9,6 +9,7 @@ import (
 
 	"github.com/k8shell-io/provisioner/internal/helm"
 	provModels "github.com/k8shell-io/provisioner/pkg/models"
+	sessionpb "github.com/k8shell-io/session/pkg/api/sessionpb"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -155,7 +156,10 @@ func (w *Workspace) doInstallation(ctx context.Context, opts *ProvisionOptions) 
 	}
 
 	startTime := time.Now()
-	session, err := w.identify.CreateSSHSession(ctx, "system", w.Name(), w.blueprint.Name, "nota", 1, "10.0.0.1")
+	session, err := w.session.CreateSession(ctx, &sessionpb.Session{
+		Username: "system", Workspace: w.Name(), Blueprint: w.blueprint.Name, ClientIp: "10.0.0.1", ProxyId: "nota",
+		ProxyPid: 1,
+	})
 	if err != nil {
 		w.log.Error().Err(err).Msg("Failed to create SSH session to store provisioning information")
 	}
@@ -163,11 +167,7 @@ func (w *Workspace) doInstallation(ctx context.Context, opts *ProvisionOptions) 
 	defer func() {
 		if session != nil {
 			newCtx := context.Background()
-			if err := w.identify.UpdateSSHSession(newCtx, "system", session.SessionID, 0, 0, "",
-				[]string{}); err != nil {
-				w.log.Error().Err(err).Msg("Failed to close SSH session after provisioning")
-			}
-			err = w.identify.EndSSHSession(newCtx, "system", session.SessionID)
+			_, err = w.session.EndSession(newCtx, &sessionpb.EndSessionRequest{SessionId: session.SessionId})
 			if err != nil {
 				w.log.Error().Err(err).Msg("Failed to end SSH session after provisioning")
 			}
