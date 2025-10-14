@@ -15,7 +15,6 @@ import (
 	identity "github.com/k8shell-io/identity/pkg/api"
 	"github.com/k8shell-io/identity/pkg/api/identitypb"
 	"github.com/k8shell-io/provisioner/internal/helm"
-	provModels "github.com/k8shell-io/provisioner/pkg/models"
 	session "github.com/k8shell-io/session/pkg/api"
 	"github.com/rs/zerolog"
 	"golang.org/x/sync/errgroup"
@@ -38,7 +37,7 @@ type Workspace struct {
 
 // GetWorkspaceInfo retrieves information about workspaces
 func GetWorkspaceInfo(helmClient *helm.Client, name string, username string,
-	blueprint string) ([]provModels.WorkspaceInfo, error) {
+	blueprint string) ([]models.WorkspaceInfo, error) {
 	labels := map[string]string{
 		"app.kubernetes.io/name": helm.WORKSPACE_CHART_NAME,
 	}
@@ -59,14 +58,14 @@ func GetWorkspaceInfo(helmClient *helm.Client, name string, username string,
 	releases, err := helmClient.ListWithSelector(helmClient.TargetNamespace(), selector)
 	if err != nil {
 		if strings.Contains(err.Error(), "unable to parse") {
-			return nil, fmt.Errorf("failed to list releases: %w", provModels.ErrInvalidParameters)
+			return nil, fmt.Errorf("failed to list releases: %w", models.ErrInvalidParameters)
 		}
 		return nil, fmt.Errorf("failed to list releases: %w", err)
 	}
 
-	resp := make([]provModels.WorkspaceInfo, 0, len(releases))
+	resp := make([]models.WorkspaceInfo, 0, len(releases))
 	for _, release := range releases {
-		resp = append(resp, provModels.WorkspaceInfo{
+		resp = append(resp, models.WorkspaceInfo{
 			Name:      release.Labels["app.kubernetes.io/instance"],
 			Username:  release.Labels["k8shell.io/username"],
 			Blueprint: release.Labels["k8shell.io/blueprint"],
@@ -77,7 +76,7 @@ func GetWorkspaceInfo(helmClient *helm.Client, name string, username string,
 }
 
 func GetWorkspaceStatus(ctx context.Context, helmClient *helm.Client,
-	name string) (*provModels.WorkspaceStatus, error) {
+	name string) (*models.WorkspaceStatus, error) {
 	v1 := helmClient.GetKubeClient().CoreV1()
 
 	var pod *corev1.Pod
@@ -93,10 +92,10 @@ func GetWorkspaceStatus(ctx context.Context, helmClient *helm.Client,
 		pod, err = v1.Pods(helmClient.TargetNamespace()).Get(ctx, name, metav1.GetOptions{})
 		if err != nil {
 			if strings.Contains(err.Error(), "not found") {
-				return fmt.Errorf("%w: %s", provModels.ErrWorkspaceNotFound, name)
+				return fmt.Errorf("%w: %s", models.ErrWorkspaceNotFound, name)
 			}
 			if strings.Contains(err.Error(), "unable to parse") {
-				return fmt.Errorf("%w: %s", provModels.ErrInvalidParameters, name)
+				return fmt.Errorf("%w: %s", models.ErrInvalidParameters, name)
 			}
 			return fmt.Errorf("failed to get workspace %s: %w", name, err)
 		}
@@ -156,8 +155,8 @@ func GetWorkspaceStatus(ctx context.Context, helmClient *helm.Client,
 		}
 	}
 
-	status := &provModels.WorkspaceStatus{
-		PodStatus: provModels.PodStatus{
+	status := &models.WorkspaceStatus{
+		PodStatus: models.PodStatus{
 			Created: pod.CreationTimestamp.Time,
 			Status:  string(pod.Status.Phase),
 			Message: getPodStatusMessage(pod),
@@ -216,13 +215,13 @@ func NewWorkspaceFromHelmRelease(ctx context.Context, name string, helmClient *h
 	releases, err := helmClient.ListWithSelector(helmClient.TargetNamespace(), selector)
 	if err != nil {
 		if strings.Contains(err.Error(), "unable to parse") {
-			return nil, fmt.Errorf("failed to list releases: %w", provModels.ErrInvalidParameters)
+			return nil, fmt.Errorf("failed to list releases: %w", models.ErrInvalidParameters)
 		}
 		return nil, fmt.Errorf("failed to list releases: %w", err)
 	}
 
 	if len(releases) == 0 {
-		return nil, fmt.Errorf("%w: %s", provModels.ErrWorkspaceNotFound, name)
+		return nil, fmt.Errorf("%w: %s", models.ErrWorkspaceNotFound, name)
 	}
 	if len(releases) > 1 {
 		return nil, fmt.Errorf("multiple releases found for workspace %s", name)
@@ -354,16 +353,16 @@ func (w *Workspace) Template(ctx context.Context) (string, error) {
 	return out, nil
 }
 
-func (w *Workspace) GetPodStatus(ctx context.Context) (*provModels.PodStatus, error) {
+func (w *Workspace) GetPodStatus(ctx context.Context) (*models.PodStatus, error) {
 	v1 := w.client.GetKubeClient().CoreV1()
 	pod, err := v1.Pods(w.client.TargetNamespace()).Get(ctx, w.Name(), metav1.GetOptions{})
 	if err != nil {
 		if k8sErrors.IsNotFound(err) {
-			return nil, fmt.Errorf("%w: %s", provModels.ErrWorkspaceNotFound, w.Name())
+			return nil, fmt.Errorf("%w: %s", models.ErrWorkspaceNotFound, w.Name())
 		}
 		return nil, fmt.Errorf("failed to get workspace pod status %s: %w", w.Name(), err)
 	}
-	return &provModels.PodStatus{
+	return &models.PodStatus{
 		Created: pod.CreationTimestamp.Time,
 		Status:  string(pod.Status.Phase),
 		Message: getPodStatusMessage(pod),

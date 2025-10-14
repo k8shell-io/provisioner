@@ -23,3 +23,17 @@ image:
 	cd docker/provisioner && docker build --build-arg VERSION=$$version \
 		--build-arg COMMIT_ID=$$(git rev-parse --short HEAD) -t $(REPO)/$$(cat ./BUILD):$$version .
 
+COMMON_DIR := $(shell go list -m -f '{{.Dir}}' github.com/k8shell-io/common)
+
+proto-setup:
+	mkdir -p .proto_deps
+	@rm -f .proto_deps/common
+	ln -s $(COMMON_DIR) .proto_deps/common
+
+protoc:
+	@echo "Generating Go code from proto files..."
+	rm -rf pkg/api/provisionerpb
+	protoc -I . -I .proto_deps \
+	  --go_out=. --go_opt=module=github.com/k8shell-io/provisioner \
+	  --go-grpc_out=. --go-grpc_opt=module=github.com/k8shell-io/provisioner \
+	  pkg/api/provisioner.proto

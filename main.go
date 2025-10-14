@@ -1,12 +1,9 @@
 package main
 
 import (
-	"context"
 	"flag"
 	"fmt"
 	"os"
-	"os/signal"
-	"syscall"
 
 	log "github.com/k8shell-io/common/pkg/logger"
 	"github.com/k8shell-io/provisioner/internal/server"
@@ -74,8 +71,5 @@ func main() {
 		return
 	}
 
-	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
-	defer stop()
-
-	server.RESTApiService.Serve(ctx)
+	server.Serve()
 }

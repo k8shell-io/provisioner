@@ -2,26 +2,31 @@ package server
 
 import (
 	"fmt"
+	"os"
+	"os/signal"
 	"path/filepath"
+	"syscall"
 
+	"github.com/k8shell-io/common/pkg/gapi"
 	log "github.com/k8shell-io/common/pkg/logger"
 	"github.com/k8shell-io/common/pkg/models"
 	identity "github.com/k8shell-io/identity/pkg/api"
 	"github.com/k8shell-io/provisioner/internal/blueprint"
 	"github.com/k8shell-io/provisioner/internal/config"
 	"github.com/k8shell-io/provisioner/internal/helm"
+	"github.com/k8shell-io/provisioner/pkg/api/provisionerpb"
 	session "github.com/k8shell-io/session/pkg/api"
 	"github.com/rs/zerolog"
 )
 
 type Server struct {
-	config         *config.Config
-	log            *zerolog.Logger
-	Identity       *identity.Client
-	Session        *session.Client
-	RESTApiService *RESTApiService
-	bpManager      *blueprint.BlueprintManager
-	helm           *helm.Client
+	config    *config.Config
+	log       *zerolog.Logger
+	Identity  *identity.Client
+	Session   *session.Client
+	grpc      *gapi.Server
+	bpManager *blueprint.BlueprintManager
+	helm      *helm.Client
 }
 
 func NewServer(configFile string) (*Server, error) {
@@ -62,17 +67,19 @@ func NewServer(configFile string) (*Server, error) {
 		return nil, fmt.Errorf("failed to create session client: %w", err)
 	}
 
-	server.log.Info().Msg("Creating REST API service")
-	server.RESTApiService, err = NewRESTAPI(server)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create REST API service: %w", err)
-	}
-
 	server.log.Info().Msg("Creating Helm client")
 	server.helm, err = helm.NewClient(server.config.TargetNamespace, server.config.DefaultRegistry)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create Helm client: %w", err)
 	}
+
+	server.log.Info().Msg("Creating gRPC service")
+	server.grpc, err = gapi.NewServer(&server.config.GrpcConfig)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create gRPC service: %w", err)
+	}
+
+	provisionerpb.RegisterProvisionerServiceServer(server.grpc.GrpcServer, NewProvisionerService(server))
 
 	// server.log.Info().Msgf("Ensuring workspace base, namespace %s", server.config.TargetNamespace)
 	// err = server.helm.EnsureBase(context.Background())
@@ -119,4 +126,29 @@ func (s *Server) GetBlueprintScope(blueprintName string, user *models.User,
 		},
 	}
 	return scope, nil
+}
+
+// Start starts the gRPC server and waits for shutdown signals
+func (s *Server) Serve() error {
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
+
+	errChan := make(chan error, 1)
+	go func() {
+		s.log.Info().Msg("Starting gRPC server")
+		if err := s.grpc.Start(); err != nil {
+			errChan <- fmt.Errorf("gRPC server error: %v", err)
+		}
+	}()
+
+	select {
+	case sig := <-sigChan:
+		s.log.Info().Msgf("Received signal %v, shutting down gracefully", sig)
+		s.grpc.Stop()
+		s.log.Info().Msg("Server shutdown complete")
+		return nil
+	case err := <-errChan:
+		s.log.Error().Err(err).Msg("Server error occurred")
+		return err
+	}
 }

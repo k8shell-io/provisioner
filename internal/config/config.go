@@ -12,24 +12,11 @@ import (
 type Config struct {
 	TargetNamespace string               `yaml:"targetNamespace"`
 	DefaultRegistry DefaultRegistry      `yaml:"defaultRegistry"`
-	Http            HttpConfig           `yaml:"http"`
+	GrpcConfig      gapi.ServerConfig    `yaml:"grpc"`
 	Identity        gapi.ClientConfig    `yaml:"identity"`
 	Session         gapi.ClientConfig    `yaml:"session"`
 	Blueprints      BlueprintsFileConfig `yaml:"blueprints"`
 	BaseDir         string               `yaml:"baseDir"`
-}
-
-// HttpConfig represents the HTTP server configuration.
-type HttpConfig struct {
-	Port   int    `yaml:"port"`
-	APIKey string `yaml:"APIKey"`
-}
-
-// IdentityConfig represents the identity service configuration.
-type IdentityConfig struct {
-	BaseURL string `yaml:"baseURL"`
-	APIKey  string `yaml:"APIKey"`
-	Timeout int    `yaml:"timeout"`
 }
 
 // DefaultRegistry represents the default container registry configuration.
@@ -65,8 +52,8 @@ func NewConfig(configFile string) (*Config, error) {
 		return nil, fmt.Errorf("failed to load configuration from '%s': %w", configFile, err)
 	}
 
-	if cfg.Http.Port == 0 || cfg.Http.APIKey == "" {
-		return nil, fmt.Errorf("missing required configuration values: port and APIKey must be set")
+	if cfg.GrpcConfig.Port == 0 {
+		return nil, fmt.Errorf("missing required configuration values: port must be set")
 	}
 
 	cfg.BaseDir = filepath.Dir(configFile)
