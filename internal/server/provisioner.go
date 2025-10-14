@@ -5,10 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"net/http"
 	"time"
 
-	apiclient "github.com/k8shell-io/common/pkg/apiclient"
 	"github.com/k8shell-io/common/pkg/gapi"
 	"github.com/k8shell-io/common/pkg/gapi/commonpb"
 	"github.com/k8shell-io/common/pkg/models"
@@ -216,12 +214,8 @@ func (p *ProvisionerService) prepareWorkspaceProvisioning(ctx context.Context,
 	if userstr.HasCustomBlueprint {
 		blueprintpb, err := p.server.Identity.GetBlueprintByUserStr(ctx, &identitypb.UserStr{Userstr: userstrParam})
 		if err != nil {
-			var eresp *apiclient.APIError
-			if errors.As(err, &eresp) && eresp.StatusCode == http.StatusNotFound {
-				return nil, 0, status.Errorf(codes.InvalidArgument,
-					"No blueprint was provided, and no default blueprint is configured for user %s", userstr.Username)
-			}
-			return nil, 0, status.Errorf(codes.Internal, "Failed to lookup custom blueprint: %v", err)
+			return nil, 0, status.Errorf(codes.InvalidArgument,
+				"No blueprint was provided, and no default blueprint is configured for user %s", userstr.Username)
 		}
 
 		var customBlueprint models.CustomBlueprint
@@ -278,22 +272,6 @@ func (p *ProvisionerService) prepareWorkspaceProvisioning(ctx context.Context,
 
 // convertToGRPCError converts internal errors to gRPC status errors
 func (p *ProvisionerService) convertToGRPCError(err error) error {
-	var eresp *apiclient.APIError
-	if errors.As(err, &eresp) {
-		switch eresp.StatusCode {
-		case http.StatusNotFound:
-			return status.Errorf(codes.NotFound, "%s", eresp.Message)
-		case http.StatusBadRequest:
-			return status.Errorf(codes.InvalidArgument, "%s", eresp.Message)
-		case http.StatusForbidden:
-			return status.Errorf(codes.PermissionDenied, "%s", eresp.Message)
-		case http.StatusUnauthorized:
-			return status.Errorf(codes.Unauthenticated, "%s", eresp.Message)
-		default:
-			return status.Errorf(codes.Internal, "%s", eresp.Message)
-		}
-	}
-
 	if errors.Is(err, models.ErrWorkspaceNotFound) {
 		return status.Errorf(codes.NotFound, "%s", err.Error())
 	}
