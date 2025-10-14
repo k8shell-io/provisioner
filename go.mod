@@ -7,7 +7,7 @@ require github.com/rs/zerolog v1.34.0 // direct
 require (
 	github.com/fsnotify/fsnotify v1.9.0
 	github.com/gin-gonic/gin v1.11.0
-	github.com/k8shell-io/common v0.12.14
+	github.com/k8shell-io/common v0.12.26
 	github.com/k8shell-io/identity v0.12.1
 	github.com/k8shell-io/yaml-cel v0.2.6
 	github.com/stretchr/testify v1.11.1
@@ -65,6 +65,7 @@ require (
 	github.com/goccy/go-json v0.10.2 // indirect
 	github.com/goccy/go-yaml v1.18.0 // indirect
 	github.com/gogo/protobuf v1.3.2 // indirect
+	github.com/golang/protobuf v1.5.4 // indirect
 	github.com/google/btree v1.1.3 // indirect
 	github.com/google/cel-go v0.26.0 // indirect
 	github.com/google/gnostic-models v0.6.9 // indirect
@@ -81,6 +82,7 @@ require (
 	github.com/jmoiron/sqlx v1.4.0 // indirect
 	github.com/josharian/intern v1.0.0 // indirect
 	github.com/json-iterator/go v1.1.12 // indirect
+	github.com/k8shell-io/identity/pkg/api v0.1.2 // indirect
 	github.com/k8shell-io/session/pkg/api v0.1.1 // indirect
 	github.com/klauspost/compress v1.18.0 // indirect
 	github.com/klauspost/cpuid/v2 v2.3.0 // indirect
@@ -141,7 +143,7 @@ require (
 	google.golang.org/genproto/googleapis/api v0.0.0-20250804133106-a7a43d27e69b // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20250804133106-a7a43d27e69b // indirect
 	google.golang.org/grpc v1.76.0 // indirect
-	google.golang.org/protobuf v1.36.9 // indirect
+	google.golang.org/protobuf v1.36.10 // indirect
 	gopkg.in/evanphx/json-patch.v4 v4.12.0 // indirect
 	gopkg.in/inf.v0 v0.9.1 // indirect
 	k8s.io/apiextensions-apiserver v0.33.2 // indirect

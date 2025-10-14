@@ -13,7 +13,7 @@ type Config struct {
 	TargetNamespace string               `yaml:"targetNamespace"`
 	DefaultRegistry DefaultRegistry      `yaml:"defaultRegistry"`
 	Http            HttpConfig           `yaml:"http"`
-	Identity        IdentityConfig       `yaml:"identity"`
+	Identity        gapi.ClientConfig    `yaml:"identity"`
 	Session         gapi.ClientConfig    `yaml:"session"`
 	Blueprints      BlueprintsFileConfig `yaml:"blueprints"`
 	BaseDir         string               `yaml:"baseDir"`

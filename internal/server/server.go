@@ -3,12 +3,10 @@ package server
 import (
 	"fmt"
 	"path/filepath"
-	"time"
 
-	apiclient "github.com/k8shell-io/common/pkg/apiclient"
 	log "github.com/k8shell-io/common/pkg/logger"
 	"github.com/k8shell-io/common/pkg/models"
-	identity "github.com/k8shell-io/identity/pkg/client"
+	identity "github.com/k8shell-io/identity/pkg/api"
 	"github.com/k8shell-io/provisioner/internal/blueprint"
 	"github.com/k8shell-io/provisioner/internal/config"
 	"github.com/k8shell-io/provisioner/internal/helm"
@@ -54,12 +52,11 @@ func NewServer(configFile string) (*Server, error) {
 		return nil, fmt.Errorf("failed to create blueprint manager: %w", err)
 	}
 
-	server.log.Info().Msgf("Creating identity client with base URL: %s", server.config.Identity.BaseURL)
-	server.Identity = identity.NewClient(apiclient.Config{
-		BaseURL: server.config.Identity.BaseURL,
-		APIKey:  server.config.Identity.APIKey,
-		Timeout: int(time.Duration(server.config.Identity.Timeout) * time.Millisecond),
-	})
+	server.Identity, err = identity.NewClient(server.config.Identity)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create identity client: %w", err)
+	}
+
 	server.Session, err = session.NewClient(server.config.Session)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create session client: %w", err)

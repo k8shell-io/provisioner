@@ -16,9 +16,8 @@ http:
 
 # Identity service configuration
 identity:
-  baseURL: ${IDENTITY_SERVICE_URL}
-  APIKey: !file ${SECRET_FILES}/identity_key
-  timeout: 1000 
+  address: identity:9020
+  tokenFilePath: /var/run/secrets/k8shell.io/identity
 
 session:
   address: session:9010

@@ -23,8 +23,10 @@ import (
 
 	"github.com/gin-gonic/gin"
 	apiclient "github.com/k8shell-io/common/pkg/apiclient"
+	"github.com/k8shell-io/common/pkg/gapi"
 	log "github.com/k8shell-io/common/pkg/logger"
 	"github.com/k8shell-io/common/pkg/models"
+	"github.com/k8shell-io/identity/pkg/api/identitypb"
 	"github.com/k8shell-io/provisioner/internal/blueprint"
 	ws "github.com/k8shell-io/provisioner/internal/workspace"
 	provModels "github.com/k8shell-io/provisioner/pkg/models"
@@ -235,13 +237,14 @@ func (a *RESTApiService) GetBlueprint(c *gin.Context) {
 		return
 	}
 
-	user, err := a.server.Identity.GetUser(c.Request.Context(), username)
+	userpb, err := a.server.Identity.FindUser(c.Request.Context(), &identitypb.FindUserRequest{Username: username})
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{
 			"error": fmt.Sprintf("Failed to get user: %v", err),
 		})
 		return
 	}
+	user := gapi.ProtoToUser(userpb)
 
 	if !user.HasBlueprint(name) {
 		c.JSON(http.StatusNotFound, gin.H{
@@ -290,13 +293,14 @@ func (a *RESTApiService) ComposeBlueprint(c *gin.Context) {
 		return
 	}
 
-	user, err := a.server.Identity.GetUser(c.Request.Context(), username)
+	userpb, err := a.server.Identity.FindUser(c.Request.Context(), &identitypb.FindUserRequest{Username: username})
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{
 			"error": fmt.Sprintf("Failed to get user: %v", err),
 		})
 		return
 	}
+	user := gapi.ProtoToUser(userpb)
 
 	body, err := io.ReadAll(c.Request.Body)
 	if err != nil {
@@ -407,13 +411,14 @@ func (a *RESTApiService) GetWorkspaces(c *gin.Context) {
 	username := c.Query("username")
 	blueprint := c.Query("blueprint")
 
-	user, err := a.server.Identity.GetUser(c.Request.Context(), username)
+	userpb, err := a.server.Identity.FindUser(c.Request.Context(), &identitypb.FindUserRequest{Username: username})
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{
 			"error": fmt.Sprintf("Failed to get user: %v", err),
 		})
 		return
 	}
+	user := gapi.ProtoToUser(userpb)
 
 	if blueprint == "" {
 		blueprint, err = a.server.bpManager.GetDefaultUserBlueprint(user)
@@ -491,13 +496,14 @@ func (a *RESTApiService) TemplateWorkspace(c *gin.Context) {
 		return
 	}
 
-	user, err := a.server.Identity.GetUser(c.Request.Context(), username)
+	userpb, err := a.server.Identity.FindUser(c.Request.Context(), &identitypb.FindUserRequest{Username: username})
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{
 			"error": fmt.Sprintf("Failed to get user: %v", err),
 		})
 		return
 	}
+	user := gapi.ProtoToUser(userpb)
 
 	scope, errx := a.server.GetBlueprintScope("noblueprint", user, nil)
 	if errx != nil {
@@ -588,13 +594,15 @@ func (a *RESTApiService) ProvisionWorkspace(c *gin.Context) {
 		return
 	}
 
-	user, err := a.server.Identity.GetUser(c.Request.Context(), userstr.Username)
+	userpb, err := a.server.Identity.FindUser(c.Request.Context(),
+		&identitypb.FindUserRequest{Username: userstr.Username})
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{
 			"error": fmt.Sprintf("Failed to get user: %v", err),
 		})
 		return
 	}
+	user := gapi.ProtoToUser(userpb)
 
 	bpName := userstr.Blueprint
 	if bpName == "" {
@@ -610,7 +618,7 @@ func (a *RESTApiService) ProvisionWorkspace(c *gin.Context) {
 	var blueprintObj *models.Blueprint
 
 	if userstr.HasCustomBlueprint {
-		customBlueprint, err := a.server.Identity.GetBlueprintByUserStr(c.Request.Context(), userstrParam)
+		blueprintpb, err := a.server.Identity.GetBlueprintByUserStr(c.Request.Context(), &identitypb.UserStr{Userstr: userstrParam})
 		if err != nil {
 			var eresp *apiclient.APIError
 			if errors.As(err, &eresp) && eresp.StatusCode == http.StatusNotFound {
@@ -625,12 +633,21 @@ func (a *RESTApiService) ProvisionWorkspace(c *gin.Context) {
 			return
 		}
 
-		if customBlueprint == nil {
-			c.JSON(http.StatusBadRequest, gin.H{
-				"error": fmt.Sprintf("No blueprint was provided, and no default blueprint found for user %s.", userstr.Username),
+		var customBlueprint models.CustomBlueprint
+		err = json.Unmarshal([]byte(blueprintpb.BlueprintJson), &customBlueprint)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{
+				"error": fmt.Sprintf("Failed to parse custom blueprint JSON: %v", err),
 			})
 			return
 		}
+
+		// if customBlueprint == nil {
+		// 	c.JSON(http.StatusBadRequest, gin.H{
+		// 		"error": fmt.Sprintf("No blueprint was provided, and no default blueprint found for user %s.", userstr.Username),
+		// 	})
+		// 	return
+		// }
 
 		if !user.HasBlueprint(customBlueprint.Template) {
 			c.JSON(http.StatusNotFound, gin.H{
@@ -645,7 +662,7 @@ func (a *RESTApiService) ProvisionWorkspace(c *gin.Context) {
 			return
 		}
 
-		blueprintObj, err = a.server.bpManager.ComposeWithScope(customBlueprint, scope)
+		blueprintObj, err = a.server.bpManager.ComposeWithScope(&customBlueprint, scope)
 		if err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{
 				"error": fmt.Sprintf("Failed to compose blueprint: %v", err),

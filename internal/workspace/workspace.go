@@ -9,9 +9,11 @@ import (
 	"strings"
 	"time"
 
+	"github.com/k8shell-io/common/pkg/gapi"
 	log "github.com/k8shell-io/common/pkg/logger"
 	"github.com/k8shell-io/common/pkg/models"
-	identity "github.com/k8shell-io/identity/pkg/client"
+	identity "github.com/k8shell-io/identity/pkg/api"
+	"github.com/k8shell-io/identity/pkg/api/identitypb"
 	"github.com/k8shell-io/provisioner/internal/helm"
 	provModels "github.com/k8shell-io/provisioner/pkg/models"
 	session "github.com/k8shell-io/session/pkg/api"
@@ -231,10 +233,11 @@ func NewWorkspaceFromHelmRelease(ctx context.Context, name string, helmClient *h
 	blueprintName := release.Labels["k8shell.io/blueprint"]
 	workspaceName := release.Labels["app.kubernetes.io/instance"]
 
-	user, err := identityClient.GetUser(ctx, username)
+	userpb, err := identityClient.FindUser(ctx, &identitypb.FindUserRequest{Username: username})
 	if err != nil {
 		return nil, fmt.Errorf("failed to get user %s: %w", username, err)
 	}
+	user := gapi.ProtoToUser(userpb)
 
 	values := releases[0].Config
 	blueprint := &models.Blueprint{}
