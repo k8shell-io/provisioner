@@ -9,10 +9,14 @@ defaultRegistry:
   username: !file ${SECRET_FILES}/registry_username
   password: !file ${SECRET_FILES}/registry_password
 
-# Server configuration
-http:
-  port: 9201
-  APIKey: !file ${SECRET_FILES}/provisioner_key
+# grpc server
+grpc:
+  port: 9030
+
+  # JWT required claims for authentication
+  audience: provisioner
+  allowed:
+    - serviceAccount: ssh-proxy
 
 # Identity service configuration
 identity:
