@@ -33,7 +33,7 @@ jobs:
 
       - name: Get version and commit ID
         run: |
-          VERSION=$(git describe --tags --match '*' | sed 's/-g.*//')
+          VERSION=$(git describe --tags --match 'v*' | sed 's/-g.*//')
           COMMIT_ID=$(git rev-parse --short HEAD)
           echo "VERSION=$VERSION" >> $GITHUB_ENV
           echo "COMMIT_ID=$COMMIT_ID" >> $GITHUB_ENV

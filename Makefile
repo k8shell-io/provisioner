@@ -18,7 +18,7 @@ image:
 	@echo "Downloading vendor modules..."
 	@go mod vendor -o docker/provisioner/files/vendor
 	@echo "Building image..."
-	@version=$$(git describe --tags --match '*' | sed 's/-g.*//') && \
+	@version=$$(git describe --tags --match 'v*' | sed 's/-g.*//') && \
 	cp -r go.mod go.sum pkg internal main.go docker/provisioner/files && \
 	cd docker/provisioner && docker build --build-arg VERSION=$$version \
 		--build-arg COMMIT_ID=$$(git rev-parse --short HEAD) -t $(REPO)/$$(cat ./BUILD):$$version .
