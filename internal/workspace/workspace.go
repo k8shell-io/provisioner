@@ -158,19 +158,33 @@ func GetWorkspaceStatus(ctx context.Context, helmClient *helm.Client,
 		}
 	}
 
+	// get app version (it should be the same as is in helm app version)
+	var appVersion string
+	for _, container := range pod.Spec.InitContainers {
+		if strings.Contains(container.Image, "k8shelld") {
+			imageParts := strings.Split(container.Image, ":")
+			if len(imageParts) >= 2 {
+				tag := imageParts[len(imageParts)-1]
+				appVersion = strings.TrimPrefix(tag, "v")
+			}
+			break
+		}
+	}
+
 	status := &models.WorkspaceStatus{
 		PodStatus: models.PodStatus{
 			Created: pod.CreationTimestamp.Time,
 			Status:  string(pod.Status.Phase),
 			Message: getPodStatusMessage(pod),
 		},
-		Name:      pod.Labels["k8shell.io/workspace"],
-		Host:      podService.Name + "." + podService.Namespace,
-		PodIP:     pod.Status.PodIP,
-		Port:      int(podService.Spec.Ports[0].Port),
-		AccessKey: string(accessKey),
-		TLSCert:   string(tlsCert),
-		Splash:    splash,
+		Name:       pod.Labels["k8shell.io/workspace"],
+		Host:       podService.Name + "." + podService.Namespace,
+		PodIP:      pod.Status.PodIP,
+		Port:       int(podService.Spec.Ports[0].Port),
+		AccessKey:  string(accessKey),
+		TLSCert:    string(tlsCert),
+		Splash:     splash,
+		AppVersion: appVersion,
 	}
 
 	return status, nil

@@ -30,6 +30,8 @@ github.com/k8shell-io/common v0.12.33 h1:wooIbshOOka/IA8KPXOl2MNhsYYmqiB4cG13WH7
 github.com/k8shell-io/common v0.12.33/go.mod h1:H6L2S98KWs/i+9I84kNbbG2DSzsT4Seyvu+6KZnomPs=
 github.com/k8shell-io/common v0.12.35 h1:vLkvidArufIrbkZuiQuJjrOouQJeQo5QeVEyoYS9OXc=
 github.com/k8shell-io/common v0.12.35/go.mod h1:H6L2S98KWs/i+9I84kNbbG2DSzsT4Seyvu+6KZnomPs=
+github.com/k8shell-io/common v0.12.36 h1:01QK6LzkydzcVFYlOdLDBrhMn832zMaWHjbC3JB9l0U=
+github.com/k8shell-io/common v0.12.36/go.mod h1:H6L2S98KWs/i+9I84kNbbG2DSzsT4Seyvu+6KZnomPs=
 github.com/leodido/go-urn v1.4.0 h1:WT9HwE9SGECu3lg4d/dIA+jxlljEa1/ffXKmRjqdmIQ=
 github.com/leodido/go-urn v1.4.0/go.mod h1:bvxc+MVxLKB4z00jd1z+Dvzr47oO32F/QSNjSBOlFxI=
 github.com/mattn/go-colorable v0.1.13 h1:fFA4WZxdEF4tXPZVKMLwD8oUnCTTo08duU7wxecdEvA=
