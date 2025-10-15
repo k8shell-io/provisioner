@@ -43,9 +43,9 @@ func (p *ProvisionerService) GetWorkspaceStatus(ctx context.Context,
 	return gapi.WorkspaceStatusToProto(status), nil
 }
 
-// GetWorkspaces retrieves all workspaces for a given user and optional blueprint
-func (p *ProvisionerService) GetWorkspaces(ctx context.Context,
-	req *provisionerpb.GetWorkspacesRequest) (*provisionerpb.GetWorkspacesResponse, error) {
+// GetUserWorkspaceInfo retrieves all workspaces for a given user and optional blueprint
+func (p *ProvisionerService) GetUserWorkspaceInfo(ctx context.Context,
+	req *provisionerpb.GetUserWorkspacesRequest) (*commonpb.WorkspaceInfo, error) {
 
 	username := req.Username
 	blueprint := req.Blueprint
@@ -69,13 +69,37 @@ func (p *ProvisionerService) GetWorkspaces(ctx context.Context,
 		return nil, status.Errorf(codes.Internal, "Failed to get workspace info: %v", err)
 	}
 
-	workspaceInfos := make([]*commonpb.WorkspaceInfo, 0, len(workspaces))
-	for _, workspace := range workspaces {
-		workspaceInfos = append(workspaceInfos, gapi.WorkspaceInfoToProto(&workspace))
+	if len(workspaces) == 0 {
+		return nil, status.Errorf(codes.NotFound, "No workspaces found for user %s with blueprint %s", username, blueprint)
 	}
 
-	return &provisionerpb.GetWorkspacesResponse{
-		Workspaces: workspaceInfos,
+	if len(workspaces) > 1 {
+		return nil, status.Errorf(codes.Internal,
+			"multiple workspaces found for user %s with blueprint %s", username, blueprint)
+	}
+
+	return gapi.WorkspaceInfoToProto(&workspaces[0]), nil
+}
+
+// ListWorkspaces lists all workspaces, optionally filtered by user and/or blueprint
+func (p *ProvisionerService) ListWorkspaces(ctx context.Context,
+	req *provisionerpb.ListWorkspacesRequest) (*provisionerpb.ListWorkspacesResponse, error) {
+
+	username := req.Username
+	blueprint := req.Blueprint
+
+	workspaces, err := ws.GetWorkspaceInfo(p.server.helm, "", username, blueprint)
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "Failed to list workspaces: %v", err)
+	}
+
+	var protoWorkspaces []*commonpb.WorkspaceInfo
+	for _, w := range workspaces {
+		protoWorkspaces = append(protoWorkspaces, gapi.WorkspaceInfoToProto(&w))
+	}
+
+	return &provisionerpb.ListWorkspacesResponse{
+		Workspaces: protoWorkspaces,
 	}, nil
 }
 
