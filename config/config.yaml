@@ -17,15 +17,20 @@ grpc:
   audience: provisioner
   allowed:
     - serviceAccount: ssh-proxy
+    - namespace: k8shell-test
+      serviceAccount: ssh-proxy
+    - namespace: k8shell-test
+      serviceAccount: api-server
+    
 
 # Identity service configuration
 identity:
-  address: identity:9020
-  tokenFilePath: /var/run/secrets/k8shell.io/identity
+  address: identity.k8shell-test:9020
+  tokenFilePath: /tmp/identity
 
 session:
   address: session:9010
-  tokenFilePath: /var/run/secrets/k8shell.io/session
+  tokenFilePath: /tmp/identity
 
 # Blueprints configuration
 blueprints:

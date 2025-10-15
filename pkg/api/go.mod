@@ -3,7 +3,7 @@ module github.com/k8shell-io/provisioner/pkg/api
 go 1.24.5
 
 require (
-	github.com/k8shell-io/common v0.12.37
+	github.com/k8shell-io/common v0.12.39
 	google.golang.org/grpc v1.76.0
 	google.golang.org/protobuf v1.36.10
 )
