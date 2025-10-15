@@ -352,7 +352,7 @@ func (p *ProvisionerService) DeleteWorkspace(ctx context.Context,
 		time.Sleep(2 * time.Second)
 		p.log.Debug().Msgf("Starting async deletion of workspace %s", name)
 
-		err := w.Uninstall(context.Background(), time.Duration(10)*time.Second, false)
+		err := w.Uninstall(context.Background(), time.Duration(10)*time.Second, false, false)
 		if err != nil {
 			p.log.Error().Err(err).Msgf("Failed to delete workspace %s", name)
 		} else {

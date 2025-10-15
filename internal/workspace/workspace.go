@@ -396,16 +396,19 @@ func (w *Workspace) IsInstalled(ctx context.Context) (bool, error) {
 	return true, nil
 }
 
-func (w *Workspace) Uninstall(ctx context.Context, timeout time.Duration, wait bool) error {
-	err := w.lock(timeout)
-	if err != nil {
-		return fmt.Errorf("failed to acquire lock: %w", err)
-	}
-	defer func() {
-		if releaseErr := w.unlock(); releaseErr != nil {
-			w.log.Error().Err(releaseErr).Msgf("Failed to release lock for workspace %s", w.Name())
+func (w *Workspace) Uninstall(ctx context.Context, timeout time.Duration, wait bool, lock bool) error {
+	if lock {
+		err := w.lock(timeout)
+		if err != nil {
+			return fmt.Errorf("failed to acquire lock: %w", err)
 		}
-	}()
+		defer func() {
+			if releaseErr := w.unlock(); releaseErr != nil {
+				w.log.Error().Err(releaseErr).Msgf("Failed to release lock for workspace %s", w.Name())
+			}
+		}()
+	}
+
 	if err := w.client.Uninstall(w.Name(), int(timeout.Seconds()), wait); err != nil {
 		return fmt.Errorf("failed to uninstall workspace: %w", err)
 	}
