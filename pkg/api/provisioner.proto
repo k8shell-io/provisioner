@@ -9,8 +9,8 @@ import "common/pkg/gapi/common.proto";
 // *** Provisioner service
 
 service ProvisionerService {
+  rpc GetUserWorkspaceInfo (GetUserWorkspacesRequest) returns (common.WorkspaceInfo);
   rpc GetWorkspaceStatus (Workspace) returns (common.WorkspaceStatus);
-  rpc GetWorkspaces (GetWorkspacesRequest) returns (GetWorkspacesResponse);
   rpc ProvisionWorkspaceStream (ProvisionWorkspaceRequest) returns (stream ProvisionEvent);
   rpc DeleteWorkspace (Workspace) returns (DeleteWorkspaceResponse);
 }
@@ -19,13 +19,9 @@ message Workspace {
   string workspace = 1;
 }
 
-message GetWorkspacesRequest {
+message GetUserWorkspacesRequest {
   string username = 1;
   string blueprint = 2;
-}
-
-message GetWorkspacesResponse {
-  repeated common.WorkspaceInfo workspaces = 1;
 }
 
 message ProvisionWorkspaceRequest {
