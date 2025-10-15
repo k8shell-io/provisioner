@@ -66,10 +66,13 @@ func GetWorkspaceInfo(helmClient *helm.Client, name string, username string,
 	resp := make([]models.WorkspaceInfo, 0, len(releases))
 	for _, release := range releases {
 		resp = append(resp, models.WorkspaceInfo{
-			Name:      release.Labels["app.kubernetes.io/instance"],
-			Username:  release.Labels["k8shell.io/username"],
-			Blueprint: release.Labels["k8shell.io/blueprint"],
-			Deployed:  release.Info.LastDeployed.Time,
+			Name:       release.Labels["app.kubernetes.io/instance"],
+			Username:   release.Labels["k8shell.io/username"],
+			Blueprint:  release.Labels["k8shell.io/blueprint"],
+			Deployed:   release.Info.LastDeployed.Time,
+			AppVersion: release.Chart.Metadata.AppVersion,
+			Chart:      release.Chart.Metadata.Name,
+			ChartVer:   release.Chart.Metadata.Version,
 		})
 	}
 	return resp, nil
