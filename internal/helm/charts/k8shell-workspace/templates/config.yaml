@@ -17,6 +17,14 @@ data:
       # api server 
       apiServer: http://api-server.{{ .Values.__namespace__ }}:9101
 
+      # grpc server
+      grpc:
+        port: 2822
+        audience: k8shelld
+        allowed:
+          - namespace: {{ .Values.__namespace__ }}
+            serviceAccount: ssh-proxy
+
     # workspace user
     user:
       username: {{ .Values.__username__ }}

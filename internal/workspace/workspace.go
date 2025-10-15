@@ -35,6 +35,10 @@ type Workspace struct {
 	workspaceLock *WorkspaceLock
 }
 
+type Values struct {
+	Values map[string]interface{}
+}
+
 // GetWorkspaceInfo retrieves information about workspaces
 func GetWorkspaceInfo(helmClient *helm.Client, name string, username string,
 	blueprint string) ([]models.WorkspaceInfo, error) {
@@ -120,7 +124,7 @@ func GetWorkspaceStatus(ctx context.Context, helmClient *helm.Client,
 		var err error
 		keysSecret, err = v1.Secrets(helmClient.TargetNamespace()).Get(ctx, name+"-access-keys", metav1.GetOptions{})
 		if err != nil {
-			return fmt.Errorf("failed to get keys %s: %w", name, err)
+			//return fmt.Errorf("failed to get keys %s: %w", name, err)
 		}
 		return nil
 	})
@@ -130,7 +134,7 @@ func GetWorkspaceStatus(ctx context.Context, helmClient *helm.Client,
 		var err error
 		tlsSecret, err = v1.Secrets(helmClient.TargetNamespace()).Get(ctx, name+"-tls", metav1.GetOptions{})
 		if err != nil {
-			return fmt.Errorf("failed to get tls secret %s: %w", name, err)
+			//return fmt.Errorf("failed to get tls secret %s: %w", name, err)
 		}
 		return nil
 	})
@@ -141,12 +145,12 @@ func GetWorkspaceStatus(ctx context.Context, helmClient *helm.Client,
 
 	accessKey, ok := keysSecret.Data["a1key"]
 	if !ok {
-		return nil, fmt.Errorf("failed to get access key from keys %s", name)
+		accessKey = []byte{}
 	}
 
 	tlsCert, ok := tlsSecret.Data["tls.crt"]
 	if !ok {
-		return nil, fmt.Errorf("failed to get tls cert from secret %s", name)
+		tlsCert = []byte{}
 	}
 
 	var splash string
@@ -326,16 +330,6 @@ func (w *Workspace) Values() (map[string]interface{}, error) {
 		return nil, fmt.Errorf("failed to convert blueprint to map: %w", err)
 	}
 
-	key, cert, err := w.generateKeyCert()
-	if err != nil {
-		return nil, fmt.Errorf("failed to generate key and certificate: %w", err)
-	}
-
-	a1key, err := w.generateAccessKey()
-	if err != nil {
-		return nil, fmt.Errorf("failed to generate access key: %w", err)
-	}
-
 	userValues, err := toMap(w.user)
 	if err != nil {
 		return nil, fmt.Errorf("failed to convert user to map: %w", err)
@@ -346,9 +340,6 @@ func (w *Workspace) Values() (map[string]interface{}, error) {
 	values["__workspace__"] = w.Name()
 	values["__blueprint__"] = w.blueprint.Name
 	values["__organization__"] = w.user.Organization
-	values["__tlscrt__"] = cert
-	values["__tlskey__"] = key
-	values["__a1key__"] = base64.StdEncoding.EncodeToString([]byte(a1key))
 	values["__registry__"] = w.client.Registry.ToValues()
 	values["__namespace__"] = getNamespace()
 

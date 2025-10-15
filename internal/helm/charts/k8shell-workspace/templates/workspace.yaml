@@ -84,11 +84,6 @@ spec:
         value: {{ .Values.__user__.email }}
       - name: USERFULLNAME
         value: {{ .Values.__user__.fullname }}
-      - name: A1K
-        valueFrom:
-          secretKeyRef:
-            name: {{ .Values.__workspace__ }}-access-keys
-            key: a1key
       {{- if .Values.env }}    
       {{- range $envName, $envValue := .Values.env }}            
       - name: {{ $envName }}
@@ -112,14 +107,6 @@ spec:
       - name: config-volume
         mountPath: /etc/k8shell/config.yaml
         subPath: config.yaml
-        readOnly: true
-      - name: tls-volume
-        mountPath: /etc/k8shell/server.crt
-        subPath: tls.crt      
-        readOnly: true
-      - name: tls-volume
-        mountPath: /etc/k8shell/server.key
-        subPath: tls.key
         readOnly: true
       - name: main-volume
         mountPath: /usr/local/k8shell/system
@@ -200,12 +187,6 @@ spec:
       items:
       - key: config.yaml
         path: config.yaml
-  - name: access-keys-volume
-    secret:
-      secretName: {{ .Values.__workspace__ }}-access-keys
-      items:
-      - key: a1key
-        path: a1key
   - name: main-volume
     configMap:
       name: {{ .Values.__workspace__ }}-files
@@ -263,9 +244,6 @@ spec:
         {{- end }}
   {{- end }}
   {{- end }}
-  - name: tls-volume
-    secret:
-      secretName: {{ .Values.__workspace__ }}-tls
   {{- if .Values.__registry__.certCA }}
   - name: docker-ca-cert
     configMap:
