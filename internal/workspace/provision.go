@@ -66,11 +66,11 @@ func (w *Workspace) Provision(ctx context.Context, opts *ProvisionOptions) (*mod
 }
 
 // Lock acquires a distributed lock for the workspace
-func (w *Workspace) Lock(timeout time.Duration) error {
+func (w *Workspace) lock(timeout time.Duration) error {
 	if w.workspaceLock != nil {
 		return nil
 	}
-	w.workspaceLock = NewWorkspaceLock(w.client.GetKubeClient(), w.client.TargetNamespace(), w.Name())
+	w.workspaceLock = w.CreateLock()
 
 	w.log.Debug().Msgf("Acquiring lock for workspace %s", w.Name())
 	lockCtx, cancel := context.WithTimeout(context.Background(), timeout)
@@ -89,7 +89,7 @@ func (w *Workspace) Lock(timeout time.Duration) error {
 }
 
 // Unlock releases the distributed lock for the workspace
-func (w *Workspace) Unlock() error {
+func (w *Workspace) unlock() error {
 	if w.workspaceLock == nil {
 		return nil
 	}
@@ -104,11 +104,11 @@ func (w *Workspace) Unlock() error {
 
 // provisionWithLock provisions the workspace with a distributed lock
 func (w *Workspace) provisionWithLock(ctx context.Context, opts *ProvisionOptions) (*models.PodStatus, error) {
-	if err := w.Lock(time.Duration(opts.LockTimeout) * time.Second); err != nil {
+	if err := w.lock(time.Duration(opts.LockTimeout) * time.Second); err != nil {
 		return nil, err
 	}
 	defer func() {
-		if releaseErr := w.Unlock(); releaseErr != nil {
+		if releaseErr := w.unlock(); releaseErr != nil {
 			w.log.Error().Err(releaseErr).Msgf("Failed to release lock for workspace %s", w.Name())
 		}
 	}()

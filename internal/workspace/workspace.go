@@ -307,6 +307,14 @@ func (w *Workspace) Labels() map[string]string {
 	}
 }
 
+func (w *Workspace) CreateLock() *WorkspaceLock {
+	return NewWorkspaceLock(
+		w.client.GetKubeClient(),
+		w.client.TargetNamespace(),
+		w.Name(),
+	)
+}
+
 func (w *Workspace) getK8shelldVersion() string {
 	if w.blueprint.K8shelld.Image != "" {
 		parts := strings.Split(w.blueprint.K8shelld.Image, ":")
@@ -389,12 +397,12 @@ func (w *Workspace) IsInstalled(ctx context.Context) (bool, error) {
 }
 
 func (w *Workspace) Uninstall(ctx context.Context, timeout time.Duration, wait bool) error {
-	err := w.Lock(timeout)
+	err := w.lock(timeout)
 	if err != nil {
 		return fmt.Errorf("failed to acquire lock: %w", err)
 	}
 	defer func() {
-		if releaseErr := w.Unlock(); releaseErr != nil {
+		if releaseErr := w.unlock(); releaseErr != nil {
 			w.log.Error().Err(releaseErr).Msgf("Failed to release lock for workspace %s", w.Name())
 		}
 	}()

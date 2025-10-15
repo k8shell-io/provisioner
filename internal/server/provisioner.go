@@ -306,7 +306,7 @@ func (p *ProvisionerService) convertToGRPCError(err error) error {
 	return status.Errorf(codes.Internal, "%s", err.Error())
 }
 
-// DeleteWorkspace deletes a workspace asynchronously
+// DeleteWorkspace deletes a workspace asynchronously with distributed locking
 func (p *ProvisionerService) DeleteWorkspace(ctx context.Context,
 	req *provisionerpb.Workspace) (*provisionerpb.DeleteWorkspaceResponse, error) {
 
@@ -320,11 +320,39 @@ func (p *ProvisionerService) DeleteWorkspace(ctx context.Context,
 		return nil, p.convertToGRPCError(err)
 	}
 
-	asyncCtx := context.Background()
+	lockCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+
+	workspaceLock := w.CreateLock()
+	acquired, err := workspaceLock.TryAcquire(lockCtx)
+	if err != nil {
+		if errors.Is(err, ws.ErrLockAlreadyHeld) {
+			return &provisionerpb.DeleteWorkspaceResponse{
+				Message: fmt.Sprintf("Request to delete the workspace %s already exists", name),
+			}, nil
+		}
+		return nil, status.Errorf(codes.Internal,
+			"Failed to acquire lock for workspace %s deletion: %v", name, err)
+	}
+
+	if !acquired {
+		return &provisionerpb.DeleteWorkspaceResponse{
+			Message: fmt.Sprintf("Request to delete the workspace %s already exists", name),
+		}, nil
+	}
+
 	go func() {
+		defer func() {
+			unlockCtx := context.Background()
+			if unlockErr := workspaceLock.Release(unlockCtx); unlockErr != nil {
+				p.log.Error().Err(unlockErr).Msgf("Failed to release lock after deleting workspace %s", name)
+			}
+		}()
+
 		time.Sleep(2 * time.Second)
 		p.log.Debug().Msgf("Starting async deletion of workspace %s", name)
-		err := w.Uninstall(asyncCtx, time.Duration(10)*time.Second, false)
+
+		err := w.Uninstall(context.Background(), time.Duration(10)*time.Second, false)
 		if err != nil {
 			p.log.Error().Err(err).Msgf("Failed to delete workspace %s", name)
 		} else {
