@@ -22,6 +22,7 @@ const _ = grpc.SupportPackageIsVersion9
 const (
 	ProvisionerService_GetUserWorkspaceInfo_FullMethodName     = "/provisioner.ProvisionerService/GetUserWorkspaceInfo"
 	ProvisionerService_GetWorkspaceStatus_FullMethodName       = "/provisioner.ProvisionerService/GetWorkspaceStatus"
+	ProvisionerService_ListWorkspaces_FullMethodName           = "/provisioner.ProvisionerService/ListWorkspaces"
 	ProvisionerService_ProvisionWorkspaceStream_FullMethodName = "/provisioner.ProvisionerService/ProvisionWorkspaceStream"
 	ProvisionerService_DeleteWorkspace_FullMethodName          = "/provisioner.ProvisionerService/DeleteWorkspace"
 )
@@ -32,6 +33,7 @@ const (
 type ProvisionerServiceClient interface {
 	GetUserWorkspaceInfo(ctx context.Context, in *GetUserWorkspacesRequest, opts ...grpc.CallOption) (*commonpb.WorkspaceInfo, error)
 	GetWorkspaceStatus(ctx context.Context, in *Workspace, opts ...grpc.CallOption) (*commonpb.WorkspaceStatus, error)
+	ListWorkspaces(ctx context.Context, in *ListWorkspacesRequest, opts ...grpc.CallOption) (*ListWorkspacesResponse, error)
 	ProvisionWorkspaceStream(ctx context.Context, in *ProvisionWorkspaceRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[ProvisionEvent], error)
 	DeleteWorkspace(ctx context.Context, in *Workspace, opts ...grpc.CallOption) (*DeleteWorkspaceResponse, error)
 }
@@ -58,6 +60,16 @@ func (c *provisionerServiceClient) GetWorkspaceStatus(ctx context.Context, in *W
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(commonpb.WorkspaceStatus)
 	err := c.cc.Invoke(ctx, ProvisionerService_GetWorkspaceStatus_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *provisionerServiceClient) ListWorkspaces(ctx context.Context, in *ListWorkspacesRequest, opts ...grpc.CallOption) (*ListWorkspacesResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ListWorkspacesResponse)
+	err := c.cc.Invoke(ctx, ProvisionerService_ListWorkspaces_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -99,6 +111,7 @@ func (c *provisionerServiceClient) DeleteWorkspace(ctx context.Context, in *Work
 type ProvisionerServiceServer interface {
 	GetUserWorkspaceInfo(context.Context, *GetUserWorkspacesRequest) (*commonpb.WorkspaceInfo, error)
 	GetWorkspaceStatus(context.Context, *Workspace) (*commonpb.WorkspaceStatus, error)
+	ListWorkspaces(context.Context, *ListWorkspacesRequest) (*ListWorkspacesResponse, error)
 	ProvisionWorkspaceStream(*ProvisionWorkspaceRequest, grpc.ServerStreamingServer[ProvisionEvent]) error
 	DeleteWorkspace(context.Context, *Workspace) (*DeleteWorkspaceResponse, error)
 	mustEmbedUnimplementedProvisionerServiceServer()
@@ -116,6 +129,9 @@ func (UnimplementedProvisionerServiceServer) GetUserWorkspaceInfo(context.Contex
 }
 func (UnimplementedProvisionerServiceServer) GetWorkspaceStatus(context.Context, *Workspace) (*commonpb.WorkspaceStatus, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method GetWorkspaceStatus not implemented")
+}
+func (UnimplementedProvisionerServiceServer) ListWorkspaces(context.Context, *ListWorkspacesRequest) (*ListWorkspacesResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method ListWorkspaces not implemented")
 }
 func (UnimplementedProvisionerServiceServer) ProvisionWorkspaceStream(*ProvisionWorkspaceRequest, grpc.ServerStreamingServer[ProvisionEvent]) error {
 	return status.Errorf(codes.Unimplemented, "method ProvisionWorkspaceStream not implemented")
@@ -180,6 +196,24 @@ func _ProvisionerService_GetWorkspaceStatus_Handler(srv interface{}, ctx context
 	return interceptor(ctx, in, info, handler)
 }
 
+func _ProvisionerService_ListWorkspaces_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ListWorkspacesRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ProvisionerServiceServer).ListWorkspaces(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: ProvisionerService_ListWorkspaces_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ProvisionerServiceServer).ListWorkspaces(ctx, req.(*ListWorkspacesRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _ProvisionerService_ProvisionWorkspaceStream_Handler(srv interface{}, stream grpc.ServerStream) error {
 	m := new(ProvisionWorkspaceRequest)
 	if err := stream.RecvMsg(m); err != nil {
@@ -223,6 +257,10 @@ var ProvisionerService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "GetWorkspaceStatus",
 			Handler:    _ProvisionerService_GetWorkspaceStatus_Handler,
+		},
+		{
+			MethodName: "ListWorkspaces",
+			Handler:    _ProvisionerService_ListWorkspaces_Handler,
 		},
 		{
 			MethodName: "DeleteWorkspace",
