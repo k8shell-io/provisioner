@@ -17,9 +17,7 @@ spec:
   imagePullSecrets:
   - name: {{ .Values.__registry__.regcred }}
   {{ end }}  
-  {{ if .Values.serviceAccount }}
-  serviceAccountName: {{ .Values.serviceAccount }}
-  {{ end }}
+  serviceAccountName: {{ .Values.__workspace__ }}-sa
   {{- if and .Values.subdomain .Values.hostname }}
   hostname: {{ .Values.hostname }}
   subdomain: {{ .Values.subdomain }}

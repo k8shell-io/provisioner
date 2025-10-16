@@ -7,11 +7,6 @@ blueprint:
   docker:
     enabled: true
 
-  # serviceAccount: !cel |
-  #   user.username in ['bruckins']
-  #     ? "admin-sa"
-  #     : "default"
-
   subdomain: !cel "metadata.repoOwner"
   hostname: !cel "user.username + '-' + metadata.repoName"
 
