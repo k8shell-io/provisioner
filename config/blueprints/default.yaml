@@ -21,6 +21,9 @@ blueprints:
         locality: Prague
         organization: ksi.fit.cvut.cz
         commonName: ksi.fit.cvut.cz
+      # connection:
+      #   allowAnyNS: false
+      #   allowAnyNSA: false
 
     portForwarding:
       - localnetworks:0

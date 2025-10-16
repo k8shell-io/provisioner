@@ -22,8 +22,18 @@ data:
         port: 2822
         audience: k8shelld
         allowed:
-          - namespace: {{ .Values.__namespace__ }}
-            serviceAccount: ssh-proxy
+          {{- $conn := .Values.k8shelld.connection -}}
+          {{- $out := dict "ns" .Values.__namespace__ "sa" "ssh-proxy" -}}
+          {{- if $conn }}
+            {{- if $conn.allowAnyNS }}
+              {{- $_ := set $out "ns" "*" }}
+            {{- end }}
+            {{- if $conn.allowAnySA }}
+              {{- $_ := set $out "sa" "*" }}
+            {{- end }}
+          {{- end }}
+          - namespace: {{ $out.ns | quote }}
+            serviceAccount: {{ $out.sa | quote }}
 
     # workspace user
     user:
