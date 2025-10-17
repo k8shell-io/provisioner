@@ -20,6 +20,15 @@ data:
       # grpc server
       grpc:
         port: 2822
+
+        {{- if .Values.__certmanager__.enabled }}
+        enableTLS: true
+        certFile: /etc/tls/k8shelld/tls.crt
+        keyFile: /etc/tls/k8shelld/tls.key
+        {{- else }}
+        enableTLS: false
+        {{- end }}
+
         audience: k8shelld
         allowed:
           {{- $conn := .Values.k8shelld.connection -}}
