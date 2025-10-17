@@ -286,7 +286,8 @@ func (p *ProvisionerService) prepareWorkspaceProvisioning(ctx context.Context,
 		}
 	}
 
-	workspace, err := ws.NewWorkspace(blueprintObj, user, p.server.helm, p.server.Identity, p.server.Session)
+	workspace, err := ws.NewWorkspace(blueprintObj, user, p.server.helm, p.server.Identity, p.server.Session,
+		&p.server.config.CertManager)
 	if err != nil {
 		return nil, 0, status.Errorf(codes.Internal, "Failed to create workspace: %v", err)
 	}
@@ -315,7 +316,8 @@ func (p *ProvisionerService) DeleteWorkspace(ctx context.Context,
 		return nil, status.Errorf(codes.InvalidArgument, "workspace name is required")
 	}
 
-	w, err := ws.NewWorkspaceFromHelmRelease(ctx, name, p.server.helm, p.server.Identity)
+	w, err := ws.NewWorkspaceFromHelmRelease(ctx, name, p.server.helm, p.server.Identity,
+		&p.server.config.CertManager)
 	if err != nil {
 		return nil, p.convertToGRPCError(err)
 	}

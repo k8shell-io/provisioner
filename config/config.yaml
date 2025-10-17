@@ -9,6 +9,14 @@ defaultRegistry:
   username: !file ${SECRET_FILES}/registry_username
   password: !file ${SECRET_FILES}/registry_password
 
+certManager:
+  enabled: false
+  issuer:
+    name: vault-root-issuer
+    kind: ClusterIssuer
+  duration: 24h
+  renewBefore: 12h
+
 # grpc server
 grpc:
   port: 9030

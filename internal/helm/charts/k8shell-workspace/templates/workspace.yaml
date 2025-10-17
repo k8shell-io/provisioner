@@ -127,6 +127,11 @@ spec:
       - name: docker-sock
         mountPath: /var/run/docker
       {{- end }}
+      {{- if .Values.__certmanager__.enabled }}
+      - name: {{ .Values.__workspace__ }}-cert
+        mountPath: /etc/tls/k8shelld
+        readOnly: true
+      {{- end }}
 
     #### docker container
     {{- if .Values.docker.enabled }}
@@ -249,6 +254,11 @@ spec:
       items:
         - key: registry-ca.pem
           path: registry-ca.pem
+  {{- end }}
+  {{- if .Values.__certmanager__.enabled }}
+  - name: {{ .Values.__workspace__ }}-cert
+    secret:
+      secretName: {{ .Values.__workspace__ }}-tls
   {{- end }}
 
   {{- if .Values.affinity }}

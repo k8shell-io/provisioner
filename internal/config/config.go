@@ -12,11 +12,26 @@ import (
 type Config struct {
 	TargetNamespace string               `yaml:"targetNamespace"`
 	DefaultRegistry DefaultRegistry      `yaml:"defaultRegistry"`
+	CertManager     CertManagerConfig    `yaml:"certManager"`
 	GrpcConfig      gapi.ServerConfig    `yaml:"grpc"`
 	Identity        gapi.ClientConfig    `yaml:"identity"`
 	Session         gapi.ClientConfig    `yaml:"session"`
 	Blueprints      BlueprintsFileConfig `yaml:"blueprints"`
 	BaseDir         string               `yaml:"baseDir"`
+}
+
+// CertManagerConfig represents the cert-manager configuration
+type CertManagerConfig struct {
+	Enabled     bool       `yaml:"enabled"`
+	Issuer      CertIssuer `yaml:"issuer"`
+	Duration    string     `yaml:"duration"`
+	RenewBefore string     `yaml:"renewBefore"`
+}
+
+// CertIssuer represents the certificate issuer configuration
+type CertIssuer struct {
+	Name string `yaml:"name"`
+	Kind string `yaml:"kind"`
 }
 
 // DefaultRegistry represents the default container registry configuration.
@@ -54,6 +69,19 @@ func NewConfig(configFile string) (*Config, error) {
 
 	if cfg.GrpcConfig.Port == 0 {
 		return nil, fmt.Errorf("missing required configuration values: port must be set")
+	}
+
+	if cfg.CertManager.Enabled {
+		if cfg.CertManager.Issuer.Name == "" || cfg.CertManager.Issuer.Kind == "" {
+			return nil, fmt.Errorf("missing required configuration values: certManager.issuer.name and certManager.issuer.kind must be set when certManager.enabled is true")
+		}
+		if cfg.CertManager.Duration == "" {
+			cfg.CertManager.Duration = "24h"
+		}
+
+		if cfg.CertManager.RenewBefore == "" {
+			cfg.CertManager.RenewBefore = "12h"
+		}
 	}
 
 	cfg.BaseDir = filepath.Dir(configFile)

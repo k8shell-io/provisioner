@@ -14,6 +14,7 @@ import (
 	"github.com/k8shell-io/common/pkg/models"
 	identity "github.com/k8shell-io/identity/pkg/api"
 	"github.com/k8shell-io/identity/pkg/api/identitypb"
+	"github.com/k8shell-io/provisioner/internal/config"
 	"github.com/k8shell-io/provisioner/internal/helm"
 	session "github.com/k8shell-io/session/pkg/api"
 	"github.com/rs/zerolog"
@@ -32,6 +33,7 @@ type Workspace struct {
 	session       *session.Client
 	blueprint     *models.Blueprint
 	user          *models.User
+	certManager   *config.CertManagerConfig
 	workspaceLock *WorkspaceLock
 }
 
@@ -212,20 +214,23 @@ func GetSelector(labels map[string]string) string {
 
 // NewWorkspace creates a new workspace with the specified Helm chart
 func NewWorkspace(blueprint *models.Blueprint, user *models.User, helmClient *helm.Client,
-	identityClient *identity.Client, sessionClient *session.Client) (*Workspace, error) {
+	identityClient *identity.Client, sessionClient *session.Client,
+	certManager *config.CertManagerConfig) (*Workspace, error) {
+
 	return &Workspace{
-		log:       log.NewLogger("workspace"),
-		client:    helmClient,
-		identify:  identityClient,
-		blueprint: blueprint,
-		session:   sessionClient,
-		user:      user,
+		log:         log.NewLogger("workspace"),
+		client:      helmClient,
+		identify:    identityClient,
+		blueprint:   blueprint,
+		certManager: certManager,
+		session:     sessionClient,
+		user:        user,
 	}, nil
 }
 
 // NewWorkspaceFromHelmRelease creates a workspace instance from an existing Helm release
 func NewWorkspaceFromHelmRelease(ctx context.Context, name string, helmClient *helm.Client,
-	identityClient *identity.Client) (*Workspace, error) {
+	identityClient *identity.Client, certManager *config.CertManagerConfig) (*Workspace, error) {
 
 	labels := map[string]string{
 		"app.kubernetes.io/name":     helm.WORKSPACE_CHART_NAME,
@@ -271,11 +276,12 @@ func NewWorkspaceFromHelmRelease(ctx context.Context, name string, helmClient *h
 	blueprint.Name = blueprintName
 
 	ws := &Workspace{
-		log:       log.NewLogger("workspace"),
-		client:    helmClient,
-		identify:  identityClient,
-		blueprint: blueprint,
-		user:      user,
+		log:         log.NewLogger("workspace"),
+		client:      helmClient,
+		identify:    identityClient,
+		blueprint:   blueprint,
+		user:        user,
+		certManager: certManager,
 	}
 
 	if ws.Name() != workspaceName {
@@ -343,6 +349,11 @@ func (w *Workspace) Values() (map[string]interface{}, error) {
 		return nil, fmt.Errorf("failed to convert user to map: %w", err)
 	}
 
+	cmValues, err := toMap(w.certManager)
+	if err != nil {
+		return nil, fmt.Errorf("failed to convert cert manager config to map: %w", err)
+	}
+
 	values["__user__"] = userValues
 	values["__username__"] = w.user.Username
 	values["__workspace__"] = w.Name()
@@ -350,6 +361,7 @@ func (w *Workspace) Values() (map[string]interface{}, error) {
 	values["__organization__"] = w.user.Organization
 	values["__registry__"] = w.client.Registry.ToValues()
 	values["__namespace__"] = getNamespace()
+	values["__certmanager__"] = cmValues
 
 	return values, nil
 }
