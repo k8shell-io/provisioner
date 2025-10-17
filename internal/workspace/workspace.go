@@ -133,11 +133,7 @@ func GetWorkspaceStatus(ctx context.Context, helmClient *helm.Client,
 
 	// Fetch TLS secret
 	g.Go(func() error {
-		var err error
-		tlsSecret, err = v1.Secrets(helmClient.TargetNamespace()).Get(ctx, name+"-tls", metav1.GetOptions{})
-		if err != nil {
-			//return fmt.Errorf("failed to get tls secret %s: %w", name, err)
-		}
+		tlsSecret, _ = v1.Secrets(helmClient.TargetNamespace()).Get(ctx, name+"-tls", metav1.GetOptions{})
 		return nil
 	})
 

@@ -17,6 +17,7 @@ import (
 	"github.com/k8shell-io/provisioner/pkg/api/provisionerpb"
 	session "github.com/k8shell-io/session/pkg/api"
 	"github.com/rs/zerolog"
+	"google.golang.org/grpc"
 )
 
 type Server struct {
@@ -79,7 +80,10 @@ func NewServer(configFile string) (*Server, error) {
 		return nil, fmt.Errorf("failed to create gRPC service: %w", err)
 	}
 
-	provisionerpb.RegisterProvisionerServiceServer(server.grpc.GrpcServer, NewProvisionerService(server))
+	server.grpc.RegisterService(func(s *grpc.Server) error {
+		provisionerpb.RegisterProvisionerServiceServer(s, NewProvisionerService(server))
+		return nil
+	})
 
 	// server.log.Info().Msgf("Ensuring workspace base, namespace %s", server.config.TargetNamespace)
 	// err = server.helm.EnsureBase(context.Background())
