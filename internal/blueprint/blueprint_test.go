@@ -254,9 +254,6 @@ func TestBlueprintComponents(t *testing.T) {
 
 	t.Run("K8shelld configuration", func(t *testing.T) {
 		assert.NotEmpty(t, bp.K8shelld.Image, "K8shelld image should be specified")
-		assert.NotNil(t, bp.K8shelld.Cert, "Certificate configuration should be present")
-		assert.NotEmpty(t, bp.K8shelld.Cert.Country, "Certificate country should be specified")
-		assert.NotEmpty(t, bp.K8shelld.Cert.CommonName, "Certificate common name should be specified")
 	})
 
 	t.Run("Network configuration", func(t *testing.T) {

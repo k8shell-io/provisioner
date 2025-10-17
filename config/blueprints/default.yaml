@@ -15,12 +15,6 @@ blueprints:
       imagePullPolicy: Always
       ignoreOrphans:
         - .*JetBrains.*
-      cert:
-        country: CZ
-        state: Czech Republic
-        locality: Prague
-        organization: ksi.fit.cvut.cz
-        commonName: ksi.fit.cvut.cz
       # connection:
       #   allowAnyNS: false
       #   allowAnyNSA: false
