@@ -15,6 +15,6 @@ spec:
   usages:
     - server auth
   issuerRef:
-    name: {{ .Values.__workspace__ .issuer.name }}
+    name: {{ .Values.__workspace__.issuer.name }}
     kind: {{ .Values.__certmanager__.issuer.kind }}
 {{- end }}
