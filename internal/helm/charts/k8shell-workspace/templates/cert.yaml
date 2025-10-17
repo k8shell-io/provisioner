@@ -10,7 +10,7 @@ spec:
   renewBefore: {{ .Values.__certmanager__.renewBefore }}
   commonName: {{ .Values.__workspace__ }}.{{ .Release.Namespace }}.svc.cluster.local
   dnsNames:
-    - {{ .Values.__workspace__ }}
+    - {{ .Values.__workspace__ }}.{{ .Release.Namespace }}
     - {{ .Values.__workspace__ }}.{{ .Release.Namespace }}.svc
     - {{ .Values.__workspace__ }}.{{ .Release.Namespace }}.svc.cluster.local
   usages:
