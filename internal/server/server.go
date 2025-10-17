@@ -75,7 +75,7 @@ func NewServer(configFile string) (*Server, error) {
 	}
 
 	server.log.Info().Msg("Creating gRPC service")
-	server.grpc, err = gapi.NewServer(&server.config.GrpcConfig)
+	server.grpc, err = gapi.NewServer(&server.config.GrpcConfig, true)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create gRPC service: %w", err)
 	}
