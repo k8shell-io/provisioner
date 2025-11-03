@@ -224,6 +224,8 @@ github.com/k8shell-io/common v0.12.46 h1:rK5hgqE64N38THcToCwwp7HM7oM4V+KEQIOBSz6
 github.com/k8shell-io/common v0.12.46/go.mod h1:x59qn/33MrUknrk+wVUix362znyX6SW41lajnAIzJFg=
 github.com/k8shell-io/common v0.12.52 h1:UpK2MMFOUIZjpl2C/Df5SGTy+i1ieaEo9iWUKX0wwRE=
 github.com/k8shell-io/common v0.12.52/go.mod h1:x59qn/33MrUknrk+wVUix362znyX6SW41lajnAIzJFg=
+github.com/k8shell-io/common v0.12.66 h1:yoGVJPQv4FvA8cJaOmR21C3P+Qc2MX/GCslOTeHAAFI=
+github.com/k8shell-io/common v0.12.66/go.mod h1:YXw4JlmSbA29ZxX5MFgcB0wqjuIPWiMCmCnXv/Tkrt8=
 github.com/k8shell-io/identity/pkg/api v0.1.5 h1:YRf7fG7zLqhfT2SU4bxS2ROnHPlZoz997wPe5n2hJwY=
 github.com/k8shell-io/identity/pkg/api v0.1.5/go.mod h1:+wxlHTtxY+PGjV2OeXrlOFX0mv5XyFxqS9yqw45n4to=
 github.com/k8shell-io/identity/pkg/api v0.1.9 h1:2VrvDFNetMmuXfblLxyEcB85ROtmjSgkmYYlK8Eq73Y=
@@ -332,6 +334,7 @@ github.com/redis/go-redis/v9 v9.7.3 h1:YpPyAayJV+XErNsatSElgRZZVCwXX9QzkKYNvO7x0
 github.com/redis/go-redis/v9 v9.7.3/go.mod h1:bGUrSggJ9X9GUmZpZNEOQKaANxSGgOEBRltRTZHSvrA=
 github.com/rogpeppe/go-internal v1.13.1 h1:KvO1DLK/DRN07sQ1LQKScxyZJuNnedQ5/wKSR38lUII=
 github.com/rogpeppe/go-internal v1.13.1/go.mod h1:uMEvuHeurkdAXX61udpOXGD/AzZDWNMNyH2VO9fmH0o=
+github.com/rogpeppe/go-internal v1.14.1 h1:UQB4HGPB6osV0SQTLymcB4TgvyWu6ZyliaW0tI/otEQ=
 github.com/rs/xid v1.6.0/go.mod h1:7XoLgs4eV+QndskICGsho+ADou8ySMSjJKDIan90Nz0=
 github.com/rs/zerolog v1.34.0 h1:k43nTLIwcTVQAncfCw4KZ2VY6ukYoZaBPNOE8txlOeY=
 github.com/rs/zerolog v1.34.0/go.mod h1:bJsvje4Z08ROH4Nhs5iH600c3IkWhwp44iRc54W6wYQ=
