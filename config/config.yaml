@@ -37,10 +37,6 @@ identity:
   address: identity.k8shell-test:9020
   tokenFilePath: /tmp/identity
 
-session:
-  address: session:9010
-  tokenFilePath: /tmp/identity
-
 # Blueprints configuration
 blueprints:
   directory: blueprints

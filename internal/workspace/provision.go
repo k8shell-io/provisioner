@@ -9,7 +9,6 @@ import (
 
 	"github.com/k8shell-io/common/pkg/models"
 	"github.com/k8shell-io/provisioner/internal/helm"
-	sessionpb "github.com/k8shell-io/session/pkg/api/sessionpb"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -156,24 +155,6 @@ func (w *Workspace) doInstallation(ctx context.Context, opts *ProvisionOptions) 
 	}
 
 	startTime := time.Now()
-	session, err := w.session.CreateSession(ctx, &sessionpb.Session{
-		Username: "system", Workspace: w.Name(), Blueprint: w.blueprint.Name, ClientIp: "10.0.0.1", ProxyId: "nota",
-		ProxyPid: 1,
-	})
-	if err != nil {
-		w.log.Error().Err(err).Msg("Failed to create SSH session to store provisioning information")
-	}
-
-	defer func() {
-		if session != nil {
-			newCtx := context.Background()
-			_, err = w.session.EndSession(newCtx, &sessionpb.EndSessionRequest{SessionId: session.SessionId})
-			if err != nil {
-				w.log.Error().Err(err).Msg("Failed to end SSH session after provisioning")
-			}
-		}
-	}()
-
 	err = w.client.Install(ctx, helm.WORKSPACE_CHART_NAME, helm.InstallOptions{
 		ReleaseName:     w.Name(),
 		Values:          values,

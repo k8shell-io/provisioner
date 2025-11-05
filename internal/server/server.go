@@ -15,7 +15,6 @@ import (
 	"github.com/k8shell-io/provisioner/internal/config"
 	"github.com/k8shell-io/provisioner/internal/helm"
 	"github.com/k8shell-io/provisioner/pkg/api/provisionerpb"
-	session "github.com/k8shell-io/session/pkg/api"
 	"github.com/rs/zerolog"
 	"google.golang.org/grpc"
 )
@@ -24,7 +23,6 @@ type Server struct {
 	config    *config.Config
 	log       *zerolog.Logger
 	Identity  *identity.Client
-	Session   *session.Client
 	grpc      *gapi.Server
 	bpManager *blueprint.BlueprintManager
 	helm      *helm.Client
@@ -61,11 +59,6 @@ func NewServer(configFile string) (*Server, error) {
 	server.Identity, err = identity.NewClient(server.config.Identity)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create identity client: %w", err)
-	}
-
-	server.Session, err = session.NewClient(server.config.Session)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create session client: %w", err)
 	}
 
 	server.log.Info().Msg("Creating Helm client")

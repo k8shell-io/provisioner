@@ -15,7 +15,6 @@ type Config struct {
 	CertManager     CertManagerConfig    `yaml:"certManager"`
 	GrpcConfig      gapi.ServerConfig    `yaml:"grpc"`
 	Identity        gapi.ClientConfig    `yaml:"identity"`
-	Session         gapi.ClientConfig    `yaml:"session"`
 	Blueprints      BlueprintsFileConfig `yaml:"blueprints"`
 	BaseDir         string               `yaml:"baseDir"`
 }

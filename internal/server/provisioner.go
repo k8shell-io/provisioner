@@ -286,7 +286,7 @@ func (p *ProvisionerService) prepareWorkspaceProvisioning(ctx context.Context,
 		}
 	}
 
-	workspace, err := ws.NewWorkspace(blueprintObj, user, p.server.helm, p.server.Identity, p.server.Session,
+	workspace, err := ws.NewWorkspace(blueprintObj, user, p.server.helm, p.server.Identity,
 		&p.server.config.CertManager)
 	if err != nil {
 		return nil, 0, status.Errorf(codes.Internal, "Failed to create workspace: %v", err)
