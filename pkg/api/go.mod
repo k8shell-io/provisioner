@@ -3,13 +3,14 @@ module github.com/k8shell-io/provisioner/pkg/api
 go 1.24.5
 
 require (
-	github.com/k8shell-io/common v0.12.52
+	github.com/k8shell-io/common v0.12.75
 	google.golang.org/grpc v1.76.0
 	google.golang.org/protobuf v1.36.10
 )
 
 require (
 	github.com/coreos/go-oidc/v3 v3.16.0 // indirect
+	github.com/fsnotify/fsnotify v1.9.0 // indirect
 	github.com/gabriel-vasile/mimetype v1.4.8 // indirect
 	github.com/go-jose/go-jose/v4 v4.1.3 // indirect
 	github.com/go-playground/locales v0.14.1 // indirect

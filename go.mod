@@ -8,8 +8,7 @@ require (
 	github.com/fsnotify/fsnotify v1.9.0
 	github.com/k8shell-io/common v0.12.75
 	github.com/k8shell-io/identity/pkg/api v0.1.9
-	github.com/k8shell-io/provisioner/pkg/api v0.1.9
-	github.com/k8shell-io/session/pkg/api v0.1.3
+	github.com/k8shell-io/provisioner/pkg/api v0.0.0-00010101000000-000000000000
 	github.com/k8shell-io/yaml-cel v0.2.6
 	github.com/stretchr/testify v1.11.1
 	go.uber.org/automaxprocs v1.6.0
@@ -154,3 +153,5 @@ require (
 	sigs.k8s.io/structured-merge-diff/v6 v6.3.0 // indirect
 	sigs.k8s.io/yaml v1.6.0 // indirect
 )
+
+replace github.com/k8shell-io/provisioner/pkg/api => ./pkg/api
