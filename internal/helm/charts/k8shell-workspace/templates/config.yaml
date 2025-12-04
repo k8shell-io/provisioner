@@ -86,3 +86,31 @@ data:
     # docker settings
     docker:
       createDockerSockSymlink: {{ .Values.docker.enabled }}
+
+    {{- if .Values.apps }}
+    {{- $enabledApps := dict }}
+    {{- range $name, $conf := .Values.apps }}
+      {{- if $conf.enabled }}
+        {{- $_ := set $enabledApps $name $conf }}
+      {{- end }}
+    {{- end }}
+    {{- if gt (len $enabledApps) 0 }}
+    apps:
+    {{- range $name, $conf := $enabledApps }}
+      {{ $name }}:
+        listen: {{ $conf.listen }}
+        binary: {{ $conf.binary | quote }}
+        versionCmd:
+        {{- range $arg := $conf.versionCmd }}
+          - {{ $arg | quote }}
+        {{- end }}
+        versionRegex: {{ $conf.versionRegex | quote }}
+        install: {{ $conf.install | quote }}
+        start:
+        {{- range $arg := $conf.start }}
+          - {{ $arg | quote }}
+        {{- end }}
+        restartPolicy: {{ $conf.restartPolicy }}
+    {{- end }}
+    {{- end }}
+    {{- end }}
