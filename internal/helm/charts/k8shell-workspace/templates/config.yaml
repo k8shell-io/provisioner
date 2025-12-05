@@ -100,6 +100,7 @@ data:
       {{ $name }}:
         listen: {{ $conf.listen }}
         binary: {{ $conf.binary | quote }}
+        installAsRoot: {{ $conf.installAsRoot }}
         versionCmd:
         {{- range $arg := $conf.versionCmd }}
           - {{ $arg | quote }}
