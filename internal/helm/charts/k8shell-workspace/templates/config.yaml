@@ -87,6 +87,11 @@ data:
     docker:
       createDockerSockSymlink: {{ .Values.docker.enabled }}
 
+    # apps
+    # global switch to enable/disable apps
+    enableApps: {{ .Values.enableApps }}
+
+    # apps configurations
     {{- if .Values.apps }}
     {{- $enabledApps := dict }}
     {{- range $name, $conf := .Values.apps }}
@@ -112,6 +117,7 @@ data:
           - {{ $arg | quote }}
         {{- end }}
         restartPolicy: {{ $conf.restartPolicy }}
+        autoStart: {{ $conf.autoStart }}
     {{- end }}
     {{- end }}
     {{- end }}
