@@ -89,7 +89,7 @@ data:
 
     # apps
     # global switch to enable/disable apps
-    enableApps: {{ .Values.enableApps }}
+    enableApps: {{ .Values.enableApps | default false }}
 
     # apps configurations
     {{- if .Values.apps }}
