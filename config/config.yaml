@@ -21,6 +21,10 @@ certManager:
 grpc:
   port: 9030
 
+  enableTLS: true
+  certFile: /opt/shared/provisioner/tls/tls.crt
+  keyFile: /opt/shared/provisioner/tls/tls.key
+
   # JWT required claims for authentication
   authEnabled: true
   audience: provisioner
@@ -35,7 +39,9 @@ grpc:
 # Identity service configuration
 identity:
   address: identity.k8shell-test:9020
-  tokenFilePath: /tmp/identity
+  tokenFilePath: /opt/shared/auth/dummy-token
+  caCertPath: /opt/shared/auth/ca.crt
+  serverName: identity.k8shell-test.svc
 
 # Blueprints configuration
 blueprints:
