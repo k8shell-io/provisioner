@@ -43,6 +43,8 @@ data:
           {{- end }}
           - namespace: {{ $out.ns | quote }}
             serviceAccount: {{ $out.sa | quote }}
+          - namespace: {{ .Values.__namespace__ | quote }}
+            serviceAccount: {{ "api-server" | quote }}
 
     # workspace user
     user:
