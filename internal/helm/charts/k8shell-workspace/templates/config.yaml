@@ -120,6 +120,7 @@ data:
         {{- end }}
         restartPolicy: {{ $conf.restartPolicy }}
         autoStart: {{ $conf.autoStart }}
+        protocol: {{ $conf.protocol }}
     {{- end }}
     {{- end }}
     {{- end }}
