@@ -7,6 +7,7 @@ import (
 
 type Client struct {
 	provisionerpb.ProvisionerServiceClient
+	client *gapi.Client
 }
 
 func NewClient(cfg gapi.ClientConfig) (*Client, error) {
@@ -16,5 +17,10 @@ func NewClient(cfg gapi.ClientConfig) (*Client, error) {
 	}
 	return &Client{
 		ProvisionerServiceClient: provisionerpb.NewProvisionerServiceClient(gapiClient.Conn),
+		client:                   gapiClient,
 	}, nil
+}
+
+func (c *Client) Close() error {
+	return c.client.Close()
 }
