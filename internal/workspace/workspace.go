@@ -359,8 +359,9 @@ func (w *Workspace) Values() (map[string]interface{}, error) {
 	values["__registry__"] = w.client.Registry.ToValues()
 	values["__namespace__"] = getNamespace()
 	values["__certmanager__"] = cmValues
-	values["__apiserver__"] = w.caps.APIServerEnabled
-
+	values["__apiserver__"] = map[string]interface{}{
+		"enabled": w.caps.APIServerEnabled,
+	}
 	return values, nil
 }
 
