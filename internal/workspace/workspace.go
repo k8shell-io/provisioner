@@ -32,6 +32,7 @@ type Workspace struct {
 	blueprint     *models.Blueprint
 	user          *models.User
 	certManager   *config.CertManagerConfig
+	caps          *config.K8shellCapabilities
 	workspaceLock *WorkspaceLock
 }
 
@@ -210,7 +211,8 @@ func GetSelector(labels map[string]string) string {
 
 // NewWorkspace creates a new workspace with the specified Helm chart
 func NewWorkspace(blueprint *models.Blueprint, user *models.User, helmClient *helm.Client,
-	identityClient *identity.Client, certManager *config.CertManagerConfig) (*Workspace, error) {
+	identityClient *identity.Client, certManager *config.CertManagerConfig,
+	caps *config.K8shellCapabilities) (*Workspace, error) {
 
 	return &Workspace{
 		log:         log.NewLogger("workspace"),
@@ -218,6 +220,7 @@ func NewWorkspace(blueprint *models.Blueprint, user *models.User, helmClient *he
 		identify:    identityClient,
 		blueprint:   blueprint,
 		certManager: certManager,
+		caps:        caps,
 		user:        user,
 	}, nil
 }
@@ -356,6 +359,7 @@ func (w *Workspace) Values() (map[string]interface{}, error) {
 	values["__registry__"] = w.client.Registry.ToValues()
 	values["__namespace__"] = getNamespace()
 	values["__certmanager__"] = cmValues
+	values["__apiserver__"] = w.caps.APIServerEnabled
 
 	return values, nil
 }

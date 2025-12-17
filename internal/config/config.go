@@ -10,13 +10,18 @@ import (
 
 // Config represents the server configuration
 type Config struct {
-	TargetNamespace string               `yaml:"targetNamespace"`
-	DefaultRegistry DefaultRegistry      `yaml:"defaultRegistry"`
-	CertManager     CertManagerConfig    `yaml:"certManager"`
-	GrpcConfig      gapi.ServerConfig    `yaml:"grpc"`
-	Identity        gapi.ClientConfig    `yaml:"identity"`
-	Blueprints      BlueprintsFileConfig `yaml:"blueprints"`
-	BaseDir         string               `yaml:"baseDir"`
+	TargetNamespace     string               `yaml:"targetNamespace"`
+	DefaultRegistry     DefaultRegistry      `yaml:"defaultRegistry"`
+	K8shellCapabilities K8shellCapabilities  `yaml:"k8shellCapabilities"`
+	CertManager         CertManagerConfig    `yaml:"certManager"`
+	GrpcConfig          gapi.ServerConfig    `yaml:"grpc"`
+	Identity            gapi.ClientConfig    `yaml:"identity"`
+	Blueprints          BlueprintsFileConfig `yaml:"blueprints"`
+	BaseDir             string               `yaml:"baseDir"`
+}
+
+type K8shellCapabilities struct {
+	APIServerEnabled bool `yaml:"apiServerEnabled"`
 }
 
 // CertManagerConfig represents the cert-manager configuration

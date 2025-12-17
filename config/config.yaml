@@ -9,6 +9,9 @@ defaultRegistry:
   username: !file ${SECRET_FILES}/registry_username
   password: !file ${SECRET_FILES}/registry_password
 
+k8shellCapabilities:
+  apiServerEnabled: true
+
 certManager:
   enabled: false
   issuer:
@@ -20,7 +23,6 @@ certManager:
 # grpc server
 grpc:
   port: 9030
-
   enableTLS: true
   certFile: /opt/shared/provisioner/tls/tls.crt
   keyFile: /opt/shared/provisioner/tls/tls.key
