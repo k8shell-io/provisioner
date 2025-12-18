@@ -210,6 +210,8 @@ github.com/k8shell-io/common v0.12.88 h1:wTaqHYRrHWyc6+/b1qQ/9063RTFbx+Ghwte7OtP
 github.com/k8shell-io/common v0.12.88/go.mod h1:d7evWhWgtd39y+aSi6ukSCk37VJClEfFbaAFDT0zs2s=
 github.com/k8shell-io/common v0.12.95 h1:eO1Jh+14/4YoVLbrsLR2XWPijtL+LzGez/iZXCx6Tfw=
 github.com/k8shell-io/common v0.12.95/go.mod h1:d7evWhWgtd39y+aSi6ukSCk37VJClEfFbaAFDT0zs2s=
+github.com/k8shell-io/common v0.12.96 h1:Ep97DD5SzWjDByVvQuB1vdmE2dOKmcNLz6zgCm3TKFA=
+github.com/k8shell-io/common v0.12.96/go.mod h1:d7evWhWgtd39y+aSi6ukSCk37VJClEfFbaAFDT0zs2s=
 github.com/k8shell-io/identity/pkg/api v0.1.9 h1:2VrvDFNetMmuXfblLxyEcB85ROtmjSgkmYYlK8Eq73Y=
 github.com/k8shell-io/identity/pkg/api v0.1.9/go.mod h1:7MBXrvnAz8KA1kAjfDFlnqCZ+X4yjG0gUaNLoQ3CAFg=
 github.com/k8shell-io/yaml-cel v0.2.6 h1:Te7o2b1Y/9Gm6Z3j29zGKzOnGn3NoDu1tpq4ib3mua0=
