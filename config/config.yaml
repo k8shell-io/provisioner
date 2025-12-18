@@ -41,7 +41,7 @@ grpc:
 # Identity service configuration
 identity:
   address: identity.k8shell-test:9020
-  tokenFilePath: /opt/shared/auth/dummy-token
+  tokenFilePath: /opt/shared/provisioner/identity-token
   caCertPath: /opt/shared/auth/ca.crt
   serverName: identity.k8shell-test.svc
 
