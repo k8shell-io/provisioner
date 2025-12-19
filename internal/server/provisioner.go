@@ -238,8 +238,7 @@ func (p *ProvisionerService) prepareWorkspaceProvisioning(ctx context.Context,
 	if userstr.HasCustomBlueprint {
 		blueprintpb, err := p.server.Identity.GetBlueprintByUserStr(ctx, &identitypb.UserStr{Userstr: userstrParam})
 		if err != nil {
-			return nil, 0, status.Errorf(codes.InvalidArgument,
-				"No blueprint was provided, and no default blueprint is configured for user %s", userstr.Username)
+			return nil, 0, status.Errorf(codes.InvalidArgument, "failed to get blueprint by userstr: %v", err)
 		}
 
 		var customBlueprint models.CustomBlueprint
@@ -253,7 +252,7 @@ func (p *ProvisionerService) prepareWorkspaceProvisioning(ctx context.Context,
 				"Access denied: user %s is not authorized to use blueprint's template %s", userstr.Username, customBlueprint.Template)
 		}
 
-		scope, errx := p.server.GetBlueprintScope("", user, &customBlueprint.Metadata)
+		scope, errx := p.server.GetBlueprintScope(customBlueprint.Metadata.Name, user, &customBlueprint.Metadata)
 		if errx != nil {
 			return nil, 0, p.convertToGRPCError(errx)
 		}

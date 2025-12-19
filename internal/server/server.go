@@ -14,6 +14,7 @@ import (
 	"github.com/k8shell-io/provisioner/internal/blueprint"
 	"github.com/k8shell-io/provisioner/internal/config"
 	"github.com/k8shell-io/provisioner/internal/helm"
+	"github.com/k8shell-io/provisioner/internal/workspace"
 	"github.com/k8shell-io/provisioner/pkg/api/provisionerpb"
 	"github.com/rs/zerolog"
 	"google.golang.org/grpc"
@@ -90,10 +91,6 @@ func NewServer(configFile string) (*Server, error) {
 func (s *Server) GetBlueprintScope(blueprintName string, user *models.User,
 	metadata *models.BlueprintMetadata) (*blueprint.BlueprintScope, error) {
 
-	if blueprintName == "" && metadata != nil {
-		blueprintName = metadata.Name
-	}
-
 	if blueprintName == "" {
 		return nil, fmt.Errorf("blueprint name is required to create scope")
 	}
@@ -103,22 +100,25 @@ func (s *Server) GetBlueprintScope(blueprintName string, user *models.User,
 	var ownerName = "norepoowner"
 	var repoAddress = "noaddress"
 
-	if metadata != nil && metadata.RepoName != "" && metadata.RepoOwner != "" {
-		repoName = metadata.RepoName
-		ownerName = metadata.RepoOwner
-	}
-	if metadata != nil && metadata.RepoAddress != "" {
-		repoAddress = metadata.RepoAddress
-	}
-	if metadata != nil && metadata.RepoRef != "" {
-		repoRef = metadata.RepoRef
+	if metadata != nil {
+		if metadata.RepoName != "" && metadata.RepoOwner != "" {
+			repoName = metadata.RepoName
+			ownerName = metadata.RepoOwner
+		}
+		if metadata.RepoAddress != "" {
+			repoAddress = metadata.RepoAddress
+		}
+		if metadata.RepoRef != "" {
+			repoRef = metadata.RepoRef
+		}
 	}
 
 	s.log.Debug().Msgf("Creating blueprint scope for user: %s, repo: %s, owner: %s, address: %s, ref: %s",
 		user.Username, repoName, ownerName, repoAddress, repoRef)
 
 	scope := &blueprint.BlueprintScope{
-		User: user,
+		User:          user,
+		WorkspaceName: workspace.GetWorkspaceName(blueprintName, user.Username, metadata),
 		Metadata: &models.BlueprintMetadata{
 			Name:        blueprintName,
 			RepoName:    repoName,

@@ -40,6 +40,22 @@ type Values struct {
 	Values map[string]interface{}
 }
 
+func GetWorkspaceName(blueprintName string, username string, bpMetadata *models.BlueprintMetadata) string {
+	bpName := strings.ToLower(blueprintName)
+	uname := strings.ToLower(username)
+
+	rowner, rname, rref := "", "", ""
+	if bpMetadata != nil {
+		rowner = strings.ToLower(bpMetadata.RepoOwner)
+		rname = strings.ToLower(bpMetadata.RepoName)
+		rref = strings.ToLower(bpMetadata.RepoRef)
+	}
+
+	hash := sha256.Sum256([]byte(bpName + uname + rowner + rname + rref))
+	hashStr := fmt.Sprintf("%x", hash)
+	return username + "-" + hashStr[:7]
+}
+
 // GetWorkspaceInfo retrieves information about workspaces
 func GetWorkspaceInfo(helmClient *helm.Client, name string, username string,
 	blueprint string) ([]models.WorkspaceInfo, error) {
@@ -290,11 +306,7 @@ func NewWorkspaceFromHelmRelease(ctx context.Context, name string, helmClient *h
 
 // Name returns the name of the workspace
 func (w *Workspace) Name() string {
-	blueprintName := strings.ToLower(w.blueprint.Name)
-	username := strings.ToLower(w.user.Username)
-	hash := sha256.Sum256([]byte(blueprintName + username))
-	hashStr := fmt.Sprintf("%x", hash)
-	return username + "-" + hashStr[:7]
+	return GetWorkspaceName(w.blueprint.Name, w.user.Username, &w.blueprint.Metadata)
 }
 
 func (w *Workspace) Labels() map[string]string {

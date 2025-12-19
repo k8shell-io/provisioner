@@ -29,8 +29,9 @@ type RawBlueprint struct {
 }
 
 type BlueprintScope struct {
-	User     *models.User              `yaml:"user"`
-	Metadata *models.BlueprintMetadata `yaml:"metadata"`
+	User          *models.User              `yaml:"user"`
+	WorkspaceName string                    `yaml:"workspaceName"`
+	Metadata      *models.BlueprintMetadata `yaml:"metadata"`
 }
 
 func (bs *BlueprintScope) ToMap() (map[string]any, error) {
