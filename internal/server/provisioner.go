@@ -127,7 +127,7 @@ func (p *ProvisionerService) ProvisionWorkspaceStream(req *provisionerpb.Provisi
 	if err := stream.Send(&provisionerpb.ProvisionEvent{
 		Type:       "status",
 		Timestamp:  time.Now().Format("2006-01-02 15:04:05"),
-		ObjectName: workspace.Name(),
+		ObjectName: workspace.Name,
 		Status:     "Starting",
 		Message:    "Provisioning started",
 	}); err != nil {
@@ -185,7 +185,7 @@ func (p *ProvisionerService) ProvisionWorkspaceStream(req *provisionerpb.Provisi
 				if err := stream.Send(&provisionerpb.ProvisionEvent{
 					Type:       "status",
 					Timestamp:  time.Now().Format("2006-01-02 15:04:05"),
-					ObjectName: workspace.Name(),
+					ObjectName: workspace.Name,
 					Status:     status.Status,
 					Message:    status.Message,
 				}); err != nil {
@@ -199,7 +199,7 @@ func (p *ProvisionerService) ProvisionWorkspaceStream(req *provisionerpb.Provisi
 				if err := stream.Send(&provisionerpb.ProvisionEvent{
 					Type:       "status",
 					Timestamp:  time.Now().Format("2006-01-02 15:04:05"),
-					ObjectName: workspace.Name(),
+					ObjectName: workspace.Name,
 					Status:     "Error",
 					Message:    err.Error(),
 				}); err != nil {
@@ -288,7 +288,7 @@ func (p *ProvisionerService) prepareWorkspaceProvisioning(ctx context.Context,
 		}
 	}
 
-	workspace, err := ws.NewWorkspace(blueprintObj, user, p.server.helm, p.server.Identity,
+	workspace, err := ws.NewWorkspace(userStr.WorkspaceID, blueprintObj, user, p.server.helm, p.server.Identity,
 		&p.server.config.CertManager, &p.server.config.K8shellCapabilities)
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "Failed to create workspace: %v", err)

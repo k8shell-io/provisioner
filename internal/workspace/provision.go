@@ -45,20 +45,20 @@ func (w *Workspace) Provision(ctx context.Context, opts *ProvisionOptions) (*mod
 		status, err := w.GetPodStatus(ctx)
 		if err != nil {
 			if errors.Is(err, models.ErrWorkspaceNotFound) {
-				w.log.Info().Msgf("Pod %s not found, proceeding with provisioning", w.Name())
+				w.log.Info().Msgf("Pod %s not found, proceeding with provisioning", w.Name)
 			} else {
 				return nil, fmt.Errorf("failed to get workspace pod status: %w", err)
 			}
 		} else {
 			if status.Status == "Running" {
-				w.log.Info().Msgf("Workspace %s is already running", w.Name())
+				w.log.Info().Msgf("Workspace %s is already running", w.Name)
 				return status, nil
 			}
 		}
 
-		w.log.Info().Msgf("Workspace %s exists but it is not running, need to provision", w.Name())
+		w.log.Info().Msgf("Workspace %s exists but it is not running, need to provision", w.Name)
 	} else {
-		w.log.Info().Msgf("Workspace %s does not exist, need to provision", w.Name())
+		w.log.Info().Msgf("Workspace %s does not exist, need to provision", w.Name)
 	}
 
 	return w.provisionWithLock(ctx, opts)
@@ -71,17 +71,17 @@ func (w *Workspace) lock(timeout time.Duration) error {
 	}
 	w.workspaceLock = w.CreateLock()
 
-	w.log.Debug().Msgf("Acquiring lock for workspace %s", w.Name())
+	w.log.Debug().Msgf("Acquiring lock for workspace %s", w.Name)
 	lockCtx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
 	acquired, err := w.workspaceLock.Acquire(lockCtx)
 	if err != nil {
-		return fmt.Errorf("failed to acquire lock for workspace %s: %w", w.Name(), err)
+		return fmt.Errorf("failed to acquire lock for workspace %s: %w", w.Name, err)
 	}
 
 	if !acquired {
-		return fmt.Errorf("timeout acquiring lock for workspace %s after %f seconds", w.Name(), timeout.Seconds())
+		return fmt.Errorf("timeout acquiring lock for workspace %s after %f seconds", w.Name, timeout.Seconds())
 	}
 
 	return nil
@@ -93,9 +93,9 @@ func (w *Workspace) unlock() error {
 		return nil
 	}
 	if releaseErr := w.workspaceLock.Release(context.Background()); releaseErr != nil {
-		w.log.Error().Err(releaseErr).Msgf("Failed to release lock for workspace %s", w.Name())
+		w.log.Error().Err(releaseErr).Msgf("Failed to release lock for workspace %s", w.Name)
 	} else {
-		w.log.Debug().Msgf("Released lock for workspace %s", w.Name())
+		w.log.Debug().Msgf("Released lock for workspace %s", w.Name)
 	}
 	w.workspaceLock = nil
 	return nil
@@ -108,12 +108,11 @@ func (w *Workspace) provisionWithLock(ctx context.Context, opts *ProvisionOption
 	}
 	defer func() {
 		if releaseErr := w.unlock(); releaseErr != nil {
-			w.log.Error().Err(releaseErr).Msgf("Failed to release lock for workspace %s", w.Name())
+			w.log.Error().Err(releaseErr).Msgf("Failed to release lock for workspace %s", w.Name)
 		}
 	}()
 
-	w.log.Debug().Msgf("Acquired lock for workspace %s", w.Name())
-
+	w.log.Debug().Msgf("Acquired lock for workspace %s", w.Name)
 	exists, err := w.IsInstalled(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("failed to recheck if workspace exists: %w", err)
@@ -123,19 +122,19 @@ func (w *Workspace) provisionWithLock(ctx context.Context, opts *ProvisionOption
 		status, err := w.GetPodStatus(ctx)
 		if err != nil {
 			if errors.Is(err, models.ErrWorkspaceNotFound) {
-				w.log.Debug().Msgf("Pod %s not found, proceeding with provisioning", w.Name())
+				w.log.Debug().Msgf("Pod %s not found, proceeding with provisioning", w.Name)
 			} else {
 				return nil, fmt.Errorf("failed to recheck workspace status: %w", err)
 			}
 		} else {
 			if status.Status == "Running" {
-				w.log.Debug().Msgf("Workspace %s is now running (completed by another instance while waiting for lock)", w.Name())
+				w.log.Debug().Msgf("Workspace %s is now running (completed by another instance while waiting for lock)", w.Name)
 				return status, nil
 			}
 		}
 
-		w.log.Debug().Msgf("Workspace %s still not running after acquiring lock, proceeding with reinstall", w.Name())
-		if err := w.client.Uninstall(w.Name(), int(opts.Timeout), true); err != nil {
+		w.log.Debug().Msgf("Workspace %s still not running after acquiring lock, proceeding with reinstall", w.Name)
+		if err := w.client.Uninstall(w.Name, int(opts.Timeout), true); err != nil {
 			return nil, fmt.Errorf("failed to delete workspace: %w", err)
 		}
 	}
@@ -156,7 +155,7 @@ func (w *Workspace) doInstallation(ctx context.Context, opts *ProvisionOptions) 
 
 	startTime := time.Now()
 	err = w.client.Install(ctx, helm.WORKSPACE_CHART_NAME, helm.InstallOptions{
-		ReleaseName:     w.Name(),
+		ReleaseName:     w.Name,
 		Values:          values,
 		CreateNamespace: false,
 		Wait:            false,
@@ -175,7 +174,7 @@ func (w *Workspace) doInstallation(ctx context.Context, opts *ProvisionOptions) 
 
 	if status.Status == "Running" {
 		provisionTime := time.Since(startTime)
-		w.log.Info().Msgf("Workspace %s is now running, provisioned in %s", w.Name(), provisionTime)
+		w.log.Info().Msgf("Workspace %s is now running, provisioned in %s", w.Name, provisionTime)
 	}
 	return status, nil
 }
@@ -228,7 +227,7 @@ func (w *Workspace) createHeadlessService(ctx context.Context, values map[string
 func (w *Workspace) waitForPodRunning(ctx context.Context, startTime time.Time,
 	opts *ProvisionOptions) (*models.PodStatus, error) {
 
-	podName := w.Name()
+	podName := w.Name
 	timeout := time.NewTimer(time.Duration(opts.Timeout) * time.Second)
 	defer timeout.Stop()
 

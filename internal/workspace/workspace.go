@@ -2,7 +2,6 @@ package workspace
 
 import (
 	"context"
-	"crypto/sha256"
 	"encoding/base64"
 	"fmt"
 	"os"
@@ -26,6 +25,7 @@ import (
 
 // Workspace represents a workspace with Helm client
 type Workspace struct {
+	Name          string
 	log           *zerolog.Logger
 	client        *helm.Client
 	identify      *identity.Client
@@ -38,22 +38,6 @@ type Workspace struct {
 
 type Values struct {
 	Values map[string]interface{}
-}
-
-func GetWorkspaceName(blueprintName string, username string, bpMetadata *models.BlueprintMetadata) string {
-	bpName := strings.ToLower(blueprintName)
-	uname := strings.ToLower(username)
-
-	rowner, rname, rref := "", "", ""
-	if bpMetadata != nil {
-		rowner = strings.ToLower(bpMetadata.RepoOwner)
-		rname = strings.ToLower(bpMetadata.RepoName)
-		rref = strings.ToLower(bpMetadata.RepoRef)
-	}
-
-	hash := sha256.Sum256([]byte(bpName + uname + rowner + rname + rref))
-	hashStr := fmt.Sprintf("%x", hash)
-	return username + "-" + hashStr[:7]
 }
 
 // GetWorkspaceInfo retrieves information about workspaces
@@ -226,11 +210,12 @@ func GetSelector(labels map[string]string) string {
 // *** Workspace methods
 
 // NewWorkspace creates a new workspace with the specified Helm chart
-func NewWorkspace(blueprint *models.Blueprint, user *models.User, helmClient *helm.Client,
+func NewWorkspace(workspaceName string, blueprint *models.Blueprint, user *models.User, helmClient *helm.Client,
 	identityClient *identity.Client, certManager *config.CertManagerConfig,
 	caps *config.K8shellCapabilities) (*Workspace, error) {
 
 	return &Workspace{
+		Name:        workspaceName,
 		log:         log.NewLogger("workspace"),
 		client:      helmClient,
 		identify:    identityClient,
@@ -297,22 +282,17 @@ func NewWorkspaceFromHelmRelease(ctx context.Context, name string, helmClient *h
 		certManager: certManager,
 	}
 
-	if ws.Name() != workspaceName {
-		return nil, fmt.Errorf("workspace name mismatch: expected %s, got %s", ws.Name(), workspaceName)
+	if ws.Name != workspaceName {
+		return nil, fmt.Errorf("workspace name mismatch: expected %s, got %s", ws.Name, workspaceName)
 	}
 
 	return ws, nil
 }
 
-// Name returns the name of the workspace
-func (w *Workspace) Name() string {
-	return GetWorkspaceName(w.blueprint.Name, w.user.Username, &w.blueprint.Metadata)
-}
-
 func (w *Workspace) Labels() map[string]string {
 	labels := map[string]string{
 		"app.kubernetes.io/name":       helm.WORKSPACE_CHART_NAME,
-		"app.kubernetes.io/instance":   w.Name(),
+		"app.kubernetes.io/instance":   w.Name,
 		"app.kubernetes.io/version":    "1.0.0",
 		"app.kubernetes.io/managed-by": "k8shell-provisioner",
 		"k8shell.io/app":               helm.WORKSPACE_CHART_NAME,
@@ -339,7 +319,7 @@ func (w *Workspace) CreateLock() *WorkspaceLock {
 	return NewWorkspaceLock(
 		w.client.GetKubeClient(),
 		w.client.TargetNamespace(),
-		w.Name(),
+		w.Name,
 	)
 }
 
@@ -357,7 +337,7 @@ func (w *Workspace) getK8shelldVersion() string {
 // Selector returns the label selector for the workspace used to identify the workspace in Kubernetes
 // It uses the app.kubernetes.io/instance label to match the workspace name
 func (w *Workspace) Selector() string {
-	return fmt.Sprintf("app.kubernetes.io/instance=%s", w.Name())
+	return fmt.Sprintf("app.kubernetes.io/instance=%s", w.Name)
 }
 
 func (w *Workspace) Values() (map[string]interface{}, error) {
@@ -378,7 +358,7 @@ func (w *Workspace) Values() (map[string]interface{}, error) {
 
 	values["__user__"] = userValues
 	values["__username__"] = w.user.Username
-	values["__workspace__"] = w.Name()
+	values["__workspace__"] = w.Name
 	values["__blueprint__"] = w.blueprint.Name
 	values["__organization__"] = w.user.Organization
 	values["__registry__"] = w.client.Registry.ToValues()
@@ -407,12 +387,12 @@ func (w *Workspace) Template(ctx context.Context) (string, error) {
 
 func (w *Workspace) GetPodStatus(ctx context.Context) (*models.PodStatus, error) {
 	v1 := w.client.GetKubeClient().CoreV1()
-	pod, err := v1.Pods(w.client.TargetNamespace()).Get(ctx, w.Name(), metav1.GetOptions{})
+	pod, err := v1.Pods(w.client.TargetNamespace()).Get(ctx, w.Name, metav1.GetOptions{})
 	if err != nil {
 		if k8sErrors.IsNotFound(err) {
-			return nil, fmt.Errorf("%w: %s", models.ErrWorkspaceNotFound, w.Name())
+			return nil, fmt.Errorf("%w: %s", models.ErrWorkspaceNotFound, w.Name)
 		}
-		return nil, fmt.Errorf("failed to get workspace pod status %s: %w", w.Name(), err)
+		return nil, fmt.Errorf("failed to get workspace pod status %s: %w", w.Name, err)
 	}
 	return &models.PodStatus{
 		Created: pod.CreationTimestamp.Time,
@@ -422,7 +402,7 @@ func (w *Workspace) GetPodStatus(ctx context.Context) (*models.PodStatus, error)
 }
 
 func (w *Workspace) IsInstalled(ctx context.Context) (bool, error) {
-	_, err := w.client.GetRelease(w.Name())
+	_, err := w.client.GetRelease(w.Name)
 	if err != nil {
 		if strings.Contains(err.Error(), "not found") || strings.Contains(err.Error(), "release: not found") {
 			return false, nil
@@ -440,12 +420,12 @@ func (w *Workspace) Uninstall(ctx context.Context, timeout time.Duration, wait b
 		}
 		defer func() {
 			if releaseErr := w.unlock(); releaseErr != nil {
-				w.log.Error().Err(releaseErr).Msgf("Failed to release lock for workspace %s", w.Name())
+				w.log.Error().Err(releaseErr).Msgf("Failed to release lock for workspace %s", w.Name)
 			}
 		}()
 	}
 
-	if err := w.client.Uninstall(w.Name(), int(timeout.Seconds()), wait); err != nil {
+	if err := w.client.Uninstall(w.Name, int(timeout.Seconds()), wait); err != nil {
 		return fmt.Errorf("failed to uninstall workspace: %w", err)
 	}
 	return nil
