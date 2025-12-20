@@ -108,7 +108,18 @@ func (p *ProvisionerService) ProvisionWorkspaceStream(req *provisionerpb.Provisi
 	stream provisionerpb.ProvisionerService_ProvisionWorkspaceStreamServer) error {
 
 	ctx := stream.Context()
-	workspace, timeout, err := p.prepareWorkspaceProvisioning(ctx, req)
+
+	userstr, err := models.NewUserStr(req.Userstr)
+	if err != nil {
+		return status.Errorf(codes.InvalidArgument, "Invalid userstr format: %v", err)
+	}
+
+	canUserStr, err := userstr.Canonicalize(p.server)
+	if err != nil {
+		return status.Errorf(codes.InvalidArgument, "Failed to canonicalize userstr: %v", err)
+	}
+
+	workspace, err := p.prepareWorkspaceProvisioning(ctx, canUserStr)
 	if err != nil {
 		return err
 	}
@@ -126,6 +137,11 @@ func (p *ProvisionerService) ProvisionWorkspaceStream(req *provisionerpb.Provisi
 	messages := make(chan models.WorkspaceStreamEvent, 100)
 	done := make(chan *models.PodStatus)
 	errorChan := make(chan error)
+
+	timeout := int(req.Timeout)
+	if timeout <= 0 {
+		timeout = 20
+	}
 
 	// Provision the workspace
 	go func() {
@@ -197,101 +213,88 @@ func (p *ProvisionerService) ProvisionWorkspaceStream(req *provisionerpb.Provisi
 
 // prepareWorkspaceProvisioning handles the common setup logic for workspace provisioning
 func (p *ProvisionerService) prepareWorkspaceProvisioning(ctx context.Context,
-	req *provisionerpb.ProvisionWorkspaceRequest) (*ws.Workspace, int, error) {
+	userStr *models.CanonicalUserStr) (*ws.Workspace, error) {
 
-	userstrParam := req.Userstr
-	timeout := int(req.Timeout)
-
-	p.log.Debug().Msgf("ProvisionWorkspace called with userstr=%s, timeout=%d",
-		userstrParam, timeout)
-
-	if timeout <= 0 {
-		timeout = 20 // default timeout
-	}
-
-	if userstrParam == "" {
-		return nil, 0, status.Errorf(codes.InvalidArgument, "userstr is required")
-	}
-
-	userstr, err := models.NewUserStr(userstrParam)
+	userpb, err := p.server.Identity.FindUser(ctx, &identitypb.FindUserRequest{Username: userStr.Identity.Username})
 	if err != nil {
-		return nil, 0, status.Errorf(codes.InvalidArgument, "Invalid userstr format: %v", err)
-	}
-
-	userpb, err := p.server.Identity.FindUser(ctx, &identitypb.FindUserRequest{Username: userstr.Username})
-	if err != nil {
-		return nil, 0, status.Errorf(codes.NotFound, "Failed to get user: %v", err)
+		return nil, status.Errorf(codes.NotFound, "Failed to get user: %v", err)
 	}
 	user := gapi.ProtoToUser(userpb)
 
-	bpName := userstr.Blueprint
-	if bpName == "" {
-		bpName, err = p.server.bpManager.GetDefaultUserBlueprint(user)
-		if err != nil {
-			return nil, 0, status.Errorf(codes.InvalidArgument,
-				"No blueprint specified in userstr and no default blueprint found for user: %v", err)
-		}
-	}
-
 	var blueprintObj *models.Blueprint
-
-	if userstr.HasCustomBlueprint {
-		blueprintpb, err := p.server.Identity.GetBlueprintByUserStr(ctx, &identitypb.UserStr{Userstr: userstrParam})
+	switch {
+	case userStr.Identity.BlueprintKind == models.BlueprintKindCustom:
+		blueprintpb, err := p.server.Identity.GetBlueprintByUserStr(ctx, &identitypb.UserStr{Userstr: userStr.CanonicalUserStr})
 		if err != nil {
-			return nil, 0, status.Errorf(codes.InvalidArgument, "failed to get blueprint by userstr: %v", err)
+			return nil, status.Errorf(codes.InvalidArgument, "failed to get blueprint by userstr: %v", err)
 		}
 
 		var customBlueprint models.CustomBlueprint
 		err = json.Unmarshal([]byte(blueprintpb.BlueprintJson), &customBlueprint)
 		if err != nil {
-			return nil, 0, status.Errorf(codes.Internal, "Failed to parse custom blueprint JSON: %v", err)
+			return nil, status.Errorf(codes.Internal, "Failed to parse custom blueprint JSON: %v", err)
 		}
 
 		if !user.HasBlueprint(customBlueprint.Template) {
-			return nil, 0, status.Errorf(codes.PermissionDenied,
-				"Access denied: user %s is not authorized to use blueprint's template %s", userstr.Username, customBlueprint.Template)
+			return nil, status.Errorf(codes.PermissionDenied,
+				"Access denied: user %s is not authorized to use blueprint's template %s", userStr.Identity.Username, customBlueprint.Template)
 		}
 
-		scope, errx := p.server.GetBlueprintScope(customBlueprint.Metadata.Name, user, &customBlueprint.Metadata)
+		scope, errx := p.server.GetBlueprintScope(customBlueprint.Metadata.Name, user, &customBlueprint.Metadata, userStr.WorkspaceID)
 		if errx != nil {
-			return nil, 0, p.convertToGRPCError(errx)
+			return nil, p.convertToGRPCError(errx)
 		}
 
 		blueprintObj, err = p.server.bpManager.ComposeWithScope(&customBlueprint, scope)
 		if err != nil {
-			return nil, 0, status.Errorf(codes.InvalidArgument, "Failed to compose blueprint: %v", err)
+			return nil, status.Errorf(codes.InvalidArgument, "Failed to compose blueprint: %v", err)
 		}
 
 		user = scope.User
-	} else {
-		scope, errx := p.server.GetBlueprintScope(bpName, user, nil)
+
+	case userStr.Identity.BlueprintKind == models.BlueprintKindImplicit || userStr.Identity.BlueprintKind == models.BlueprintKindExplicit:
+		bpName := userStr.Identity.Blueprint
+		if userStr.Identity.BlueprintKind == models.BlueprintKindImplicit {
+			bpName, err = p.server.bpManager.GetDefaultUserBlueprint(user)
+			if err != nil {
+				return nil, status.Errorf(codes.InvalidArgument,
+					"No blueprint specified in userstr and no default blueprint found for user: %v", err)
+			}
+		}
+
+		if bpName == "" {
+			return nil, status.Errorf(codes.InvalidArgument,
+				"blueprint name is required in userstr of kind explicit or implicit")
+		}
+
+		scope, errx := p.server.GetBlueprintScope(bpName, user, nil, userStr.WorkspaceID)
 		if errx != nil {
-			return nil, 0, p.convertToGRPCError(errx)
+			return nil, p.convertToGRPCError(errx)
 		}
 
 		if !user.HasBlueprint(bpName) {
-			return nil, 0, status.Errorf(codes.PermissionDenied,
-				"Access denied: user %s is not authorized to use blueprint %s", userstr.Username, bpName)
+			return nil, status.Errorf(codes.PermissionDenied,
+				"Access denied: user %s is not authorized to use blueprint %s", userStr.Identity.Username, bpName)
 		}
 
 		blueprintObj, err = p.server.bpManager.GetBlueprint(bpName, scope)
 		if err != nil {
-			return nil, 0, status.Errorf(codes.NotFound, "Blueprint %s not found", userstr.Blueprint)
+			return nil, status.Errorf(codes.NotFound, "Blueprint %s not found", userStr.Identity.Blueprint)
 		}
 
 		if blueprintObj.IsTemplate {
-			return nil, 0, status.Errorf(codes.InvalidArgument,
-				"Blueprint %s is a template and cannot be used to provision a workspace", userstr.Blueprint)
+			return nil, status.Errorf(codes.InvalidArgument,
+				"Blueprint %s is a template and cannot be used to provision a workspace", userStr.Identity.Blueprint)
 		}
 	}
 
 	workspace, err := ws.NewWorkspace(blueprintObj, user, p.server.helm, p.server.Identity,
 		&p.server.config.CertManager, &p.server.config.K8shellCapabilities)
 	if err != nil {
-		return nil, 0, status.Errorf(codes.Internal, "Failed to create workspace: %v", err)
+		return nil, status.Errorf(codes.Internal, "Failed to create workspace: %v", err)
 	}
 
-	return workspace, timeout, nil
+	return workspace, nil
 }
 
 // convertToGRPCError converts internal errors to gRPC status errors

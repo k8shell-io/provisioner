@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"os/signal"
@@ -11,10 +12,10 @@ import (
 	log "github.com/k8shell-io/common/pkg/logger"
 	"github.com/k8shell-io/common/pkg/models"
 	identity "github.com/k8shell-io/identity/pkg/api"
+	"github.com/k8shell-io/identity/pkg/api/identitypb"
 	"github.com/k8shell-io/provisioner/internal/blueprint"
 	"github.com/k8shell-io/provisioner/internal/config"
 	"github.com/k8shell-io/provisioner/internal/helm"
-	"github.com/k8shell-io/provisioner/internal/workspace"
 	"github.com/k8shell-io/provisioner/pkg/api/provisionerpb"
 	"github.com/rs/zerolog"
 	"google.golang.org/grpc"
@@ -88,8 +89,23 @@ func NewServer(configFile string) (*Server, error) {
 	return server, nil
 }
 
+// ResolveIssueRef resolves an issue number to a git reference
+func (s Server) ResolveIssueRepoRef(username string, repoOwner, repoName string, issueNumber int) (string, error) {
+	ctx := context.Background()
+	resp, err := s.Identity.ResolveRepoIssueToRef(ctx, &identitypb.RepoIssueRequest{
+		Username:    username,
+		RepoOwner:   repoOwner,
+		RepoName:    repoName,
+		IssueNumber: int32(issueNumber),
+	})
+	if err != nil {
+		return "", fmt.Errorf("failed to resolve issue to ref: %w", err)
+	}
+	return resp.RepoRef, nil
+}
+
 func (s *Server) GetBlueprintScope(blueprintName string, user *models.User,
-	metadata *models.BlueprintMetadata) (*blueprint.BlueprintScope, error) {
+	bpMetadata *models.BlueprintMetadata, workspaceName string) (*blueprint.BlueprintScope, error) {
 
 	if blueprintName == "" {
 		return nil, fmt.Errorf("blueprint name is required to create scope")
@@ -100,16 +116,18 @@ func (s *Server) GetBlueprintScope(blueprintName string, user *models.User,
 	var ownerName = "norepoowner"
 	var repoAddress = "noaddress"
 
-	if metadata != nil {
-		if metadata.RepoName != "" && metadata.RepoOwner != "" {
-			repoName = metadata.RepoName
-			ownerName = metadata.RepoOwner
+	if bpMetadata != nil {
+		if bpMetadata.RepoName != "" {
+			repoName = bpMetadata.RepoName
 		}
-		if metadata.RepoAddress != "" {
-			repoAddress = metadata.RepoAddress
+		if bpMetadata.RepoOwner != "" {
+			ownerName = bpMetadata.RepoOwner
 		}
-		if metadata.RepoRef != "" {
-			repoRef = metadata.RepoRef
+		if bpMetadata.RepoAddress != "" {
+			repoAddress = bpMetadata.RepoAddress
+		}
+		if bpMetadata.RepoRef != "" {
+			repoRef = bpMetadata.RepoRef
 		}
 	}
 
@@ -118,7 +136,7 @@ func (s *Server) GetBlueprintScope(blueprintName string, user *models.User,
 
 	scope := &blueprint.BlueprintScope{
 		User:          user,
-		WorkspaceName: workspace.GetWorkspaceName(blueprintName, user.Username, metadata),
+		WorkspaceName: workspaceName,
 		Metadata: &models.BlueprintMetadata{
 			Name:        blueprintName,
 			RepoName:    repoName,
