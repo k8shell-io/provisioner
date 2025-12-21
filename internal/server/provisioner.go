@@ -114,7 +114,7 @@ func (p *ProvisionerService) ProvisionWorkspaceStream(req *provisionerpb.Provisi
 		return status.Errorf(codes.InvalidArgument, "Invalid userstr format: %v", err)
 	}
 
-	canUserStr, err := userstr.Canonicalize(p.server)
+	canUserStr, err := userstr.Canonicalize()
 	if err != nil {
 		return status.Errorf(codes.InvalidArgument, "Failed to canonicalize userstr: %v", err)
 	}

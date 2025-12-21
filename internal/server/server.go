@@ -80,6 +80,8 @@ func NewServer(configFile string) (*Server, error) {
 		return nil
 	})
 
+	models.SetIssueRepoRefResolver(server)
+
 	// server.log.Info().Msgf("Ensuring workspace base, namespace %s", server.config.TargetNamespace)
 	// err = server.helm.EnsureBase(context.Background())
 	// if err != nil {
@@ -90,6 +92,7 @@ func NewServer(configFile string) (*Server, error) {
 }
 
 // ResolveIssueRef resolves an issue number to a git reference
+// Implements models.IssueRepoRefResolver
 func (s Server) ResolveIssueRepoRef(username string, repoOwner, repoName string, issueNumber int) (string, error) {
 	ctx := context.Background()
 	resp, err := s.Identity.ResolveRepoIssueToRef(ctx, &identitypb.RepoIssueRequest{
