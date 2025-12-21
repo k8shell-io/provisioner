@@ -252,7 +252,8 @@ func NewWorkspaceFromHelmRelease(ctx context.Context, name string, helmClient *h
 	release := releases[0]
 	username := release.Labels["k8shell.io/username"]
 	blueprintName := release.Labels["k8shell.io/blueprint"]
-	workspaceName := release.Labels["app.kubernetes.io/instance"]
+	//workspaceName := release.Labels["app.kubernetes.io/instance"]
+	//TODO: check workspace name matches pattern
 
 	userpb, err := identityClient.FindUser(ctx, &identitypb.FindUserRequest{Username: username})
 	if err != nil {
@@ -278,10 +279,6 @@ func NewWorkspaceFromHelmRelease(ctx context.Context, name string, helmClient *h
 		blueprint:   blueprint,
 		user:        user,
 		certManager: certManager,
-	}
-
-	if ws.Name != workspaceName {
-		return nil, fmt.Errorf("workspace name mismatch: expected %s, got %s", ws.Name, workspaceName)
 	}
 
 	return ws, nil
