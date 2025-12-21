@@ -142,7 +142,7 @@ func GetWorkspaceStatus(ctx context.Context, helmClient *helm.Client,
 	}
 
 	// get app version (it should be the same as is in helm app version)
-	var appVersion, exists = pod.Labels["k8shell.io/appversion"]
+	var appVersion, exists = pod.Labels["app.kubernetes.io/version"]
 	if !exists {
 		appVersion = "1.0.0"
 	}
@@ -266,32 +266,6 @@ func NewWorkspaceFromHelmRelease(ctx context.Context, name string, helmClient *h
 
 	return ws, nil
 }
-
-// func (w *Workspace) Labels() map[string]string {
-// 	labels := map[string]string{
-// 		"app.kubernetes.io/name":       helm.WORKSPACE_CHART_NAME,
-// 		"app.kubernetes.io/instance":   w.Name,
-// 		"app.kubernetes.io/version":    "1.0.0",
-// 		"app.kubernetes.io/managed-by": "k8shell-provisioner",
-// 		"k8shell.io/app":               helm.WORKSPACE_CHART_NAME,
-// 		"k8shell.io/username":          w.user.Username,
-// 		"k8shell.io/blueprint":         w.blueprint.Name,
-// 		"k8shell.io/organization":      w.user.Organization,
-// 	}
-// 	if w.blueprint.Metadata.RepoName != "" {
-// 		labels["k8shell.io/repo-name"] = w.blueprint.Metadata.RepoName
-// 	}
-// 	if w.blueprint.Metadata.RepoOwner != "" {
-// 		labels["k8shell.io/repo-owner"] = w.blueprint.Metadata.RepoOwner
-// 	}
-// 	if w.blueprint.Metadata.RepoRef != "" {
-// 		labels["k8shell.io/repo-ref"] = w.blueprint.Metadata.RepoRef
-// 	}
-// 	// if w.blueprint.Metadata.RepoAddress != "" {
-// 	// 	labels["k8shell.io/repo-address"] = w.blueprint.Metadata.RepoAddress
-// 	// }
-// 	return labels
-// }
 
 func (w *Workspace) CreateLock() *WorkspaceLock {
 	return NewWorkspaceLock(
