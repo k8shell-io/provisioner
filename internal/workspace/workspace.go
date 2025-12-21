@@ -89,8 +89,6 @@ func GetWorkspaceStatus(ctx context.Context, helmClient *helm.Client,
 
 	var pod *corev1.Pod
 	var podService *corev1.Service
-	var keysSecret *corev1.Secret
-	var tlsSecret *corev1.Secret
 
 	g, ctx := errgroup.WithContext(ctx)
 
@@ -115,40 +113,43 @@ func GetWorkspaceStatus(ctx context.Context, helmClient *helm.Client,
 		var err error
 		podService, err = v1.Services(helmClient.TargetNamespace()).Get(ctx, name, metav1.GetOptions{})
 		if err != nil {
+			if strings.Contains(err.Error(), "not found") {
+				return fmt.Errorf("%w: %s", models.ErrWorkspaceNotFound, name)
+			}
 			return fmt.Errorf("failed to get pod service %s: %w", name, err)
 		}
 		return nil
 	})
 
-	// Fetch access keys secret
-	g.Go(func() error {
-		var err error
-		keysSecret, err = v1.Secrets(helmClient.TargetNamespace()).Get(ctx, name+"-access-keys", metav1.GetOptions{})
-		if err != nil {
-			//return fmt.Errorf("failed to get keys %s: %w", name, err)
-		}
-		return nil
-	})
+	// // Fetch access keys secret
+	// g.Go(func() error {
+	// 	var err error
+	// 	keysSecret, err = v1.Secrets(helmClient.TargetNamespace()).Get(ctx, name+"-access-keys", metav1.GetOptions{})
+	// 	if err != nil {
+	// 		//return fmt.Errorf("failed to get keys %s: %w", name, err)
+	// 	}
+	// 	return nil
+	// })
 
-	// Fetch TLS secret
-	g.Go(func() error {
-		tlsSecret, _ = v1.Secrets(helmClient.TargetNamespace()).Get(ctx, name+"-tls", metav1.GetOptions{})
-		return nil
-	})
+	// // Fetch TLS secret
+	// g.Go(func() error {
+	// 	tlsSecret, _ = v1.Secrets(helmClient.TargetNamespace()).Get(ctx, name+"-tls", metav1.GetOptions{})
+	// 	return nil
+	// })
 
 	if err := g.Wait(); err != nil {
 		return nil, err
 	}
 
-	accessKey, ok := keysSecret.Data["a1key"]
-	if !ok {
-		accessKey = []byte{}
-	}
+	// accessKey, ok := keysSecret.Data["a1key"]
+	// if !ok {
+	// 	accessKey = []byte{}
+	// }
 
-	tlsCert, ok := tlsSecret.Data["tls.crt"]
-	if !ok {
-		tlsCert = []byte{}
-	}
+	// tlsCert, ok := tlsSecret.Data["tls.crt"]
+	// if !ok {
+	// 	tlsCert = []byte{}
+	// }
 
 	var splash string
 	if splashAnnotation, exists := pod.Annotations["workspace.k8shell.io/splash"]; exists {
@@ -184,8 +185,8 @@ func GetWorkspaceStatus(ctx context.Context, helmClient *helm.Client,
 		Host:       podService.Name + "." + podService.Namespace,
 		PodIP:      pod.Status.PodIP,
 		Port:       int(podService.Spec.Ports[0].Port),
-		AccessKey:  string(accessKey),
-		TLSCert:    string(tlsCert),
+		AccessKey:  "", // deprecated
+		TLSCert:    "", // deprecated
 		Splash:     splash,
 		AppVersion: appVersion,
 	}

@@ -36,11 +36,14 @@ func NewProvisionerService(server *Server) *ProvisionerService {
 // GetWorkspaceStatus retrieves the status of a specific workspace
 func (p *ProvisionerService) GetWorkspaceStatus(ctx context.Context,
 	req *provisionerpb.Workspace) (*commonpb.WorkspaceStatus, error) {
-	status, err := ws.GetWorkspaceStatus(ctx, p.server.helm, req.Workspace)
+	s, err := ws.GetWorkspaceStatus(ctx, p.server.helm, req.Workspace)
 	if err != nil {
-		return nil, err
+		if errors.Is(err, models.ErrWorkspaceNotFound) {
+			return nil, status.Errorf(codes.NotFound, "Workspace %s not found", req.Workspace)
+		}
+		return nil, status.Errorf(codes.Internal, "Failed to get workspace status: %v", err)
 	}
-	return gapi.WorkspaceStatusToProto(status), nil
+	return gapi.WorkspaceStatusToProto(s), nil
 }
 
 // GetUserWorkspaceInfo retrieves all workspaces for a given user and optional blueprint
