@@ -89,6 +89,7 @@ func GetWorkspaceStatus(ctx context.Context, helmClient *helm.Client,
 
 	var pod *corev1.Pod
 	var podService *corev1.Service
+	var tlsSecret *corev1.Secret
 
 	g, ctx := errgroup.WithContext(ctx)
 
@@ -131,25 +132,15 @@ func GetWorkspaceStatus(ctx context.Context, helmClient *helm.Client,
 	// 	return nil
 	// })
 
-	// // Fetch TLS secret
-	// g.Go(func() error {
-	// 	tlsSecret, _ = v1.Secrets(helmClient.TargetNamespace()).Get(ctx, name+"-tls", metav1.GetOptions{})
-	// 	return nil
-	// })
+	// Fetch TLS secret
+	g.Go(func() error {
+		tlsSecret, _ = v1.Secrets(helmClient.TargetNamespace()).Get(ctx, name+"-tls", metav1.GetOptions{})
+		return nil
+	})
 
 	if err := g.Wait(); err != nil {
 		return nil, err
 	}
-
-	// accessKey, ok := keysSecret.Data["a1key"]
-	// if !ok {
-	// 	accessKey = []byte{}
-	// }
-
-	// tlsCert, ok := tlsSecret.Data["tls.crt"]
-	// if !ok {
-	// 	tlsCert = []byte{}
-	// }
 
 	var splash string
 	if splashAnnotation, exists := pod.Annotations["workspace.k8shell.io/splash"]; exists {
@@ -173,6 +164,12 @@ func GetWorkspaceStatus(ctx context.Context, helmClient *helm.Client,
 		}
 	}
 
+	// TODO: fix tlsEnabled to be bool
+	tlsEnabled := ""
+	if tlsSecret != nil {
+		tlsEnabled = "true"
+	}
+
 	status := &models.WorkspaceStatus{
 		PodStatus: models.PodStatus{
 			Created: pod.CreationTimestamp.Time,
@@ -185,8 +182,8 @@ func GetWorkspaceStatus(ctx context.Context, helmClient *helm.Client,
 		Host:       podService.Name + "." + podService.Namespace,
 		PodIP:      pod.Status.PodIP,
 		Port:       int(podService.Spec.Ports[0].Port),
-		AccessKey:  "", // deprecated
-		TLSCert:    "", // deprecated
+		AccessKey:  "",         // deprecated
+		TLSCert:    tlsEnabled, // TODO: return bool!
 		Splash:     splash,
 		AppVersion: appVersion,
 	}
