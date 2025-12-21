@@ -307,9 +307,9 @@ func (w *Workspace) Labels() map[string]string {
 	if w.blueprint.Metadata.RepoRef != "" {
 		labels["k8shell.io/repo-ref"] = w.blueprint.Metadata.RepoRef
 	}
-	if w.blueprint.Metadata.RepoAddress != "" {
-		labels["k8shell.io/repo-address"] = w.blueprint.Metadata.RepoAddress
-	}
+	// if w.blueprint.Metadata.RepoAddress != "" {
+	// 	labels["k8shell.io/repo-address"] = w.blueprint.Metadata.RepoAddress
+	// }
 	return labels
 }
 
