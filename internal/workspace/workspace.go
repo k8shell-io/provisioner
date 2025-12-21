@@ -273,6 +273,7 @@ func NewWorkspaceFromHelmRelease(ctx context.Context, name string, helmClient *h
 	blueprint.Name = blueprintName
 
 	ws := &Workspace{
+		Name:        name,
 		log:         log.NewLogger("workspace"),
 		client:      helmClient,
 		identify:    identityClient,
