@@ -153,6 +153,18 @@ func (w *Workspace) doInstallation(ctx context.Context, opts *ProvisionOptions) 
 		return nil, fmt.Errorf("failed to create headless service: %w", err)
 	}
 
+	labels := map[string]string{
+		"app.kubernetes.io/name":       helm.WORKSPACE_CHART_NAME,
+		"app.kubernetes.io/instance":   w.Name,
+		"app.kubernetes.io/version":    w.getK8shelldVersion(),
+		"app.kubernetes.io/managed-by": "k8shell-provisioner",
+		"k8shell.io/app":               helm.WORKSPACE_CHART_NAME,
+		"k8shell.io/workspace":         w.Name,
+		"k8shell.io/username":          w.user.Username,
+		"k8shell.io/blueprint":         w.blueprint.Name,
+		"k8shell.io/organization":      w.user.Organization,
+	}
+
 	startTime := time.Now()
 	err = w.client.Install(ctx, helm.WORKSPACE_CHART_NAME, helm.InstallOptions{
 		ReleaseName:     w.Name,
@@ -160,7 +172,7 @@ func (w *Workspace) doInstallation(ctx context.Context, opts *ProvisionOptions) 
 		CreateNamespace: false,
 		Wait:            false,
 		Timeout:         opts.Timeout,
-		Labels:          w.Labels(),
+		Labels:          labels,
 		AppVersion:      w.getK8shelldVersion(),
 	})
 	if err != nil {

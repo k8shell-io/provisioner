@@ -122,16 +122,6 @@ func GetWorkspaceStatus(ctx context.Context, helmClient *helm.Client,
 		return nil
 	})
 
-	// // Fetch access keys secret
-	// g.Go(func() error {
-	// 	var err error
-	// 	keysSecret, err = v1.Secrets(helmClient.TargetNamespace()).Get(ctx, name+"-access-keys", metav1.GetOptions{})
-	// 	if err != nil {
-	// 		//return fmt.Errorf("failed to get keys %s: %w", name, err)
-	// 	}
-	// 	return nil
-	// })
-
 	// Fetch TLS secret
 	g.Go(func() error {
 		tlsSecret, _ = v1.Secrets(helmClient.TargetNamespace()).Get(ctx, name+"-tls", metav1.GetOptions{})
@@ -152,22 +142,15 @@ func GetWorkspaceStatus(ctx context.Context, helmClient *helm.Client,
 	}
 
 	// get app version (it should be the same as is in helm app version)
-	var appVersion string
-	for _, container := range pod.Spec.InitContainers {
-		if strings.Contains(container.Image, "k8shelld") {
-			imageParts := strings.Split(container.Image, ":")
-			if len(imageParts) >= 2 {
-				tag := imageParts[len(imageParts)-1]
-				appVersion = strings.TrimPrefix(tag, "v")
-			}
-			break
-		}
+	var appVersion, exists = pod.Labels["k8shell.io/appversion"]
+	if !exists {
+		appVersion = "1.0.0"
 	}
 
 	// TODO: fix tlsEnabled to be bool
-	tlsEnabled := ""
+	tlsEnabled := false
 	if tlsSecret != nil {
-		tlsEnabled = "true"
+		tlsEnabled = true
 	}
 
 	status := &models.WorkspaceStatus{
@@ -182,8 +165,7 @@ func GetWorkspaceStatus(ctx context.Context, helmClient *helm.Client,
 		Host:       podService.Name + "." + podService.Namespace,
 		PodIP:      pod.Status.PodIP,
 		Port:       int(podService.Spec.Ports[0].Port),
-		AccessKey:  "",         // deprecated
-		TLSCert:    tlsEnabled, // TODO: return bool!
+		TLSEnabled: tlsEnabled,
 		Splash:     splash,
 		AppVersion: appVersion,
 	}
@@ -285,31 +267,31 @@ func NewWorkspaceFromHelmRelease(ctx context.Context, name string, helmClient *h
 	return ws, nil
 }
 
-func (w *Workspace) Labels() map[string]string {
-	labels := map[string]string{
-		"app.kubernetes.io/name":       helm.WORKSPACE_CHART_NAME,
-		"app.kubernetes.io/instance":   w.Name,
-		"app.kubernetes.io/version":    "1.0.0",
-		"app.kubernetes.io/managed-by": "k8shell-provisioner",
-		"k8shell.io/app":               helm.WORKSPACE_CHART_NAME,
-		"k8shell.io/username":          w.user.Username,
-		"k8shell.io/blueprint":         w.blueprint.Name,
-		"k8shell.io/organization":      w.user.Organization,
-	}
-	if w.blueprint.Metadata.RepoName != "" {
-		labels["k8shell.io/repo-name"] = w.blueprint.Metadata.RepoName
-	}
-	if w.blueprint.Metadata.RepoOwner != "" {
-		labels["k8shell.io/repo-owner"] = w.blueprint.Metadata.RepoOwner
-	}
-	if w.blueprint.Metadata.RepoRef != "" {
-		labels["k8shell.io/repo-ref"] = w.blueprint.Metadata.RepoRef
-	}
-	// if w.blueprint.Metadata.RepoAddress != "" {
-	// 	labels["k8shell.io/repo-address"] = w.blueprint.Metadata.RepoAddress
-	// }
-	return labels
-}
+// func (w *Workspace) Labels() map[string]string {
+// 	labels := map[string]string{
+// 		"app.kubernetes.io/name":       helm.WORKSPACE_CHART_NAME,
+// 		"app.kubernetes.io/instance":   w.Name,
+// 		"app.kubernetes.io/version":    "1.0.0",
+// 		"app.kubernetes.io/managed-by": "k8shell-provisioner",
+// 		"k8shell.io/app":               helm.WORKSPACE_CHART_NAME,
+// 		"k8shell.io/username":          w.user.Username,
+// 		"k8shell.io/blueprint":         w.blueprint.Name,
+// 		"k8shell.io/organization":      w.user.Organization,
+// 	}
+// 	if w.blueprint.Metadata.RepoName != "" {
+// 		labels["k8shell.io/repo-name"] = w.blueprint.Metadata.RepoName
+// 	}
+// 	if w.blueprint.Metadata.RepoOwner != "" {
+// 		labels["k8shell.io/repo-owner"] = w.blueprint.Metadata.RepoOwner
+// 	}
+// 	if w.blueprint.Metadata.RepoRef != "" {
+// 		labels["k8shell.io/repo-ref"] = w.blueprint.Metadata.RepoRef
+// 	}
+// 	// if w.blueprint.Metadata.RepoAddress != "" {
+// 	// 	labels["k8shell.io/repo-address"] = w.blueprint.Metadata.RepoAddress
+// 	// }
+// 	return labels
+// }
 
 func (w *Workspace) CreateLock() *WorkspaceLock {
 	return NewWorkspaceLock(
@@ -360,6 +342,7 @@ func (w *Workspace) Values() (map[string]interface{}, error) {
 	values["__registry__"] = w.client.Registry.ToValues()
 	values["__namespace__"] = getNamespace()
 	values["__certmanager__"] = cmValues
+	values["__appversion__"] = w.getK8shelldVersion()
 	values["__apiserver__"] = map[string]interface{}{
 		"enabled": w.caps.APIServerEnabled,
 	}
