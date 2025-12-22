@@ -1,7 +1,6 @@
 package server
 
 import (
-	"context"
 	"fmt"
 	"os"
 	"os/signal"
@@ -12,7 +11,6 @@ import (
 	log "github.com/k8shell-io/common/pkg/logger"
 	"github.com/k8shell-io/common/pkg/models"
 	identity "github.com/k8shell-io/identity/pkg/api"
-	"github.com/k8shell-io/identity/pkg/api/identitypb"
 	"github.com/k8shell-io/provisioner/internal/blueprint"
 	"github.com/k8shell-io/provisioner/internal/config"
 	"github.com/k8shell-io/provisioner/internal/helm"
@@ -94,17 +92,18 @@ func NewServer(configFile string) (*Server, error) {
 // ResolveIssueRef resolves an issue number to a git reference
 // Implements models.IssueRepoRefResolver
 func (s Server) ResolveIssueRepoRef(username string, repoOwner, repoName string, issueNumber int) (string, error) {
-	ctx := context.Background()
-	resp, err := s.Identity.ResolveRepoIssueToRef(ctx, &identitypb.RepoIssueRequest{
-		Username:    username,
-		RepoOwner:   repoOwner,
-		RepoName:    repoName,
-		IssueNumber: int32(issueNumber),
-	})
-	if err != nil {
-		return "", fmt.Errorf("failed to resolve issue to ref: %w", err)
-	}
-	return resp.RepoRef, nil
+	return "", fmt.Errorf("Issue resolving is not supported. You need to provide cannonizied user string.")
+	// ctx := context.Background()
+	// resp, err := s.Identity.ResolveRepoIssueToRef(ctx, &identitypb.RepoIssueRequest{
+	// 	Username:    username,
+	// 	RepoOwner:   repoOwner,
+	// 	RepoName:    repoName,
+	// 	IssueNumber: int32(issueNumber),
+	// })
+	// if err != nil {
+	// 	return "", fmt.Errorf("failed to resolve issue to ref: %w", err)
+	// }
+	// return resp.RepoRef, nil
 }
 
 func (s *Server) GetBlueprintScope(blueprintName string, user *models.User,
