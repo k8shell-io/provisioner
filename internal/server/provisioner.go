@@ -322,7 +322,7 @@ func (p *ProvisionerService) RestartWorkspace(ctx context.Context,
 	}
 
 	w, err := ws.NewWorkspaceFromHelmRelease(ctx, name, p.server.helm, p.server.Identity,
-		&p.server.config.CertManager)
+		&p.server.config.CertManager, &p.server.config.K8shellCapabilities)
 	if err != nil {
 		return nil, p.convertToGRPCError(err)
 	}
@@ -396,7 +396,7 @@ func (p *ProvisionerService) DeleteWorkspace(ctx context.Context,
 	}
 
 	w, err := ws.NewWorkspaceFromHelmRelease(ctx, name, p.server.helm, p.server.Identity,
-		&p.server.config.CertManager)
+		&p.server.config.CertManager, &p.server.config.K8shellCapabilities)
 	if err != nil {
 		return nil, p.convertToGRPCError(err)
 	}

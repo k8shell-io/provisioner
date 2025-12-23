@@ -209,7 +209,8 @@ func NewWorkspace(workspaceName string, blueprint *models.Blueprint, user *model
 
 // NewWorkspaceFromHelmRelease creates a workspace instance from an existing Helm release
 func NewWorkspaceFromHelmRelease(ctx context.Context, name string, helmClient *helm.Client,
-	identityClient *identity.Client, certManager *config.CertManagerConfig) (*Workspace, error) {
+	identityClient *identity.Client, certManager *config.CertManagerConfig,
+	caps *config.K8shellCapabilities) (*Workspace, error) {
 
 	labels := map[string]string{
 		"app.kubernetes.io/name":     helm.WORKSPACE_CHART_NAME,
@@ -263,6 +264,7 @@ func NewWorkspaceFromHelmRelease(ctx context.Context, name string, helmClient *h
 		blueprint:   blueprint,
 		user:        user,
 		certManager: certManager,
+		caps:        caps,
 	}
 
 	return ws, nil
