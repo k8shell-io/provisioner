@@ -41,7 +41,6 @@ type InstallOptions struct {
 	Labels          map[string]string
 	Timeout         int
 	AppVersion      string
-	ReuseValues     bool
 }
 
 // NewClient creates a new Helm client
@@ -293,7 +292,6 @@ func (c *Client) Upgrade(ctx context.Context, opts InstallOptions) error {
 	}
 
 	upgrade := action.NewUpgrade(actionConfig)
-	upgrade.ReuseValues = opts.ReuseValues
 	upgrade.Wait = opts.Wait
 
 	if opts.Timeout > 0 {
