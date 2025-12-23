@@ -14,7 +14,6 @@ service ProvisionerService {
   rpc ListWorkspaces (ListWorkspacesRequest) returns (ListWorkspacesResponse);
   rpc ProvisionWorkspaceStream (ProvisionWorkspaceRequest) returns (stream ProvisionEvent);
   rpc DeleteWorkspace (Workspace) returns (DeleteWorkspaceResponse);
-  rpc RestartWorkspace (Workspace) returns (RestartWorkspaceResponse);
 }
 
 message Workspace {
@@ -54,9 +53,5 @@ message ProvisionEvent {
 }
 
 message DeleteWorkspaceResponse {
-  string message = 1;
-}
-
-message RestartWorkspaceResponse {
   string message = 1;
 }
