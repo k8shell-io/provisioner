@@ -399,6 +399,7 @@ func (w *Workspace) Upgrade(ctx context.Context, opts *ProvisionOptions) (*model
 	startTime := time.Now()
 	err := w.client.Upgrade(ctx, helm.WORKSPACE_CHART_NAME, helm.InstallOptions{
 		ReleaseName: w.Name,
+		ChartName:   helm.WORKSPACE_CHART_NAME,
 		ReuseValues: true,
 		Wait:        false,
 	})
