@@ -388,11 +388,18 @@ func (w *Workspace) Uninstall(ctx context.Context, timeout time.Duration, wait b
 }
 
 func (w *Workspace) DeletePod(ctx context.Context) error {
+	startTime := time.Now()
 	v1 := w.client.GetKubeClient().CoreV1()
 	err := v1.Pods(w.client.TargetNamespace()).Delete(ctx, w.Name, metav1.DeleteOptions{})
 	if err != nil && !apierrors.IsNotFound(err) {
 		return fmt.Errorf("failed to delete pod %s: %w", w.Name, err)
 	}
+
+	// TODO: fix completed
+	_, err = w.waitForPodRunning(ctx, startTime, &ProvisionOptions{
+		Timeout: 20,
+	})
+
 	return nil
 }
 
