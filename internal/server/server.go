@@ -114,9 +114,9 @@ func (s *Server) GetBlueprintScope(blueprintName string, user *models.User,
 	}
 
 	var repoName = "noreponame"
-	var repoRef = "noreporef"
 	var ownerName = "norepoowner"
 	var repoAddress = "noaddress"
+	var repoRef = ""
 
 	if bpMetadata != nil {
 		if bpMetadata.RepoName != "" {

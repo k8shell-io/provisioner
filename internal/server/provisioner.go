@@ -243,7 +243,7 @@ func (p *ProvisionerService) prepareWorkspaceProvisioning(ctx context.Context,
 				"Access denied: user %s is not authorized to use blueprint's template %s", userStr.Identity.Username, customBlueprint.Template)
 		}
 
-		scope, errx := p.server.GetBlueprintScope(customBlueprint.Metadata.Name, user, &customBlueprint.Metadata, userStr.WorkspaceID)
+		scope, errx := p.server.GetBlueprintScope(customBlueprint.Metadata.Name, user, &customBlueprint.Metadata, userStr.WorkspaceName)
 		if errx != nil {
 			return nil, p.convertToGRPCError(errx)
 		}
@@ -270,7 +270,7 @@ func (p *ProvisionerService) prepareWorkspaceProvisioning(ctx context.Context,
 				"blueprint name is required in userstr of kind explicit or implicit")
 		}
 
-		scope, errx := p.server.GetBlueprintScope(bpName, user, nil, userStr.WorkspaceID)
+		scope, errx := p.server.GetBlueprintScope(bpName, user, nil, userStr.WorkspaceName)
 		if errx != nil {
 			return nil, p.convertToGRPCError(errx)
 		}
@@ -291,7 +291,7 @@ func (p *ProvisionerService) prepareWorkspaceProvisioning(ctx context.Context,
 		}
 	}
 
-	workspace, err := ws.NewWorkspace(userStr.WorkspaceID, blueprintObj, user, p.server.helm, p.server.Identity,
+	workspace, err := ws.NewWorkspace(userStr.WorkspaceName, blueprintObj, user, p.server.helm, p.server.Identity,
 		&p.server.config.CertManager, &p.server.config.K8shellCapabilities)
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "Failed to create workspace: %v", err)
