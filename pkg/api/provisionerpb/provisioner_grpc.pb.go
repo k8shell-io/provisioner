@@ -25,6 +25,7 @@ const (
 	ProvisionerService_ListWorkspaces_FullMethodName           = "/provisioner.ProvisionerService/ListWorkspaces"
 	ProvisionerService_ProvisionWorkspaceStream_FullMethodName = "/provisioner.ProvisionerService/ProvisionWorkspaceStream"
 	ProvisionerService_DeleteWorkspace_FullMethodName          = "/provisioner.ProvisionerService/DeleteWorkspace"
+	ProvisionerService_RestartWorkspace_FullMethodName         = "/provisioner.ProvisionerService/RestartWorkspace"
 )
 
 // ProvisionerServiceClient is the client API for ProvisionerService service.
@@ -36,6 +37,7 @@ type ProvisionerServiceClient interface {
 	ListWorkspaces(ctx context.Context, in *ListWorkspacesRequest, opts ...grpc.CallOption) (*ListWorkspacesResponse, error)
 	ProvisionWorkspaceStream(ctx context.Context, in *ProvisionWorkspaceRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[ProvisionEvent], error)
 	DeleteWorkspace(ctx context.Context, in *Workspace, opts ...grpc.CallOption) (*DeleteWorkspaceResponse, error)
+	RestartWorkspace(ctx context.Context, in *Workspace, opts ...grpc.CallOption) (*RestartWorkspaceResponse, error)
 }
 
 type provisionerServiceClient struct {
@@ -105,6 +107,16 @@ func (c *provisionerServiceClient) DeleteWorkspace(ctx context.Context, in *Work
 	return out, nil
 }
 
+func (c *provisionerServiceClient) RestartWorkspace(ctx context.Context, in *Workspace, opts ...grpc.CallOption) (*RestartWorkspaceResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(RestartWorkspaceResponse)
+	err := c.cc.Invoke(ctx, ProvisionerService_RestartWorkspace_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // ProvisionerServiceServer is the server API for ProvisionerService service.
 // All implementations must embed UnimplementedProvisionerServiceServer
 // for forward compatibility.
@@ -114,6 +126,7 @@ type ProvisionerServiceServer interface {
 	ListWorkspaces(context.Context, *ListWorkspacesRequest) (*ListWorkspacesResponse, error)
 	ProvisionWorkspaceStream(*ProvisionWorkspaceRequest, grpc.ServerStreamingServer[ProvisionEvent]) error
 	DeleteWorkspace(context.Context, *Workspace) (*DeleteWorkspaceResponse, error)
+	RestartWorkspace(context.Context, *Workspace) (*RestartWorkspaceResponse, error)
 	mustEmbedUnimplementedProvisionerServiceServer()
 }
 
@@ -138,6 +151,9 @@ func (UnimplementedProvisionerServiceServer) ProvisionWorkspaceStream(*Provision
 }
 func (UnimplementedProvisionerServiceServer) DeleteWorkspace(context.Context, *Workspace) (*DeleteWorkspaceResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method DeleteWorkspace not implemented")
+}
+func (UnimplementedProvisionerServiceServer) RestartWorkspace(context.Context, *Workspace) (*RestartWorkspaceResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method RestartWorkspace not implemented")
 }
 func (UnimplementedProvisionerServiceServer) mustEmbedUnimplementedProvisionerServiceServer() {}
 func (UnimplementedProvisionerServiceServer) testEmbeddedByValue()                            {}
@@ -243,6 +259,24 @@ func _ProvisionerService_DeleteWorkspace_Handler(srv interface{}, ctx context.Co
 	return interceptor(ctx, in, info, handler)
 }
 
+func _ProvisionerService_RestartWorkspace_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(Workspace)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ProvisionerServiceServer).RestartWorkspace(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: ProvisionerService_RestartWorkspace_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ProvisionerServiceServer).RestartWorkspace(ctx, req.(*Workspace))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // ProvisionerService_ServiceDesc is the grpc.ServiceDesc for ProvisionerService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -265,6 +299,10 @@ var ProvisionerService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "DeleteWorkspace",
 			Handler:    _ProvisionerService_DeleteWorkspace_Handler,
+		},
+		{
+			MethodName: "RestartWorkspace",
+			Handler:    _ProvisionerService_RestartWorkspace_Handler,
 		},
 	},
 	Streams: []grpc.StreamDesc{

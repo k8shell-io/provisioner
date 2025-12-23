@@ -19,6 +19,7 @@ import (
 	"golang.org/x/sync/errgroup"
 	"gopkg.in/yaml.v3"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	k8sErrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
@@ -382,6 +383,38 @@ func (w *Workspace) Uninstall(ctx context.Context, timeout time.Duration, wait b
 		return fmt.Errorf("failed to uninstall workspace: %w", err)
 	}
 	return nil
+}
+
+func (w *Workspace) DeletePod(ctx context.Context) error {
+	v1 := w.client.GetKubeClient().CoreV1()
+	err := v1.Pods(w.client.TargetNamespace()).Delete(ctx, w.Name, metav1.DeleteOptions{})
+	if err != nil && !apierrors.IsNotFound(err) {
+		return fmt.Errorf("failed to delete pod %s: %w", w.Name, err)
+	}
+	return nil
+}
+
+// Upgrade performs an upgrade of the workspace
+func (w *Workspace) Upgrade(ctx context.Context, opts *ProvisionOptions) (*models.PodStatus, error) {
+	startTime := time.Now()
+	err := w.client.Upgrade(ctx, helm.WORKSPACE_CHART_NAME, helm.InstallOptions{
+		ReleaseName: w.Name,
+		ReuseValues: true,
+		Wait:        false,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to upgrade workspace: %w", err)
+	}
+
+	status, err := w.waitForPodRunning(ctx, startTime, opts)
+	if err != nil {
+		return nil, err
+	}
+	if status.Status == "Running" {
+		provisionTime := time.Since(startTime)
+		w.log.Info().Msgf("Workspace %s is now running, provisioned in %s", w.Name, provisionTime)
+	}
+	return status, nil
 }
 
 // ToMap converts any struct to a map[string]interface{} representation

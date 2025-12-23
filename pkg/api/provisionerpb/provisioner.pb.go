@@ -438,6 +438,50 @@ func (x *DeleteWorkspaceResponse) GetMessage() string {
 	return ""
 }
 
+type RestartWorkspaceResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Message       string                 `protobuf:"bytes,1,opt,name=message,proto3" json:"message,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *RestartWorkspaceResponse) Reset() {
+	*x = RestartWorkspaceResponse{}
+	mi := &file_pkg_api_provisioner_proto_msgTypes[8]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *RestartWorkspaceResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*RestartWorkspaceResponse) ProtoMessage() {}
+
+func (x *RestartWorkspaceResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_pkg_api_provisioner_proto_msgTypes[8]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use RestartWorkspaceResponse.ProtoReflect.Descriptor instead.
+func (*RestartWorkspaceResponse) Descriptor() ([]byte, []int) {
+	return file_pkg_api_provisioner_proto_rawDescGZIP(), []int{8}
+}
+
+func (x *RestartWorkspaceResponse) GetMessage() string {
+	if x != nil {
+		return x.Message
+	}
+	return ""
+}
+
 var File_pkg_api_provisioner_proto protoreflect.FileDescriptor
 
 const file_pkg_api_provisioner_proto_rawDesc = "" +
@@ -469,13 +513,16 @@ const file_pkg_api_provisioner_proto_rawDesc = "" +
 	"\x06status\x18\x04 \x01(\tR\x06status\x12\x18\n" +
 	"\amessage\x18\x05 \x01(\tR\amessage\"3\n" +
 	"\x17DeleteWorkspaceResponse\x12\x18\n" +
-	"\amessage\x18\x01 \x01(\tR\amessage2\xc0\x03\n" +
+	"\amessage\x18\x01 \x01(\tR\amessage\"4\n" +
+	"\x18RestartWorkspaceResponse\x12\x18\n" +
+	"\amessage\x18\x01 \x01(\tR\amessage2\x93\x04\n" +
 	"\x12ProvisionerService\x12T\n" +
 	"\x14GetUserWorkspaceInfo\x12%.provisioner.GetUserWorkspacesRequest\x1a\x15.common.WorkspaceInfo\x12E\n" +
 	"\x12GetWorkspaceStatus\x12\x16.provisioner.Workspace\x1a\x17.common.WorkspaceStatus\x12Y\n" +
 	"\x0eListWorkspaces\x12\".provisioner.ListWorkspacesRequest\x1a#.provisioner.ListWorkspacesResponse\x12a\n" +
 	"\x18ProvisionWorkspaceStream\x12&.provisioner.ProvisionWorkspaceRequest\x1a\x1b.provisioner.ProvisionEvent0\x01\x12O\n" +
-	"\x0fDeleteWorkspace\x12\x16.provisioner.Workspace\x1a$.provisioner.DeleteWorkspaceResponseBGZEgithub.com/k8shell-io/provisioner/pkg/api/provisionerpb;provisionerpbb\x06proto3"
+	"\x0fDeleteWorkspace\x12\x16.provisioner.Workspace\x1a$.provisioner.DeleteWorkspaceResponse\x12Q\n" +
+	"\x10RestartWorkspace\x12\x16.provisioner.Workspace\x1a%.provisioner.RestartWorkspaceResponseBGZEgithub.com/k8shell-io/provisioner/pkg/api/provisionerpb;provisionerpbb\x06proto3"
 
 var (
 	file_pkg_api_provisioner_proto_rawDescOnce sync.Once
@@ -489,7 +536,7 @@ func file_pkg_api_provisioner_proto_rawDescGZIP() []byte {
 	return file_pkg_api_provisioner_proto_rawDescData
 }
 
-var file_pkg_api_provisioner_proto_msgTypes = make([]protoimpl.MessageInfo, 8)
+var file_pkg_api_provisioner_proto_msgTypes = make([]protoimpl.MessageInfo, 9)
 var file_pkg_api_provisioner_proto_goTypes = []any{
 	(*Workspace)(nil),                  // 0: provisioner.Workspace
 	(*GetUserWorkspacesRequest)(nil),   // 1: provisioner.GetUserWorkspacesRequest
@@ -499,26 +546,29 @@ var file_pkg_api_provisioner_proto_goTypes = []any{
 	(*ProvisionWorkspaceResponse)(nil), // 5: provisioner.ProvisionWorkspaceResponse
 	(*ProvisionEvent)(nil),             // 6: provisioner.ProvisionEvent
 	(*DeleteWorkspaceResponse)(nil),    // 7: provisioner.DeleteWorkspaceResponse
-	(*commonpb.WorkspaceInfo)(nil),     // 8: common.WorkspaceInfo
-	(*commonpb.WorkspaceStatus)(nil),   // 9: common.WorkspaceStatus
+	(*RestartWorkspaceResponse)(nil),   // 8: provisioner.RestartWorkspaceResponse
+	(*commonpb.WorkspaceInfo)(nil),     // 9: common.WorkspaceInfo
+	(*commonpb.WorkspaceStatus)(nil),   // 10: common.WorkspaceStatus
 }
 var file_pkg_api_provisioner_proto_depIdxs = []int32{
-	8, // 0: provisioner.ListWorkspacesResponse.workspaces:type_name -> common.WorkspaceInfo
-	1, // 1: provisioner.ProvisionerService.GetUserWorkspaceInfo:input_type -> provisioner.GetUserWorkspacesRequest
-	0, // 2: provisioner.ProvisionerService.GetWorkspaceStatus:input_type -> provisioner.Workspace
-	2, // 3: provisioner.ProvisionerService.ListWorkspaces:input_type -> provisioner.ListWorkspacesRequest
-	4, // 4: provisioner.ProvisionerService.ProvisionWorkspaceStream:input_type -> provisioner.ProvisionWorkspaceRequest
-	0, // 5: provisioner.ProvisionerService.DeleteWorkspace:input_type -> provisioner.Workspace
-	8, // 6: provisioner.ProvisionerService.GetUserWorkspaceInfo:output_type -> common.WorkspaceInfo
-	9, // 7: provisioner.ProvisionerService.GetWorkspaceStatus:output_type -> common.WorkspaceStatus
-	3, // 8: provisioner.ProvisionerService.ListWorkspaces:output_type -> provisioner.ListWorkspacesResponse
-	6, // 9: provisioner.ProvisionerService.ProvisionWorkspaceStream:output_type -> provisioner.ProvisionEvent
-	7, // 10: provisioner.ProvisionerService.DeleteWorkspace:output_type -> provisioner.DeleteWorkspaceResponse
-	6, // [6:11] is the sub-list for method output_type
-	1, // [1:6] is the sub-list for method input_type
-	1, // [1:1] is the sub-list for extension type_name
-	1, // [1:1] is the sub-list for extension extendee
-	0, // [0:1] is the sub-list for field type_name
+	9,  // 0: provisioner.ListWorkspacesResponse.workspaces:type_name -> common.WorkspaceInfo
+	1,  // 1: provisioner.ProvisionerService.GetUserWorkspaceInfo:input_type -> provisioner.GetUserWorkspacesRequest
+	0,  // 2: provisioner.ProvisionerService.GetWorkspaceStatus:input_type -> provisioner.Workspace
+	2,  // 3: provisioner.ProvisionerService.ListWorkspaces:input_type -> provisioner.ListWorkspacesRequest
+	4,  // 4: provisioner.ProvisionerService.ProvisionWorkspaceStream:input_type -> provisioner.ProvisionWorkspaceRequest
+	0,  // 5: provisioner.ProvisionerService.DeleteWorkspace:input_type -> provisioner.Workspace
+	0,  // 6: provisioner.ProvisionerService.RestartWorkspace:input_type -> provisioner.Workspace
+	9,  // 7: provisioner.ProvisionerService.GetUserWorkspaceInfo:output_type -> common.WorkspaceInfo
+	10, // 8: provisioner.ProvisionerService.GetWorkspaceStatus:output_type -> common.WorkspaceStatus
+	3,  // 9: provisioner.ProvisionerService.ListWorkspaces:output_type -> provisioner.ListWorkspacesResponse
+	6,  // 10: provisioner.ProvisionerService.ProvisionWorkspaceStream:output_type -> provisioner.ProvisionEvent
+	7,  // 11: provisioner.ProvisionerService.DeleteWorkspace:output_type -> provisioner.DeleteWorkspaceResponse
+	8,  // 12: provisioner.ProvisionerService.RestartWorkspace:output_type -> provisioner.RestartWorkspaceResponse
+	7,  // [7:13] is the sub-list for method output_type
+	1,  // [1:7] is the sub-list for method input_type
+	1,  // [1:1] is the sub-list for extension type_name
+	1,  // [1:1] is the sub-list for extension extendee
+	0,  // [0:1] is the sub-list for field type_name
 }
 
 func init() { file_pkg_api_provisioner_proto_init() }
@@ -532,7 +582,7 @@ func file_pkg_api_provisioner_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_pkg_api_provisioner_proto_rawDesc), len(file_pkg_api_provisioner_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   8,
+			NumMessages:   9,
 			NumExtensions: 0,
 			NumServices:   1,
 		},
