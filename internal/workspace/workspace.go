@@ -397,7 +397,7 @@ func (w *Workspace) DeletePod(ctx context.Context) error {
 // Upgrade performs an upgrade of the workspace
 func (w *Workspace) Upgrade(ctx context.Context, opts *ProvisionOptions) (*models.PodStatus, error) {
 	startTime := time.Now()
-	err := w.client.Upgrade(ctx, helm.WORKSPACE_CHART_NAME, helm.InstallOptions{
+	err := w.client.Upgrade(ctx, helm.InstallOptions{
 		ReleaseName: w.Name,
 		ChartName:   helm.WORKSPACE_CHART_NAME,
 		ReuseValues: true,

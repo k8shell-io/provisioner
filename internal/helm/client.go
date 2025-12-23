@@ -286,7 +286,7 @@ func (c *Client) Uninstall(releaseName string, timeout int, wait bool) error {
 	return nil
 }
 
-func (c *Client) Upgrade(ctx context.Context, releaseName string, opts InstallOptions) error {
+func (c *Client) Upgrade(ctx context.Context, opts InstallOptions) error {
 	actionConfig, err := c.createActionConfig(c.targetNamespace)
 	if err != nil {
 		return err
@@ -310,9 +310,9 @@ func (c *Client) Upgrade(ctx context.Context, releaseName string, opts InstallOp
 		chart.Metadata.AppVersion = opts.AppVersion
 	}
 
-	_, err = upgrade.RunWithContext(ctx, releaseName, chart, opts.Values)
+	_, err = upgrade.RunWithContext(ctx, opts.ReleaseName, chart, opts.Values)
 	if err != nil {
-		return fmt.Errorf("failed to upgrade release %s: %w", releaseName, err)
+		return fmt.Errorf("failed to upgrade release %s: %w", opts.ReleaseName, err)
 	}
 
 	return nil
