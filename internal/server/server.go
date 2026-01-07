@@ -89,12 +89,8 @@ func NewServer(configFile string) (*Server, error) {
 	return server, nil
 }
 
-// ResolveIssueRef resolves an issue number to a git reference
+// ResolvePullRequestRef
 // Implements models.IssueRepoRefResolver
-func (s Server) ResolveIssueRef(username string, repoOwner, repoName string, issueNumber int) (string, error) {
-	return "", fmt.Errorf("Issue resolving is not supported. You need to provide cannonizied user string.")
-}
-
 func (s Server) ResolvePullRequestRef(username string, repoOwner, repoName string, issueNumber int) (string, error) {
 	return "", fmt.Errorf("Pull Request resolving is not supported. You need to provide cannonizied user string.")
 }
