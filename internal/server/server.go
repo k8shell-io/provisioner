@@ -78,7 +78,7 @@ func NewServer(configFile string) (*Server, error) {
 		return nil
 	})
 
-	models.SetIssueRepoRefResolver(server)
+	models.SetRefResolver(server)
 
 	// server.log.Info().Msgf("Ensuring workspace base, namespace %s", server.config.TargetNamespace)
 	// err = server.helm.EnsureBase(context.Background())
@@ -91,19 +91,12 @@ func NewServer(configFile string) (*Server, error) {
 
 // ResolveIssueRef resolves an issue number to a git reference
 // Implements models.IssueRepoRefResolver
-func (s Server) ResolveIssueRepoRef(username string, repoOwner, repoName string, issueNumber int) (string, error) {
+func (s Server) ResolveIssueRef(username string, repoOwner, repoName string, issueNumber int) (string, error) {
 	return "", fmt.Errorf("Issue resolving is not supported. You need to provide cannonizied user string.")
-	// ctx := context.Background()
-	// resp, err := s.Identity.ResolveRepoIssueToRef(ctx, &identitypb.RepoIssueRequest{
-	// 	Username:    username,
-	// 	RepoOwner:   repoOwner,
-	// 	RepoName:    repoName,
-	// 	IssueNumber: int32(issueNumber),
-	// })
-	// if err != nil {
-	// 	return "", fmt.Errorf("failed to resolve issue to ref: %w", err)
-	// }
-	// return resp.RepoRef, nil
+}
+
+func (s Server) ResolvePullRequestRef(username string, repoOwner, repoName string, issueNumber int) (string, error) {
+	return "", fmt.Errorf("Pull Request resolving is not supported. You need to provide cannonizied user string.")
 }
 
 func (s *Server) GetBlueprintScope(blueprintName string, user *models.User,
