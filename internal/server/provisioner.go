@@ -112,7 +112,7 @@ func (p *ProvisionerService) ProvisionWorkspaceStream(req *provisionerpb.Provisi
 
 	ctx := stream.Context()
 
-	userstr, err := models.NewUserStr(req.Userstr)
+	userstr, err := models.NewUserStr(req.Userstr, false)
 	if err != nil {
 		return status.Errorf(codes.InvalidArgument, "Invalid userstr format: %v", err)
 	}
