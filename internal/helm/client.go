@@ -6,15 +6,14 @@ import (
 	"os"
 	"time"
 
+	log "github.com/k8shell-io/common/pkg/logger"
 	"github.com/k8shell-io/provisioner/internal/config"
-	"github.com/k8shell-io/provisioner/internal/log"
 	"github.com/rs/zerolog"
 	"helm.sh/helm/v3/pkg/action"
 	"helm.sh/helm/v3/pkg/chart"
 	"helm.sh/helm/v3/pkg/cli"
 	"helm.sh/helm/v3/pkg/release"
 	"k8s.io/apimachinery/pkg/api/errors"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 )
@@ -97,27 +96,13 @@ func (c *Client) EnsureBase(ctx context.Context) error {
 		return fmt.Errorf("target namespace is not set")
 	}
 
-	// check if namespace exists
-	var found bool = false
-	_, err := c.kubeClient.CoreV1().Namespaces().Get(ctx, c.targetNamespace, metav1.GetOptions{})
+	r, err := c.ListWithSelector(c.targetNamespace, "app.kubernetes.io/name="+BASE_WORKSPACE_CHART_NAME)
 	if err != nil {
-		if errors.IsNotFound(err) {
-			found = false
-		} else {
-			return fmt.Errorf("failed to check if namespace exists: %w", err)
-		}
-	} else {
-		found = true
-	}
-
-	if found {
-		r, err := c.ListWithSelector(c.targetNamespace, "app.kubernetes.io/name="+BASE_WORKSPACE_CHART_NAME)
-		if err != nil {
+		if !errors.IsNotFound(err) {
 			return fmt.Errorf("failed to list releases in namespace %s: %w", c.targetNamespace, err)
 		}
-		if len(r) > 0 {
-			return nil
-		}
+	} else if len(r) > 0 {
+		return nil
 	}
 
 	labels := map[string]string{
@@ -135,14 +120,13 @@ func (c *Client) EnsureBase(ctx context.Context) error {
 	err = c.Install(ctx, BASE_WORKSPACE_CHART_NAME, InstallOptions{
 		ReleaseName:     BASE_WORKSPACE_CHART_NAME,
 		ChartName:       BASE_WORKSPACE_CHART_NAME,
-		CreateNamespace: true,
+		CreateNamespace: false,
 		Values:          values,
 		Wait:            true,
 		Labels:          labels,
 	})
 
 	return err
-
 }
 
 func (c *Client) Template(ctx context.Context, chartName string, opts InstallOptions) (string, error) {
@@ -243,6 +227,8 @@ func (c *Client) ListWithSelector(namespace, selector string) ([]*release.Releas
 	}
 
 	list.StateMask = action.ListDeployed
+	list.SortReverse = true
+	list.ByDate = true
 
 	releases, err := list.Run()
 	if err != nil {
@@ -283,19 +269,50 @@ func (c *Client) GetRelease(releaseName string) (*release.Release, error) {
 }
 
 // Uninstall removes a Helm release from a specific namespace
-func (c *Client) Uninstall(releaseName string, timeout int) error {
+func (c *Client) Uninstall(releaseName string, timeout int, wait bool) error {
 	actionConfig, err := c.createActionConfig(c.targetNamespace)
 	if err != nil {
 		return err
 	}
 
 	uninstall := action.NewUninstall(actionConfig)
-	uninstall.Wait = true
+	uninstall.Wait = wait
 	uninstall.Timeout = time.Duration(timeout) * time.Second
 	_, err = uninstall.Run(releaseName)
 	if err != nil {
 		return fmt.Errorf("failed to uninstall release %s from namespace %s: %w", releaseName, c.targetNamespace, err)
 	}
+	return nil
+}
+
+func (c *Client) Upgrade(ctx context.Context, opts InstallOptions) error {
+	actionConfig, err := c.createActionConfig(c.targetNamespace)
+	if err != nil {
+		return err
+	}
+
+	upgrade := action.NewUpgrade(actionConfig)
+	upgrade.Wait = opts.Wait
+
+	if opts.Timeout > 0 {
+		upgrade.Timeout = time.Duration(opts.Timeout) * time.Second
+	}
+
+	originalChart, ok := c.charts[opts.ChartName]
+	if !ok {
+		return fmt.Errorf("chart %s not found", opts.ChartName)
+	}
+
+	chart := c.cloneChart(originalChart)
+	if opts.AppVersion != "" {
+		chart.Metadata.AppVersion = opts.AppVersion
+	}
+
+	_, err = upgrade.RunWithContext(ctx, opts.ReleaseName, chart, opts.Values)
+	if err != nil {
+		return fmt.Errorf("failed to upgrade release %s: %w", opts.ReleaseName, err)
+	}
+
 	return nil
 }
 

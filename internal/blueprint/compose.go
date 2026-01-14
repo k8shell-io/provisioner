@@ -4,19 +4,24 @@ import (
 	"bytes"
 	"fmt"
 
-	"github.com/k8shell-io/provisioner/pkg/models"
+	"github.com/k8shell-io/common/pkg/models"
 	"github.com/k8shell-io/yaml-cel/pkg/yamlcel"
 	"gopkg.in/yaml.v3"
 )
 
 // Compose creates a new blueprint by merging a custom blueprint YAML with an existing template
-func (bm *BlueprintManager) ComposeRaw(customBlueprintYAML []byte) (*RawBlueprint, error) {
+func (bm *BlueprintManager) ComposeRaw(customBlueprint *models.CustomBlueprint) (*RawBlueprint, error) {
 	if len(bm.rawBlueprints) == 0 {
 		return nil, fmt.Errorf("no blueprints available to compose")
 	}
 
+	yamlBytes, err := yaml.Marshal(customBlueprint)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal CustomBlueprint to YAML: %w", err)
+	}
+
 	var customNode yaml.Node
-	if err := yaml.Unmarshal(customBlueprintYAML, &customNode); err != nil {
+	if err := yaml.Unmarshal(yamlBytes, &customNode); err != nil {
 		return nil, fmt.Errorf("failed to parse custom blueprint YAML: %w", err)
 	}
 
@@ -31,17 +36,14 @@ func (bm *BlueprintManager) ComposeRaw(customBlueprintYAML []byte) (*RawBlueprin
 		return nil, fmt.Errorf("custom blueprint must be a YAML mapping/object")
 	}
 
-	blueprintFieldNode := bm.findChildNode(contentNode, "blueprint")
-	if blueprintFieldNode == nil {
-		return nil, fmt.Errorf("custom blueprint must specify a 'blueprint' field")
-	}
+	blueprintFieldNode := contentNode
 
-	var customBlueprint map[string]interface{}
-	if err := blueprintFieldNode.Decode(&customBlueprint); err != nil {
+	var customBlueprintMap map[string]interface{}
+	if err := blueprintFieldNode.Decode(&customBlueprintMap); err != nil {
 		return nil, fmt.Errorf("failed to decode blueprint content: %w", err)
 	}
 
-	templateName, ok := customBlueprint["template"].(string)
+	templateName, ok := customBlueprintMap["template"].(string)
 	if !ok || templateName == "" {
 		return nil, fmt.Errorf("custom blueprint must specify a 'template' field")
 	}
@@ -55,7 +57,7 @@ func (bm *BlueprintManager) ComposeRaw(customBlueprintYAML []byte) (*RawBlueprin
 	}
 
 	blueprintName := templateName
-	if name, ok := customBlueprint["name"].(string); ok && name != "" {
+	if name, ok := customBlueprintMap["name"].(string); ok && name != "" {
 		blueprintName = name
 	}
 
@@ -76,8 +78,8 @@ func (bm *BlueprintManager) ComposeRaw(customBlueprintYAML []byte) (*RawBlueprin
 	}, nil
 }
 
-func (bm *BlueprintManager) Compose(customBlueprintYAML []byte) (interface{}, error) {
-	rawBlueprint, err := bm.ComposeRaw(customBlueprintYAML)
+func (bm *BlueprintManager) Compose(customBlueprint *models.CustomBlueprint) (interface{}, error) {
+	rawBlueprint, err := bm.ComposeRaw(customBlueprint)
 	if err != nil {
 		bm.log.Error().Err(err).Msg("Failed to compose blueprint")
 		return nil, err
@@ -93,13 +95,15 @@ func (bm *BlueprintManager) Compose(customBlueprintYAML []byte) (interface{}, er
 	return result, nil
 }
 
-func (bm *BlueprintManager) ComposeWithScope(customBlueprintYAML []byte, scope *BlueprintScope) (*models.Blueprint, error) {
-	rawBp, err := bm.ComposeRaw(customBlueprintYAML)
+func (bm *BlueprintManager) ComposeWithScope(customBlueprint *models.CustomBlueprint,
+	scope *BlueprintScope) (*models.Blueprint, error) {
+	rawBp, err := bm.ComposeRaw(customBlueprint)
 	if err != nil {
 		bm.log.Error().Err(err).Msg("Failed to compose blueprint with scope")
 		return nil, err
 	}
 
+	scope.Metadata.Name = rawBp.Name
 	var tmpl yamlcel.CELTemplate
 	if err := rawBp.Node.Decode(&tmpl); err != nil {
 		return nil, fmt.Errorf("failed to decode CEL template for %s: %w", rawBp.Name, err)

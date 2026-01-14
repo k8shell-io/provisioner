@@ -5,9 +5,8 @@ import (
 	"os"
 	"testing"
 
-	identity "github.com/k8shell-io/identity/pkg/models"
+	"github.com/k8shell-io/common/pkg/models"
 	"github.com/k8shell-io/provisioner/internal/blueprint"
-	"github.com/k8shell-io/provisioner/pkg/models"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	_ "go.uber.org/automaxprocs"
@@ -37,9 +36,9 @@ func setupTestEnvironment(t *testing.T) func() {
 }
 
 // createTestScope creates a test scope with user data
-func createTestScope(username string, roles []identity.Role) *blueprint.BlueprintScope {
+func createTestScope(username string, roles []string) *blueprint.BlueprintScope {
 	scope := blueprint.TestScope()
-	scope.User = &identity.User{
+	scope.User = &models.User{
 		Username: username,
 		Roles:    roles,
 	}
@@ -115,7 +114,7 @@ func TestBlueprintManager_GetBlueprint(t *testing.T) {
 		{
 			name:          "admin user scope",
 			blueprintName: "identity",
-			scope:         createTestScope("admin", []identity.Role{"admin", "developer"}),
+			scope:         createTestScope("admin", []string{"admin", "developer"}),
 			expectError:   false,
 			validateFunc: func(t *testing.T, bp *models.Blueprint) {
 				validateBlueprintBasics(t, bp, "identity")
@@ -127,7 +126,7 @@ func TestBlueprintManager_GetBlueprint(t *testing.T) {
 		{
 			name:          "developer user scope",
 			blueprintName: "identity",
-			scope:         createTestScope("developer", []identity.Role{"developer"}),
+			scope:         createTestScope("developer", []string{"developer"}),
 			expectError:   false,
 			validateFunc: func(t *testing.T, bp *models.Blueprint) {
 				validateBlueprintBasics(t, bp, "identity")
@@ -137,7 +136,7 @@ func TestBlueprintManager_GetBlueprint(t *testing.T) {
 		{
 			name:          "nonexistent blueprint",
 			blueprintName: "nonexistent",
-			scope:         createTestScope("user", []identity.Role{"user"}),
+			scope:         createTestScope("user", []string{"user"}),
 			expectError:   true,
 			validateFunc:  nil,
 		},
@@ -179,7 +178,7 @@ func TestBlueprintValidation(t *testing.T) {
 	})
 	require.NoError(t, err, "Failed to create blueprint manager")
 
-	scope := createTestScope("testuser", []identity.Role{"admin", "developer"})
+	scope := createTestScope("testuser", []string{"admin", "developer"})
 
 	t.Run("validate loaded blueprint", func(t *testing.T) {
 		bp, err := manager.GetBlueprint("identity", scope)
@@ -218,7 +217,7 @@ func TestBlueprintSerialization(t *testing.T) {
 	})
 	require.NoError(t, err, "Failed to create blueprint manager")
 
-	scope := createTestScope("testuser", []identity.Role{"admin"})
+	scope := createTestScope("testuser", []string{"admin"})
 
 	t.Run("JSON serialization", func(t *testing.T) {
 		bp, err := manager.GetBlueprint("identity", scope)
@@ -249,15 +248,12 @@ func TestBlueprintComponents(t *testing.T) {
 	})
 	require.NoError(t, err, "Failed to create blueprint manager")
 
-	scope := createTestScope("testuser", []identity.Role{"admin"})
+	scope := createTestScope("testuser", []string{"admin"})
 	bp, err := manager.GetBlueprint("identity", scope)
 	require.NoError(t, err, "Failed to load blueprint")
 
 	t.Run("K8shelld configuration", func(t *testing.T) {
 		assert.NotEmpty(t, bp.K8shelld.Image, "K8shelld image should be specified")
-		assert.NotNil(t, bp.K8shelld.Cert, "Certificate configuration should be present")
-		assert.NotEmpty(t, bp.K8shelld.Cert.Country, "Certificate country should be specified")
-		assert.NotEmpty(t, bp.K8shelld.Cert.CommonName, "Certificate common name should be specified")
 	})
 
 	t.Run("Network configuration", func(t *testing.T) {
@@ -326,7 +322,7 @@ func BenchmarkBlueprintLoadingValidation(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		scope := createTestScope("benchuser", []identity.Role{"admin"})
+		scope := createTestScope("benchuser", []string{"admin"})
 		bp, err := manager.GetBlueprint("identity", scope)
 		if err != nil {
 			b.Fatal(err)
@@ -351,7 +347,7 @@ func BenchmarkBlueprintLoadingValidationParallel(b *testing.B) {
 	b.ResetTimer()
 	b.RunParallel(func(pb *testing.PB) { // Now this uses multiple threads
 		for pb.Next() {
-			scope := createTestScope("benchuser", []identity.Role{"admin"})
+			scope := createTestScope("benchuser", []string{"admin"})
 			bp, err := manager.GetBlueprint("identity", scope)
 			if err != nil {
 				b.Fatal(err)

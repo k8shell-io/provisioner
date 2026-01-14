@@ -1,0 +1,24 @@
+services:
+  provisioner:
+    container_name: provisioner
+    image: fitcr.ksi.in.fit.cvut.cz/k8shell-base/provisioner:v0.11.0
+    command: [ "/app/provisioner", "--config", "/app/config/config.yaml" ]
+    working_dir: /app
+    restart: unless-stopped
+    ports:
+      - "9201:9201"
+    environment:
+      SECRET_FILES: /app/secrets
+      WORKSPACE_REGISTRY: "fitcr.ksi.in.fit.cvut.cz"
+      WORKSPACE_STORAGE_CLASS: "zfs-csi-k8shell-test"
+      HELM_DEBUG: "true"
+      HELM_DEBUG_MANIFEST: "true"
+      USERNAME: "testuser"
+      USEREMAIL: "testuser@example.com"
+      GIT_ADDRESS: "git.example.com"
+      REPO_OWNER: "testowner"
+      REPO_NAME: "testrepo"
+    volumes:
+      - ./secrets:/app/secrets:ro
+      - ../config:/app/config:ro
+

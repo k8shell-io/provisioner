@@ -11,6 +11,10 @@ import (
 	"k8s.io/client-go/kubernetes"
 )
 
+var (
+	ErrLockAlreadyHeld = fmt.Errorf("lock is already held by another process")
+)
+
 type WorkspaceLock struct {
 	client    kubernetes.Interface
 	namespace string
@@ -27,7 +31,18 @@ func NewWorkspaceLock(client kubernetes.Interface, namespace, workspaceName stri
 	}
 }
 
+// Acquire attempts to acquire the lock with waiting behavior
 func (l *WorkspaceLock) Acquire(ctx context.Context) (bool, error) {
+	return l.AcquireWithOptions(ctx, true)
+}
+
+// TryAcquire attempts to acquire the lock without waiting
+func (l *WorkspaceLock) TryAcquire(ctx context.Context) (bool, error) {
+	return l.AcquireWithOptions(ctx, false)
+}
+
+// AcquireWithOptions attempts to acquire the lock with configurable waiting behavior
+func (l *WorkspaceLock) AcquireWithOptions(ctx context.Context, waitForLock bool) (bool, error) {
 	leaseClient := l.client.CoordinationV1().Leases(l.namespace)
 
 	retryDelay := 1 * time.Second
@@ -55,14 +70,24 @@ func (l *WorkspaceLock) Acquire(ctx context.Context) (bool, error) {
 			if l.isLeaseAvailable(existingLease) {
 				acquired, err := l.acquireExistingLease(ctx, existingLease)
 				if err != nil {
+					if !waitForLock {
+						return false, ErrLockAlreadyHeld
+					}
 					fmt.Printf("Failed to acquire existing lease, retrying: %v\n", err)
 				} else if acquired {
 					return true, nil
 				}
+			} else {
+				if !waitForLock {
+					return false, ErrLockAlreadyHeld
+				}
 			}
 		}
 
-		// Wait before retrying
+		if !waitForLock {
+			return false, ErrLockAlreadyHeld
+		}
+
 		select {
 		case <-ctx.Done():
 			return false, fmt.Errorf("context cancelled while waiting for lock: %w", ctx.Err())
@@ -97,8 +122,8 @@ func (l *WorkspaceLock) createLease(ctx context.Context) (bool, error) {
 	_, err := leaseClient.Create(ctx, lease, metav1.CreateOptions{})
 	if err != nil {
 		if errors.IsAlreadyExists(err) {
-			// Someone else created it while we were trying, try to acquire it
-			return l.Acquire(ctx)
+			// Someone else created it while we were trying, return false to continue loop
+			return false, nil
 		}
 		return false, fmt.Errorf("failed to create lease: %w", err)
 	}

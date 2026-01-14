@@ -1,0 +1,57 @@
+syntax = "proto3";
+
+package provisioner;
+
+option go_package = "github.com/k8shell-io/provisioner/pkg/api/provisionerpb;provisionerpb";
+
+import "common/pkg/gapi/common.proto";
+
+// *** Provisioner service
+
+service ProvisionerService {
+  rpc GetUserWorkspaceInfo (GetUserWorkspacesRequest) returns (common.WorkspaceInfo);
+  rpc GetWorkspaceStatus (Workspace) returns (common.WorkspaceStatus);
+  rpc ListWorkspaces (ListWorkspacesRequest) returns (ListWorkspacesResponse);
+  rpc ProvisionWorkspaceStream (ProvisionWorkspaceRequest) returns (stream ProvisionEvent);
+  rpc DeleteWorkspace (Workspace) returns (DeleteWorkspaceResponse);
+}
+
+message Workspace {
+  string workspace = 1;
+}
+
+message GetUserWorkspacesRequest {
+  string username = 1;
+  string blueprint = 2;
+}
+
+message ListWorkspacesRequest {
+  string username = 1;
+  string blueprint = 2;
+}
+
+message ListWorkspacesResponse {
+  repeated common.WorkspaceInfo workspaces = 1;
+}
+
+message ProvisionWorkspaceRequest {
+  string userstr = 1;
+  int32 timeout = 2; 
+}
+
+message ProvisionWorkspaceResponse {
+  string status = 1;
+  string message = 2;
+}
+
+message ProvisionEvent {
+  string type = 1; 
+  string timestamp = 2;
+  string object_name = 3;
+  string status = 4; 
+  string message = 5;
+}
+
+message DeleteWorkspaceResponse {
+  string message = 1;
+}

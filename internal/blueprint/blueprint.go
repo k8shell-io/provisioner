@@ -8,30 +8,30 @@ import (
 	"fmt"
 	"io/fs"
 	"path/filepath"
+	"sort"
 	"sync"
 	"time"
 
-	"github.com/fsnotify/fsnotify"
-	identity "github.com/k8shell-io/identity/pkg/models"
-	"github.com/k8shell-io/provisioner/internal/log"
-	"github.com/k8shell-io/provisioner/pkg/models"
+	"github.com/k8shell-io/common/pkg/config"
+	log "github.com/k8shell-io/common/pkg/logger"
+	"github.com/k8shell-io/common/pkg/models"
 	"github.com/k8shell-io/yaml-cel/pkg/yamlcel"
-	"github.com/k8shell-io/yaml-config/pkg/yamlconfig"
 	"github.com/rs/zerolog"
 	"gopkg.in/yaml.v3"
 )
 
 // RawBlueprint represents an unprocessed blueprint with CEL expressions intact.
 type RawBlueprint struct {
-	Name     string
-	Template string
-	Node     *yaml.Node
+	Name       string
+	Template   string
+	IsTemplate bool
+	Node       *yaml.Node
 }
 
 type BlueprintScope struct {
-	Blueprint string         `yaml:"blueprint"`
-	User      *identity.User `yaml:"user"`
-	Repo      models.Repo    `yaml:"repo"`
+	User          *models.User              `yaml:"user"`
+	WorkspaceName string                    `yaml:"workspaceName"`
+	Metadata      *models.BlueprintMetadata `yaml:"metadata"`
 }
 
 func (bs *BlueprintScope) ToMap() (map[string]any, error) {
@@ -66,21 +66,21 @@ type BlueprintManager struct {
 	rawBlueprints map[string]*RawBlueprint // Map of blueprint names to their raw definitions
 	knownFields   bool                     // Whether to allow unknown fields in YAML decoding
 	strategies    MergeStrategies          // Custom strategies for merging lists in blueprints
-	processor     *yamlconfig.Processor    // YAML processor for parsing and validating blueprints
-	watcher       *fsnotify.Watcher        // File system watcher for monitoring blueprint directory changes
-	watchDir      string                   // Directory to watch for blueprint changes
-	watchEnabled  bool                     // Whether file watching is enabled
-	mu            sync.RWMutex             // Mutex for synchronizing access to blueprints
-	reloadTimer   *time.Timer              // Timer for debouncing reloads after file changes
-	reloadDelay   time.Duration            // Delay before reloading blueprints after file changes
-	stopChan      chan struct{}            // Channel to signal stopping the watcher
+	processor     *config.Processor        // YAML processor for parsing and validating blueprints
+	watcher       *Watcher                 // the file watcher
+	mu            sync.RWMutex             // Mutex for thread-safe access to rawBlueprints
 }
 
 // TestScope creates a minimal BlueprintScope for testing purposes.
 func TestScope() *BlueprintScope {
 	return &BlueprintScope{
-		Blueprint: "testblueprint",
-		User: &identity.User{
+		Metadata: &models.BlueprintMetadata{
+			Name:        "testblueprint",
+			RepoName:    "testrepo",
+			RepoOwner:   "testowner",
+			RepoAddress: "testaddress",
+		},
+		User: &models.User{
 			Username:     "testuser",
 			IsValid:      true,
 			ExpiresAt:    time.Now().Add(24 * time.Hour),
@@ -90,19 +90,15 @@ func TestScope() *BlueprintScope {
 			AccessToken:  "testtoken",
 			Email:        "testuser@example.com",
 			Password:     "testpassword",
-			Auths:        []identity.AuthMethod{identity.AuthMethodPublicKey, identity.AuthMethodPassword},
+			Auths:        []string{models.AuthMethodPublicKey, models.AuthMethodPassword},
 			AuthKeys:     []string{"ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQC3..."},
 			Locked:       false,
 			FailedLogins: 0,
-			Channels:     []identity.Channel{identity.ChannelShell, identity.ChannelSFTP},
+			Channels:     []string{models.ChannelShell, models.ChannelSFTP},
 			Envs:         []string{},
-			Roles:        []identity.Role{"role1", "role2"},
+			Roles:        []string{"role1", "role2"},
 			Blueprints:   []string{"testblueprint"},
 			Source:       "testsource",
-		},
-		Repo: models.Repo{
-			Owner: "testowner",
-			Name:  "testrepo",
 		},
 	}
 }
@@ -113,31 +109,36 @@ func NewBlueprintManager(opts LoadOptions) (*BlueprintManager, error) {
 		opts.Strategies = MergeStrategies{}
 	}
 
-	manager := &BlueprintManager{
+	bm := &BlueprintManager{
 		log:           log.NewLogger("blueprint"),
 		rawBlueprints: make(map[string]*RawBlueprint),
 		knownFields:   true,
 		strategies:    opts.Strategies,
-		processor:     yamlconfig.NewProcessor(yamlconfig.DefaultOptions()),
-		watchDir:      opts.Dir,
-		watchEnabled:  opts.EnableWatch,
-		reloadDelay:   500 * time.Millisecond,
-		stopChan:      make(chan struct{}),
-	}
-
-	if err := manager.loadAndValidateBlueprints(); err != nil {
-		return nil, fmt.Errorf("validation failed: %w", err)
+		processor: config.NewProcessor(config.ProcessorOptions{
+			EnableEnvVarExpansion: false,
+			EnableFileTag:         true,
+		}),
+		mu: sync.RWMutex{},
 	}
 
 	if opts.EnableWatch {
-		if err := manager.setupWatcher(); err != nil {
+		bm.watcher = NewWatcher(opts.Dir, 500*time.Millisecond, func() error {
+			return bm.loadAndValidateBlueprints()
+		})
+
+		if err := bm.loadAndValidateBlueprints(); err != nil {
+			return nil, fmt.Errorf("initial load failed: %w", err)
+		}
+
+		err := bm.watcher.Setup()
+		if err != nil {
 			return nil, fmt.Errorf("failed to setup file watcher: %w", err)
 		}
 	}
 
-	manager.log.Info().Msgf("Loaded %d blueprints from %s, watch enabled: %v", len(manager.rawBlueprints),
-		opts.Dir, manager.watchEnabled)
-	return manager, nil
+	bm.log.Info().Msgf("Loaded %d blueprints from %s, watch enabled: %v", len(bm.rawBlueprints),
+		opts.Dir, bm.watcher != nil)
+	return bm, nil
 }
 
 // loadAndValidateBlueprints loads and validates all blueprints atomically
@@ -158,7 +159,7 @@ func (bm *BlueprintManager) loadAndValidateBlueprints() (err error) {
 		}
 	}()
 
-	if err = bm.loadRawBlueprints(bm.watchDir); err != nil {
+	if err = bm.loadRawBlueprints(bm.watcher.watchDir); err != nil {
 		return fmt.Errorf("failed to load blueprints: %w", err)
 	}
 
@@ -216,9 +217,10 @@ func (bm *BlueprintManager) GetBlueprint(name string, scope *BlueprintScope) (*m
 	bm.mu.RUnlock()
 
 	if !exists {
-		return nil, fmt.Errorf("blueprint %s not found", name)
+		return nil, fmt.Errorf("blueprint %s not found: %w", name, ErrBlueprintNotFound)
 	}
 
+	scope.Metadata.Name = rawBp.Name
 	var tmpl yamlcel.CELTemplate
 	if err := rawBp.Node.Decode(&tmpl); err != nil {
 		return nil, fmt.Errorf("failed to decode CEL template for %s: %w", name, err)
@@ -251,7 +253,7 @@ func (bm *BlueprintManager) GetRawBlueprint(name string) (interface{}, error) {
 
 	rawBp, exists := bm.rawBlueprints[name]
 	if !exists {
-		return nil, fmt.Errorf("blueprint %s not found", name)
+		return nil, fmt.Errorf("blueprint %s not found: %w", name, ErrBlueprintNotFound)
 	}
 
 	clonedNode := bm.cloneAndProcessCELNodes(rawBp.Node)
@@ -274,6 +276,33 @@ func (bm *BlueprintManager) ListBlueprintNames() []string {
 		names = append(names, name)
 	}
 	return names
+}
+
+func (bm *BlueprintManager) GetDefaultUserBlueprint(user *models.User) (string, error) {
+	if user == nil {
+		return "", fmt.Errorf("user cannot be nil")
+	}
+
+	if len(user.Blueprints) == 0 {
+		return "", fmt.Errorf("no blueprints defined for user %s", user.Username)
+	}
+
+	bm.mu.RLock()
+	defer bm.mu.RUnlock()
+
+	blueprintNames := make([]string, 0, len(bm.rawBlueprints))
+	for name := range bm.rawBlueprints {
+		blueprintNames = append(blueprintNames, name)
+	}
+	sort.Strings(blueprintNames)
+
+	for _, bp := range blueprintNames {
+		if user.HasBlueprint(bp) && !bm.rawBlueprints[bp].IsTemplate {
+			return bp, nil
+		}
+	}
+
+	return "", fmt.Errorf("no accessible blueprints found for user %s", user.Username)
 }
 
 // GetAllBlueprints evaluates all blueprints with the given scope.
@@ -396,10 +425,16 @@ func (bm *BlueprintManager) extractSingleRawBlueprint(node *yaml.Node, _ string)
 		template = t
 	}
 
+	isTemplate := false
+	if t, ok := bpData["isTemplate"].(bool); ok {
+		isTemplate = t
+	}
+
 	bm.rawBlueprints[name] = &RawBlueprint{
-		Name:     name,
-		Template: template,
-		Node:     node,
+		Name:       name,
+		Template:   template,
+		IsTemplate: isTemplate,
+		Node:       node,
 	}
 
 	return nil
@@ -427,10 +462,16 @@ func (bm *BlueprintManager) extractMultipleRawBlueprints(node *yaml.Node, path s
 			template = t
 		}
 
+		isTemplate := false
+		if t, ok := item["isTemplate"].(bool); ok {
+			isTemplate = t
+		}
+
 		bm.rawBlueprints[name] = &RawBlueprint{
-			Name:     name,
-			Template: template,
-			Node:     childNode,
+			Name:       name,
+			Template:   template,
+			IsTemplate: isTemplate,
+			Node:       childNode,
 		}
 	}
 

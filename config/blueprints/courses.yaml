@@ -1,8 +1,12 @@
 blueprints:
-  - name: sql
+  - name: awd
     template: default
     image: workspaces/awd:0.8-3.2
     sudo: true
+
+    splash: | 
+      This workspace includes a preconfigured PostgreSQL server and Oracle database client.
+      Use the 'psutils' command to initialize, start, and stop the PostgreSQL server.
 
     k8shelld:
       ignoreOrphans:
@@ -15,6 +19,11 @@ blueprints:
       home:
         annotations:
           zfs-csi.k8shell.io/squash: "no_root_squash"
+
+  - name: sql
+    template: default
+    image: workspaces/sql:0.8-3.2
+    sudo: false
 
   - name: dev
     template: default

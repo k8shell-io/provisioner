@@ -1,113 +1,250 @@
 package blueprint
 
 import (
-	"fmt"
 	"io/fs"
+	"os"
 	"path/filepath"
+	"strings"
+	"sync"
 	"time"
 
 	"github.com/fsnotify/fsnotify"
+	log "github.com/k8shell-io/common/pkg/logger"
+	"github.com/rs/zerolog"
 )
 
-// setupWatcher initializes the file system watcher
-func (bm *BlueprintManager) setupWatcher() error {
-	watcher, err := fsnotify.NewWatcher()
+// Watcher watches a directory tree for YAML changes and calls onReload() debounced.
+type Watcher struct {
+	watcher      *fsnotify.Watcher
+	watchDir     string
+	log          *zerolog.Logger
+	stopChan     chan struct{}
+	reloadTimer  *time.Timer
+	reloadDelay  time.Duration
+	watchEnabled bool
+
+	mu          sync.Mutex
+	watchedDirs map[string]struct{}
+	reinitOnce  bool
+
+	onReload func() error
+}
+
+// NewWatcher constructs a watcher. Call w.Setup() to start.
+func NewWatcher(watchDir string, reloadDelay time.Duration, onReload func() error) *Watcher {
+	return &Watcher{
+		log:          log.NewLogger("watcher"),
+		watchDir:     watchDir,
+		reloadDelay:  reloadDelay,
+		watchEnabled: true,
+		onReload:     onReload,
+	}
+}
+
+// Setup initializes fsnotify and starts the event loop.
+func (w *Watcher) Setup() error {
+	if w.stopChan == nil {
+		w.stopChan = make(chan struct{})
+	}
+	fsW, err := fsnotify.NewWatcher()
 	if err != nil {
 		return err
 	}
+	w.watcher = fsW
+	w.watchedDirs = make(map[string]struct{})
 
-	bm.watcher = watcher
-
-	err = filepath.WalkDir(bm.watchDir, func(path string, d fs.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		if d.IsDir() {
-			return bm.watcher.Add(path)
-		}
-		return nil
-	})
-
-	if err != nil {
-		bm.watcher.Close()
+	if err := w.addInitialWatches(); err != nil {
+		_ = w.watcher.Close()
 		return err
 	}
 
-	go bm.watchLoop()
-
+	go w.watchLoop()
 	return nil
 }
 
-// watchLoop handles file system events
-func (bm *BlueprintManager) watchLoop() {
+func (w *Watcher) addWatch(path string) {
+	if isKubeShadow(path) {
+		return
+	}
+	if _, ok := w.watchedDirs[path]; ok {
+		return
+	}
+	if err := w.watcher.Add(path); err != nil {
+		w.log.Warn().Err(err).Msgf("Could not watch: %s", path)
+		return
+	}
+	w.watchedDirs[path] = struct{}{}
+	w.log.Debug().Msgf("Watching: %s", path)
+}
+
+func (w *Watcher) removeWatch(path string) {
+	if _, ok := w.watchedDirs[path]; !ok {
+		return
+	}
+	if err := w.watcher.Remove(path); err != nil {
+		w.log.Debug().Err(err).Msgf("Remove watch benign race: %s", path)
+	}
+	delete(w.watchedDirs, path)
+	w.log.Debug().Msgf("Unwatched: %s", path)
+}
+
+func (w *Watcher) addInitialWatches() error {
+	parentDir := filepath.Dir(w.watchDir)
+	w.addWatch(parentDir)
+	w.addWatch(w.watchDir)
+
+	return filepath.WalkDir(w.watchDir, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			w.log.Warn().Err(err).Msgf("Error accessing %s", path)
+			return nil
+		}
+		if isKubeShadow(path) {
+			if d.IsDir() {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if !d.IsDir() || path == w.watchDir {
+			return nil
+		}
+		w.addWatch(path)
+		return nil
+	})
+}
+
+func (w *Watcher) watchLoop() {
 	for {
 		select {
-		case event, ok := <-bm.watcher.Events:
+		case event, ok := <-w.watcher.Events:
 			if !ok {
 				return
+			}
+
+			base := filepath.Base(event.Name)
+
+			// Special-case the ConfigMap flip: ..data symlink changes mean new content.
+			if base == "..data" && (event.Op&(fsnotify.Rename|fsnotify.Create)) != 0 {
+				w.log.Debug().Msg("Detected ..data symlink flip; scheduling reload")
+				// rescan watches if we add/remove subdirs dynamically.
+				// w.scheduleReinit() // only if we need to rebuild watches
+				w.scheduleReload()
+				continue
+			}
+
+			if event.Op&fsnotify.Chmod == fsnotify.Chmod || isKubeShadow(event.Name) {
+				continue
+			}
+
+			w.log.Debug().Msgf("File event: %s %s", event.Op, event.Name)
+
+			if (event.Op&(fsnotify.Remove|fsnotify.Rename) != 0) && event.Name == w.watchDir {
+				w.log.Debug().Msg("Root dir removed/renamed; scheduling watcher reinit")
+				w.scheduleReinit()
+				continue
+			}
+
+			if event.Op&fsnotify.Create == fsnotify.Create {
+				if info, err := os.Stat(event.Name); err == nil && info.IsDir() && !isKubeShadow(event.Name) {
+					w.mu.Lock()
+					w.addWatch(event.Name)
+					w.mu.Unlock()
+				}
+			}
+
+			if event.Op&(fsnotify.Remove|fsnotify.Rename) != 0 && !isKubeShadow(event.Name) {
+				w.mu.Lock()
+				w.removeWatch(event.Name)
+				w.mu.Unlock()
 			}
 
 			if !isYAMLFile(event.Name) {
 				continue
 			}
-
-			switch {
-			case event.Op&fsnotify.Write == fsnotify.Write,
-				event.Op&fsnotify.Create == fsnotify.Create,
-				event.Op&fsnotify.Remove == fsnotify.Remove,
-				event.Op&fsnotify.Rename == fsnotify.Rename:
-				bm.scheduleReload()
+			if event.Op&(fsnotify.Write|fsnotify.Create|fsnotify.Remove|fsnotify.Rename) != 0 {
+				w.scheduleReload()
 			}
 
-		case err, ok := <-bm.watcher.Errors:
+		case err, ok := <-w.watcher.Errors:
 			if !ok {
 				return
 			}
-			fmt.Printf("Watcher error: %v\n", err)
+			w.log.Error().Err(err).Msg("Watcher error")
 
-		case <-bm.stopChan:
+		case <-w.stopChan:
 			return
 		}
 	}
 }
 
-// scheduleReload debounces multiple file changes and schedules a reload
-func (bm *BlueprintManager) scheduleReload() {
-	bm.mu.Lock()
-	defer bm.mu.Unlock()
-
-	if bm.reloadTimer != nil {
-		bm.reloadTimer.Stop()
+func (w *Watcher) scheduleReinit() {
+	w.mu.Lock()
+	if w.reinitOnce {
+		w.mu.Unlock()
+		return
 	}
+	w.reinitOnce = true
+	w.mu.Unlock()
 
-	bm.reloadTimer = time.AfterFunc(bm.reloadDelay, func() {
-		bm.log.Info().Msg("Reloading blueprints due to file changes")
-		if err := bm.loadAndValidateBlueprints(); err != nil {
-			bm.log.Error().Err(err).Msg("Failed to reload blueprints")
+	go func() {
+		time.Sleep(2 * time.Second)
+		w.mu.Lock()
+		old := w.watcher
+		if old != nil {
+			_ = old.Close()
+			w.watcher = nil
+			w.watchedDirs = nil
+		}
+		w.reinitOnce = false
+		w.mu.Unlock()
+
+		if err := w.Setup(); err != nil {
+			w.log.Error().Err(err).Msg("Failed to reinitialize watcher")
 		} else {
-			bm.log.Info().Msg("Blueprints reloaded successfully")
+			w.log.Info().Msg("Watcher reinitialized successfully")
+		}
+		w.scheduleReload()
+	}()
+}
+
+func (w *Watcher) scheduleReload() {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if w.reloadTimer != nil {
+		w.reloadTimer.Stop()
+	}
+	w.reloadTimer = time.AfterFunc(w.reloadDelay, func() {
+		w.log.Info().Msg("Reloading due to file changes")
+		if w.onReload != nil {
+			if err := w.onReload(); err != nil {
+				w.log.Error().Err(err).Msg("Reload callback failed")
+			} else {
+				w.log.Info().Msg("Reload callback succeeded")
+			}
 		}
 	})
 }
 
-// CloseWatcher stops the file watcher and cleans up resources
-func (bm *BlueprintManager) CloseWatcher() error {
-	if !bm.watchEnabled {
-		return nil
+func (w *Watcher) Close() error {
+	if w.stopChan != nil {
+		close(w.stopChan)
 	}
-
-	close(bm.stopChan)
-
-	bm.mu.Lock()
-	if bm.reloadTimer != nil {
-		bm.reloadTimer.Stop()
+	w.mu.Lock()
+	if w.reloadTimer != nil {
+		w.reloadTimer.Stop()
 	}
-	bm.mu.Unlock()
+	fw := w.watcher
+	w.watcher = nil
+	w.watchedDirs = nil
+	w.mu.Unlock()
 
-	if bm.watcher != nil {
-		return bm.watcher.Close()
+	if fw != nil {
+		return fw.Close()
 	}
-
-	bm.log.Info().Msg("Blueprint watcher closed")
+	w.log.Info().Msg("Watcher closed")
 	return nil
+}
+
+func isKubeShadow(path string) bool {
+	base := filepath.Base(path)
+	return strings.HasPrefix(base, "..")
 }

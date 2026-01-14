@@ -2,17 +2,27 @@ apiVersion: v1
 kind: Pod
 metadata:
   name: {{ .Values.__workspace__ }}
-  namespace: {{ .Release.Namespace }} 
+  namespace: {{ .Release.Namespace }}
+  {{- if .Values.splash }}
+  annotations:
+    workspace.k8shell.io/splash: {{ .Values.splash | b64enc | quote }}
+  {{- end }}
   labels:
-    {{- include "workspace.labels" . | nindent 4 }}  
+    {{- include "workspace.labels" . | nindent 4 }} 
+    {{- if and .Values.subdomain .Values.hostname }}
+    k8shell.io/subdomain: {{ .Values.subdomain }}
+    {{- end }}
 spec:
   {{ if .Values.__registry__.regcred }}
   imagePullSecrets:
   - name: {{ .Values.__registry__.regcred }}
   {{ end }}  
-  {{ if .Values.serviceAccount }}
-  serviceAccountName: {{ .Values.serviceAccount }}
-  {{ end }}
+  serviceAccountName: {{ .Values.__workspace__ }}-sa
+  {{- if and .Values.subdomain .Values.hostname }}
+  hostname: {{ .Values.hostname }}
+  subdomain: {{ .Values.subdomain }}
+  {{- end }}
+
   initContainers:
     #### init container to initialize the workspace
     - name: init-base
@@ -33,6 +43,10 @@ spec:
       securityContext:
         runAsUser: 0
         runAsGroup: 0
+        {{- if .Values.capabilities }}
+        capabilities:
+          add: {{ toYaml .Values.capabilities | nindent 12 }}
+        {{- end }}
       command: ["/usr/local/bin/k8shelld"] 
       imagePullPolicy: {{ .Values.imagePullPolicy }}
       resizePolicy:
@@ -62,19 +76,17 @@ spec:
         value: {{ .Values.__workspace__ }}
       - name: BLUEPRINT
         value: {{ .Values.__blueprint__ }}
-      - name: A1K
-        valueFrom:
-          secretKeyRef:
-            name: {{ .Values.__workspace__ }}-access-keys
-            key: a1key
-      - name: A2K
-        valueFrom:
-          secretKeyRef:
-            name: {{ .Values.__workspace__ }}-access-keys
-            key: a2key        
-      {{- if .Values.docker.enabled }}
-      - name: DOCKER_HOST
-        value: unix:///var/run/docker/docker.sock
+      - name: USERNAME
+        value: {{ .Values.__user__.username }}
+      - name: USEREMAIL
+        value: {{ .Values.__user__.email }}
+      - name: USERFULLNAME
+        value: {{ .Values.__user__.fullname }}
+      {{- if .Values.env }}    
+      {{- range $envName, $envValue := .Values.env }}            
+      - name: {{ $envName }}
+        value: {{ $envValue }}
+      {{- end }}
       {{- end }}
       
       volumeMounts:
@@ -93,14 +105,6 @@ spec:
       - name: config-volume
         mountPath: /etc/k8shell/config.yaml
         subPath: config.yaml
-        readOnly: true
-      - name: tls-volume
-        mountPath: /etc/k8shell/server.crt
-        subPath: tls.crt      
-        readOnly: true
-      - name: tls-volume
-        mountPath: /etc/k8shell/server.key
-        subPath: tls.key
         readOnly: true
       - name: main-volume
         mountPath: /usr/local/k8shell/system
@@ -123,6 +127,11 @@ spec:
       - name: docker-sock
         mountPath: /var/run/docker
       {{- end }}
+      {{- if .Values.__certmanager__.enabled }}
+      - name: {{ .Values.__workspace__ }}-cert
+        mountPath: /etc/tls/k8shelld
+        readOnly: true
+      {{- end }}
 
     #### docker container
     {{- if .Values.docker.enabled }}
@@ -136,7 +145,7 @@ spec:
         - --group=$(DOCKER_GROUP_GID)
       env:
         - name: DOCKER_GROUP_GID
-          value: "{{ .Values.docker.group_id }}"
+          value: "{{ .Values.docker.groupId }}"
       volumeMounts:
         - name: docker-sock
           mountPath: /var/run/docker
@@ -163,7 +172,7 @@ spec:
       {{- end }}
       {{- end }}
       {{- if .Values.docker.extFiles }}
-      {{- range $path, $content := .Values.docker.ext_files }}
+      {{- range $path, $content := .Values.docker.extFiles }}
         - name: docker-ext-files-volume
           mountPath: {{ $path }}
           subPath: {{ $path | replace "/" "__" }}
@@ -181,14 +190,6 @@ spec:
       items:
       - key: config.yaml
         path: config.yaml
-  - name: access-keys-volume
-    secret:
-      secretName: {{ .Values.__workspace__ }}-access-keys
-      items:
-      - key: a1key
-        path: a1key
-      - key: a2key
-        path: a2key
   - name: main-volume
     configMap:
       name: {{ .Values.__workspace__ }}-files
@@ -246,9 +247,6 @@ spec:
         {{- end }}
   {{- end }}
   {{- end }}
-  - name: tls-volume
-    secret:
-      secretName: {{ .Values.__workspace__ }}-tls
   {{- if .Values.__registry__.certCA }}
   - name: docker-ca-cert
     configMap:
@@ -256,6 +254,11 @@ spec:
       items:
         - key: registry-ca.pem
           path: registry-ca.pem
+  {{- end }}
+  {{- if .Values.__certmanager__.enabled }}
+  - name: {{ .Values.__workspace__ }}-cert
+    secret:
+      secretName: {{ .Values.__workspace__ }}-tls
   {{- end }}
 
   {{- if .Values.affinity }}

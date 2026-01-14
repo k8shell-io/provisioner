@@ -1,7 +1,7 @@
 # Provisioner service configuration
 
 # Namespace for the k8shell workspace
-targetNamespace: k8shell-workspace
+targetNamespace: ${TARGET_NAMESPACE}
 
 defaultRegistry:
   host: ${WORKSPACE_REGISTRY}
@@ -9,16 +9,41 @@ defaultRegistry:
   username: !file ${SECRET_FILES}/registry_username
   password: !file ${SECRET_FILES}/registry_password
 
-# Server configuration
-http:
-  port: 9201
-  APIKey: !file ${SECRET_FILES}/provisioner_key
+k8shellCapabilities:
+  apiServerEnabled: true
+
+certManager:
+  enabled: false
+  issuer:
+    name: vault-root-issuer
+    kind: ClusterIssuer
+  duration: 24h
+  renewBefore: 12h
+
+# grpc server
+grpc:
+  port: 9030
+  enableTLS: true
+  certFile: /opt/shared/provisioner/tls/tls.crt
+  keyFile: /opt/shared/provisioner/tls/tls.key
+
+  # JWT required claims for authentication
+  authEnabled: true
+  audience: provisioner
+  allowed:
+    - serviceAccount: ssh-proxy
+    - namespace: k8shell-test
+      serviceAccount: ssh-proxy
+    - namespace: k8shell-test
+      serviceAccount: api-server
+    
 
 # Identity service configuration
 identity:
-  baseURL: http://10.42.3.4:9090
-  APIKey: !file ${SECRET_FILES}/identity_key
-  timeout: 1000 
+  address: identity.k8shell-test:9020
+  tokenFilePath: /opt/shared/provisioner/identity-token
+  caCertPath: /opt/shared/auth/ca.crt
+  serverName: identity.k8shell-test.svc
 
 # Blueprints configuration
 blueprints:

@@ -1,4 +1,4 @@
-{{- if eq .Values.networkPolicy "workspace" }}
+{{- if eq .Values.network.networkPolicy "workspace" }}
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -9,9 +9,9 @@ metadata:
 spec:
   podSelector:
     matchLabels:
-      app: k8shell-workspace
-      org: {{ .Values.__organization__ }}
-      workspace: {{ .Values.__workspace__ }}
+      app.kubernetes.io/name: k8shell-workspace
+      k8shell.io/organization: {{ .Values.__organization__ }}
+      k8shell.io/workspace: {{ .Values.__workspace__ }}
   policyTypes:
     - Ingress
     - Egress
@@ -20,15 +20,18 @@ spec:
     - from:
         - podSelector:
             matchLabels:
-              app: k8shell-workspace
-              org: {{ .Values.__organization__ }}
-              blueprint: {{ .Values.__blueprint__ }}
-        - podSelector:
+              app.kubernetes.io/name: k8shell-workspace
+              k8shell.io/organization: {{ .Values.__organization__ }}
+              k8shell.io/blueprint: {{ .Values.__blueprint__ }}
+        - namespaceSelector:
             matchLabels:
-              app: k8shell-proxy 
+              kubernetes.io/metadata.name: {{ .Values.__namespace__ }}
+            podSelector:
+              matchLabels:
+                k8shell.io/app: ssh-proxy
   egress:
-{{- if .Values.allow_egress }}
-{{- range $cidr := .Values.allow_egress }}
+{{- if .Values.network.allowEgress }}
+{{- range $cidr := .Values.network.allowEgress }}
     - to:
         - ipBlock:
             cidr: {{ $cidr }}
@@ -37,8 +40,8 @@ spec:
     - to:
         - podSelector:
             matchLabels:
-              app: k8shell-workspace
-              org: {{ .Values.__organization__ }}
-              blueprint: {{ .Values.__blueprint__ }}
+              app.kubernetes.io/name: k8shell-workspace
+              k8shell.io/organization: {{ .Values.__organization__ }}
+              k8shell.io/blueprint: {{ .Values.__blueprint__ }}
 {{ include "default.egress" . | nindent 4 }}  
 {{- end }}

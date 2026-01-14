@@ -1,27 +1,31 @@
 package server
 
 import (
-	"context"
 	"fmt"
+	"os"
+	"os/signal"
 	"path/filepath"
-	"time"
+	"syscall"
 
-	identity "github.com/k8shell-io/identity/pkg/client"
+	"github.com/k8shell-io/common/pkg/gapi"
+	log "github.com/k8shell-io/common/pkg/logger"
+	"github.com/k8shell-io/common/pkg/models"
+	identity "github.com/k8shell-io/identity/pkg/api"
 	"github.com/k8shell-io/provisioner/internal/blueprint"
 	"github.com/k8shell-io/provisioner/internal/config"
 	"github.com/k8shell-io/provisioner/internal/helm"
-	"github.com/k8shell-io/provisioner/internal/log"
-	"github.com/k8shell-io/provisioner/pkg/models"
+	"github.com/k8shell-io/provisioner/pkg/api/provisionerpb"
 	"github.com/rs/zerolog"
+	"google.golang.org/grpc"
 )
 
 type Server struct {
-	config         *config.Config
-	log            *zerolog.Logger
-	Identity       *identity.Client
-	RESTApiService *RESTApiService
-	bpManager      *blueprint.BlueprintManager
-	helm           *helm.Client
+	config    *config.Config
+	log       *zerolog.Logger
+	Identity  *identity.Client
+	grpc      *gapi.Server
+	bpManager *blueprint.BlueprintManager
+	helm      *helm.Client
 }
 
 func NewServer(configFile string) (*Server, error) {
@@ -36,26 +40,25 @@ func NewServer(configFile string) (*Server, error) {
 		return nil, fmt.Errorf("failed to load configuration: %w", err)
 	}
 
-	server.log.Info().Msgf("Loading blueprints from directory: %s", server.config.Blueprints.Directory)
+	var blueprintDir string
+	if filepath.IsAbs(server.config.Blueprints.Directory) {
+		blueprintDir = server.config.Blueprints.Directory
+	} else {
+		blueprintDir = filepath.Join(server.config.BaseDir, server.config.Blueprints.Directory)
+	}
+
+	server.log.Info().Msgf("Loading blueprints from directory: %s", blueprintDir)
 	server.bpManager, err = blueprint.NewBlueprintManager(blueprint.LoadOptions{
-		Dir:         filepath.Join(server.config.BaseDir, server.config.Blueprints.Directory),
+		Dir:         blueprintDir,
 		EnableWatch: true,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to create blueprint manager: %w", err)
 	}
 
-	server.log.Info().Msgf("Creating identity client with base URL: %s", server.config.Identity.BaseURL)
-	server.Identity = identity.New(identity.Config{
-		BaseURL: server.config.Identity.BaseURL,
-		APIKey:  server.config.Identity.APIKey,
-		Timeout: time.Duration(server.config.Identity.Timeout) * time.Millisecond,
-	})
-
-	server.log.Info().Msg("Creating REST API service")
-	server.RESTApiService, err = NewRESTAPI(server)
+	server.Identity, err = identity.NewClient(server.config.Identity)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create REST API service: %w", err)
+		return nil, fmt.Errorf("failed to create identity client: %w", err)
 	}
 
 	server.log.Info().Msg("Creating Helm client")
@@ -64,37 +67,99 @@ func NewServer(configFile string) (*Server, error) {
 		return nil, fmt.Errorf("failed to create Helm client: %w", err)
 	}
 
-	server.log.Info().Msgf("Ensuring workspace base, namespace %s", server.config.TargetNamespace)
-	err = server.helm.EnsureBase(context.Background())
+	server.log.Info().Msg("Creating gRPC service")
+	server.grpc, err = gapi.NewServer(&server.config.GrpcConfig, true)
 	if err != nil {
-		return nil, fmt.Errorf("failed to ensure base namespace: %w", err)
+		return nil, fmt.Errorf("failed to create gRPC service: %w", err)
 	}
+
+	server.grpc.RegisterService(func(s *grpc.Server) error {
+		provisionerpb.RegisterProvisionerServiceServer(s, NewProvisionerService(server))
+		return nil
+	})
+
+	models.SetRefResolver(server)
+
+	// server.log.Info().Msgf("Ensuring workspace base, namespace %s", server.config.TargetNamespace)
+	// err = server.helm.EnsureBase(context.Background())
+	// if err != nil {
+	// 	return nil, fmt.Errorf("failed to ensure base namespace: %w", err)
+	// }
 
 	return server, nil
 }
 
-func (s *Server) GetBlueprintScope(ctx context.Context, username string, repoName string,
-	repoOwner string) (*blueprint.BlueprintScope, error) {
-	s.log.Debug().Msgf("Getting blueprint scope for user: %s, repo: %s, owner: %s",
-		username, repoName, repoOwner)
-	user, err := s.Identity.GetUser(ctx, username)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get user: %w", err)
+// ResolvePullRequestRef
+// Implements models.IssueRepoRefResolver
+func (s Server) ResolvePullRequestRef(username string, repoOwner, repoName string, issueNumber int) (string, error) {
+	return "", fmt.Errorf("Pull Request resolving is not supported. You need to provide cannonizied user string.")
+}
+
+func (s *Server) GetBlueprintScope(blueprintName string, user *models.User,
+	bpMetadata *models.BlueprintMetadata, workspaceName string) (*blueprint.BlueprintScope, error) {
+
+	if blueprintName == "" {
+		return nil, fmt.Errorf("blueprint name is required to create scope")
 	}
 
-	var repo = "noreponame"
-	var owner = "norepoowner"
-	if repoName != "" && repoOwner != "" {
-		repo = repoName
-		owner = repoOwner
+	var repoName = "noreponame"
+	var ownerName = "norepoowner"
+	var repoAddress = "noaddress"
+	var repoRef = ""
+
+	if bpMetadata != nil {
+		if bpMetadata.RepoName != "" {
+			repoName = bpMetadata.RepoName
+		}
+		if bpMetadata.RepoOwner != "" {
+			ownerName = bpMetadata.RepoOwner
+		}
+		if bpMetadata.RepoAddress != "" {
+			repoAddress = bpMetadata.RepoAddress
+		}
+		if bpMetadata.RepoRef != "" {
+			repoRef = bpMetadata.RepoRef
+		}
 	}
+
+	s.log.Debug().Msgf("Creating blueprint scope for user: %s, repo: %s, owner: %s, address: %s, ref: %s",
+		user.Username, repoName, ownerName, repoAddress, repoRef)
 
 	scope := &blueprint.BlueprintScope{
-		User: user,
-		Repo: models.Repo{
-			Name:  repo,
-			Owner: owner,
+		User:          user,
+		WorkspaceName: workspaceName,
+		Metadata: &models.BlueprintMetadata{
+			Name:        blueprintName,
+			RepoName:    repoName,
+			RepoOwner:   ownerName,
+			RepoAddress: repoAddress,
+			RepoRef:     repoRef,
 		},
 	}
 	return scope, nil
+}
+
+// Start starts the gRPC server and waits for shutdown signals
+func (s *Server) Serve() error {
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
+
+	errChan := make(chan error, 1)
+	go func() {
+		s.log.Info().Msg("Starting gRPC server")
+		if err := s.grpc.Start(); err != nil {
+			errChan <- fmt.Errorf("gRPC server error: %v", err)
+		}
+	}()
+
+	select {
+	case sig := <-sigChan:
+		s.log.Info().Msgf("Received signal %v, shutting down gracefully", sig)
+		s.grpc.Stop()
+		s.log.Info().Msg("Server shutdown complete")
+		return nil
+	case err := <-errChan:
+		s.log.Error().Err(err).Msg("Server error occurred")
+		return err
+	}
 }

@@ -2,33 +2,28 @@ package workspace
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"strings"
 	"time"
 
+	"github.com/k8shell-io/common/pkg/models"
 	"github.com/k8shell-io/provisioner/internal/helm"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/watch"
 )
 
-type EventMessage struct {
-	Timestamp  string
-	ObjectName string
-	Message    string
-}
-
-func (e EventMessage) String() string {
-	return fmt.Sprintf("[%s] [%-12s] %s",
-		e.Timestamp, e.ObjectName, e.Message)
-}
-
+// ProvisionOptions represents the options for provisioning a workspace
 type ProvisionOptions struct {
 	Timeout     int
-	Messages    chan EventMessage
+	Messages    chan models.WorkspaceStreamEvent
 	LockTimeout int
 }
 
-func (w *Workspace) Provision(ctx context.Context, opts *ProvisionOptions) (*WorkspaceStatus, error) {
+// Provision provisions the workspace
+func (w *Workspace) Provision(ctx context.Context, opts *ProvisionOptions) (*models.PodStatus, error) {
 	if opts == nil {
 		opts = &ProvisionOptions{
 			Timeout:     20,
@@ -47,68 +42,99 @@ func (w *Workspace) Provision(ctx context.Context, opts *ProvisionOptions) (*Wor
 	}
 
 	if exists {
-		status, err := w.GetStatus(ctx)
+		status, err := w.GetPodStatus(ctx)
 		if err != nil {
-			return nil, fmt.Errorf("failed to get workspace status: %w", err)
+			if errors.Is(err, models.ErrWorkspaceNotFound) {
+				w.log.Info().Msgf("Pod %s not found, proceeding with provisioning", w.Name)
+			} else {
+				return nil, fmt.Errorf("failed to get workspace pod status: %w", err)
+			}
+		} else {
+			if status.Status == "Running" {
+				w.log.Info().Msgf("Workspace %s is already running", w.Name)
+				return status, nil
+			}
 		}
 
-		if status.Status == "Running" {
-			w.log.Info().Msgf("Workspace %s is already running, no provisioning needed", w.Name())
-			return status, nil
-		}
-
-		w.log.Info().Msgf("Workspace %s exists but is not running (%s), need to provision", w.Name(), status.Status)
+		w.log.Info().Msgf("Workspace %s exists but it is not running, need to provision", w.Name)
 	} else {
-		w.log.Info().Msgf("Workspace %s does not exist, need to provision", w.Name())
+		w.log.Info().Msgf("Workspace %s does not exist, need to provision", w.Name)
 	}
 
 	return w.provisionWithLock(ctx, opts)
 }
 
-func (w *Workspace) provisionWithLock(ctx context.Context, opts *ProvisionOptions) (*WorkspaceStatus, error) {
-	workspaceLock := NewWorkspaceLock(w.client.GetKubeClient(), w.client.TargetNamespace(), w.Name())
+// Lock acquires a distributed lock for the workspace
+func (w *Workspace) lock(timeout time.Duration) error {
+	if w.workspaceLock != nil {
+		return nil
+	}
+	w.workspaceLock = w.CreateLock()
 
-	w.log.Info().Msgf("Acquiring lock for workspace %s provisioning", w.Name())
-	lockCtx, cancel := context.WithTimeout(ctx, time.Duration(opts.LockTimeout)*time.Second)
+	w.log.Debug().Msgf("Acquiring lock for workspace %s", w.Name)
+	lockCtx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
-	acquired, err := workspaceLock.Acquire(lockCtx)
+	acquired, err := w.workspaceLock.Acquire(lockCtx)
 	if err != nil {
-		return nil, fmt.Errorf("failed to acquire lock for workspace %s: %w", w.Name(), err)
+		return fmt.Errorf("failed to acquire lock for workspace %s: %w", w.Name, err)
 	}
 
 	if !acquired {
-		return nil, fmt.Errorf("timeout acquiring lock for workspace %s after %d seconds", w.Name(), opts.LockTimeout)
+		return fmt.Errorf("timeout acquiring lock for workspace %s after %f seconds", w.Name, timeout.Seconds())
 	}
 
+	return nil
+}
+
+// Unlock releases the distributed lock for the workspace
+func (w *Workspace) unlock() error {
+	if w.workspaceLock == nil {
+		return nil
+	}
+	if releaseErr := w.workspaceLock.Release(context.Background()); releaseErr != nil {
+		w.log.Error().Err(releaseErr).Msgf("Failed to release lock for workspace %s", w.Name)
+	} else {
+		w.log.Debug().Msgf("Released lock for workspace %s", w.Name)
+	}
+	w.workspaceLock = nil
+	return nil
+}
+
+// provisionWithLock provisions the workspace with a distributed lock
+func (w *Workspace) provisionWithLock(ctx context.Context, opts *ProvisionOptions) (*models.PodStatus, error) {
+	if err := w.lock(time.Duration(opts.LockTimeout) * time.Second); err != nil {
+		return nil, err
+	}
 	defer func() {
-		if releaseErr := workspaceLock.Release(context.Background()); releaseErr != nil {
-			w.log.Error().Err(releaseErr).Msgf("Failed to release lock for workspace %s", w.Name())
-		} else {
-			w.log.Info().Msgf("Released lock for workspace %s", w.Name())
+		if releaseErr := w.unlock(); releaseErr != nil {
+			w.log.Error().Err(releaseErr).Msgf("Failed to release lock for workspace %s", w.Name)
 		}
 	}()
 
-	w.log.Info().Msgf("Acquired lock for workspace %s", w.Name())
-
+	w.log.Debug().Msgf("Acquired lock for workspace %s", w.Name)
 	exists, err := w.IsInstalled(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("failed to recheck if workspace exists: %w", err)
 	}
 
 	if exists {
-		status, err := w.GetStatus(ctx)
+		status, err := w.GetPodStatus(ctx)
 		if err != nil {
-			return nil, fmt.Errorf("failed to recheck workspace status: %w", err)
+			if errors.Is(err, models.ErrWorkspaceNotFound) {
+				w.log.Debug().Msgf("Pod %s not found, proceeding with provisioning", w.Name)
+			} else {
+				return nil, fmt.Errorf("failed to recheck workspace status: %w", err)
+			}
+		} else {
+			if status.Status == "Running" {
+				w.log.Debug().Msgf("Workspace %s is now running (completed by another instance while waiting for lock)", w.Name)
+				return status, nil
+			}
 		}
 
-		if status.Status == "Running" {
-			w.log.Info().Msgf("Workspace %s is now running (completed by another instance while waiting for lock)", w.Name())
-			return status, nil
-		}
-
-		w.log.Info().Msgf("Workspace %s still not running after acquiring lock, proceeding with reinstall", w.Name())
-		if err := w.client.Uninstall(w.Name(), int(opts.Timeout)); err != nil {
+		w.log.Debug().Msgf("Workspace %s still not running after acquiring lock, proceeding with reinstall", w.Name)
+		if err := w.client.Uninstall(w.Name, int(opts.Timeout), true); err != nil {
 			return nil, fmt.Errorf("failed to delete workspace: %w", err)
 		}
 	}
@@ -116,20 +142,37 @@ func (w *Workspace) provisionWithLock(ctx context.Context, opts *ProvisionOption
 	return w.doInstallation(ctx, opts)
 }
 
-func (w *Workspace) doInstallation(ctx context.Context, opts *ProvisionOptions) (*WorkspaceStatus, error) {
+// doInstallation performs the actual installation of the workspace
+func (w *Workspace) doInstallation(ctx context.Context, opts *ProvisionOptions) (*models.PodStatus, error) {
 	values, err := w.Values()
 	if err != nil {
 		return nil, err
 	}
 
+	if err := w.createHeadlessService(ctx, values); err != nil {
+		return nil, fmt.Errorf("failed to create headless service: %w", err)
+	}
+
+	labels := map[string]string{
+		"app.kubernetes.io/name":       helm.WORKSPACE_CHART_NAME,
+		"app.kubernetes.io/instance":   w.Name,
+		"app.kubernetes.io/version":    w.getK8shelldVersion(),
+		"app.kubernetes.io/managed-by": "k8shell-provisioner",
+		"k8shell.io/app":               helm.WORKSPACE_CHART_NAME,
+		"k8shell.io/workspace":         w.Name,
+		"k8shell.io/username":          w.user.Username,
+		"k8shell.io/blueprint":         w.blueprint.Name,
+		"k8shell.io/organization":      w.user.Organization,
+	}
+
 	startTime := time.Now()
 	err = w.client.Install(ctx, helm.WORKSPACE_CHART_NAME, helm.InstallOptions{
-		ReleaseName:     w.Name(),
+		ReleaseName:     w.Name,
 		Values:          values,
 		CreateNamespace: false,
 		Wait:            false,
 		Timeout:         opts.Timeout,
-		Labels:          w.Labels(),
+		Labels:          labels,
 		AppVersion:      w.getK8shelldVersion(),
 	})
 	if err != nil {
@@ -138,27 +181,73 @@ func (w *Workspace) doInstallation(ctx context.Context, opts *ProvisionOptions) 
 
 	status, err := w.waitForPodRunning(ctx, startTime, opts)
 	if err != nil {
-		return nil, fmt.Errorf("failed waiting for workspace to be running: %w", err)
+		return nil, err
 	}
 
 	if status.Status == "Running" {
-		status.ProvisionTime = time.Since(startTime)
-		w.log.Info().Msgf("Workspace %s is now running, provisioned in %s", w.Name(), status.ProvisionTime)
+		provisionTime := time.Since(startTime)
+		w.log.Info().Msgf("Workspace %s is now running, provisioned in %s", w.Name, provisionTime)
 	}
 	return status, nil
 }
 
+// createHeadlessService creates a headless service if subdomain and hostname are defined
+func (w *Workspace) createHeadlessService(ctx context.Context, values map[string]interface{}) error {
+	subdomain, hasSubdomain := values["subdomain"].(string)
+	hostname, hasHostname := values["hostname"].(string)
+
+	if !hasSubdomain || !hasHostname || subdomain == "" || hostname == "" {
+		w.log.Debug().Msg("Subdomain or hostname not defined, skipping headless service creation")
+		return nil
+	}
+
+	serviceName := subdomain
+	namespace := w.client.TargetNamespace()
+
+	service := &corev1.Service{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      serviceName,
+			Namespace: namespace,
+			Labels: map[string]string{
+				"app.kubernetes.io/managed-by": "k8shell-provisioner",
+				"k8shell.io/component":         "headless-service",
+				"k8shell.io/subdomain":         subdomain,
+			},
+		},
+		Spec: corev1.ServiceSpec{
+			ClusterIP: "None",
+			Selector: map[string]string{
+				"k8shell.io/subdomain": subdomain,
+			},
+		},
+	}
+
+	_, err := w.client.GetKubeClient().CoreV1().Services(namespace).Create(ctx, service, metav1.CreateOptions{})
+	if err != nil {
+		if apierrors.IsAlreadyExists(err) {
+			w.log.Info().Msgf("Headless service %s already exists", serviceName)
+			return nil
+		}
+		return fmt.Errorf("failed to create headless service %s: %w", serviceName, err)
+	}
+
+	w.log.Info().Msgf("Created headless service %s for subdomain", serviceName)
+	return nil
+}
+
 // waitForPodRunning with quick failure detection
 func (w *Workspace) waitForPodRunning(ctx context.Context, startTime time.Time,
-	opts *ProvisionOptions) (*WorkspaceStatus, error) {
+	opts *ProvisionOptions) (*models.PodStatus, error) {
 
-	podName := w.Name()
+	podName := w.Name
 	timeout := time.NewTimer(time.Duration(opts.Timeout) * time.Second)
 	defer timeout.Stop()
 
-	eventStop := make(chan struct{})
-	go w.watchEvents(ctx, podName, eventStop, opts)
-	defer close(eventStop)
+	watchCtx, cancelWatch := context.WithCancel(ctx)
+	defer cancelWatch() // This handles ALL cleanup
+
+	criticalErrorChan := make(chan error, 1)
+	go w.watchEvents(watchCtx, podName, criticalErrorChan, opts)
 
 	ticker := time.NewTicker(1 * time.Second)
 	defer ticker.Stop()
@@ -172,10 +261,15 @@ func (w *Workspace) waitForPodRunning(ctx context.Context, startTime time.Time,
 			return nil, fmt.Errorf("timeout waiting for pod %s to be running after %v",
 				podName, opts.Timeout)
 
+		case criticalErr := <-criticalErrorChan:
+			if criticalErr != nil {
+				return nil, criticalErr
+			}
+
 		case <-ticker.C:
-			status, err := w.GetStatus(ctx)
+			status, err := w.GetPodStatus(ctx)
 			if err != nil {
-				continue // Keep trying
+				continue
 			}
 
 			switch status.Status {
@@ -183,13 +277,12 @@ func (w *Workspace) waitForPodRunning(ctx context.Context, startTime time.Time,
 				return status, nil
 
 			case "Failed", "Succeeded":
-				return status, fmt.Errorf("pod %s is in final state: %s - %s",
+				return status, fmt.Errorf("workspace pod %s is in final state: %s - %s",
 					podName, status.Status, status.Message)
 
 			case "Pending":
-				// Check if we've been pending too long
 				if time.Since(startTime) > time.Duration(opts.Timeout)*time.Second {
-					return status, fmt.Errorf("pod %s has been pending for too long: %s",
+					return status, fmt.Errorf("workspace pod %s has been pending for too long: %s",
 						podName, status.Message)
 				}
 			}
@@ -198,35 +291,82 @@ func (w *Workspace) waitForPodRunning(ctx context.Context, startTime time.Time,
 }
 
 // watchEvents watches and reports Kubernetes events for the pod
-func (w *Workspace) watchEvents(ctx context.Context, podName string, stop <-chan struct{}, opts *ProvisionOptions) {
-	watcher, err := w.client.GetKubeClient().CoreV1().Events(w.client.TargetNamespace()).Watch(ctx, metav1.ListOptions{
+func (w *Workspace) watchEvents(ctx context.Context, podName string, criticalErrorChan chan<- error, opts *ProvisionOptions) {
+	eventList, err := w.client.GetKubeClient().CoreV1().Events(w.client.TargetNamespace()).List(ctx, metav1.ListOptions{
 		FieldSelector: fmt.Sprintf("involvedObject.name=%s", podName),
+		Limit:         1,
 	})
 	if err != nil {
+		w.log.Warn().Err(err).Msg("Failed to get current resource version for events, watching from beginning")
+	}
+
+	listOptions := metav1.ListOptions{
+		FieldSelector: fmt.Sprintf("involvedObject.name=%s", podName),
+		Watch:         true,
+	}
+
+	if eventList != nil {
+		listOptions.ResourceVersion = eventList.ResourceVersion
+	}
+
+	watcher, err := w.client.GetKubeClient().CoreV1().Events(w.client.TargetNamespace()).Watch(ctx, listOptions)
+	if err != nil {
+		w.log.Warn().Err(err).Msg("Failed to watch events")
 		return
 	}
 	defer watcher.Stop()
 
 	for {
 		select {
-		case <-stop:
-			return
 		case <-ctx.Done():
 			return
+
 		case event := <-watcher.ResultChan():
 			if event.Type == watch.Added || event.Type == watch.Modified {
 				if k8sEvent, ok := event.Object.(*corev1.Event); ok {
-					eventMessage := EventMessage{
+					eventMessage := models.WorkspaceStreamEvent{
+						Type:       "event",
 						Timestamp:  k8sEvent.CreationTimestamp.Format("2006-01-02 15:04:05"),
 						ObjectName: k8sEvent.InvolvedObject.Name,
 						Message:    k8sEvent.Message,
 					}
+
 					w.log.Info().Msg(eventMessage.String())
 					if opts.Messages != nil {
 						opts.Messages <- eventMessage
+					}
+
+					if criticalErr := w.isCriticalError(eventMessage.Message); criticalErr != nil {
+						criticalErrorChan <- criticalErr
+						return
 					}
 				}
 			}
 		}
 	}
+}
+
+// isCriticalError determines if an event message indicates a critical error and returns a user-friendly error
+func (w *Workspace) isCriticalError(message string) error {
+	criticalErrors := map[string]string{
+		"Failed to pull image":    "Unable to download the workspace image.",
+		"ImagePullBackOff":        "Unable to download the workspace image.",
+		"ErrImagePull":            "Unable to download the workspace image.",
+		"InvalidImageName":        "The workspace image name is invalid.",
+		"image not found":         "The specified workspace image was not found in the registry.",
+		"authentication required": "Authentication failed when accessing the workspace image.",
+		"insufficient memory":     "Not enough memory available to run the workspace.",
+		"insufficient cpu":        "Not enough CPU resources available to run the workspace.",
+		"no nodes available":      "No suitable servers are available to run the workspace.",
+	}
+
+	messageLower := strings.ToLower(message)
+	for criticalError, userMessage := range criticalErrors {
+		if strings.Contains(messageLower, strings.ToLower(criticalError)) {
+			w.log.Error().Msgf("Provisioning error detected: %s", message)
+			provError := fmt.Sprintf("Provisioning error: %s", userMessage)
+			return fmt.Errorf("%s", provError)
+		}
+	}
+	return nil
 }

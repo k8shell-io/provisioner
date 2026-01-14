@@ -4,30 +4,38 @@ import (
 	"fmt"
 	"path/filepath"
 
-	"github.com/k8shell-io/yaml-config/pkg/yamlconfig"
+	"github.com/k8shell-io/common/pkg/config"
+	"github.com/k8shell-io/common/pkg/gapi"
 )
 
 // Config represents the server configuration
 type Config struct {
-	TargetNamespace string               `yaml:"targetNamespace"`
-	DefaultRegistry DefaultRegistry      `yaml:"defaultRegistry"`
-	Http            HttpConfig           `yaml:"http"`
-	Identity        IdentityConfig       `yaml:"identity"`
-	Blueprints      BlueprintsFileConfig `yaml:"blueprints"`
-	BaseDir         string               `yaml:"baseDir"`
+	TargetNamespace     string               `yaml:"targetNamespace"`
+	DefaultRegistry     DefaultRegistry      `yaml:"defaultRegistry"`
+	K8shellCapabilities K8shellCapabilities  `yaml:"k8shellCapabilities"`
+	CertManager         CertManagerConfig    `yaml:"certManager"`
+	GrpcConfig          gapi.ServerConfig    `yaml:"grpc"`
+	Identity            gapi.ClientConfig    `yaml:"identity"`
+	Blueprints          BlueprintsFileConfig `yaml:"blueprints"`
+	BaseDir             string               `yaml:"baseDir"`
 }
 
-// HttpConfig represents the HTTP server configuration.
-type HttpConfig struct {
-	Port   int    `yaml:"port"`
-	APIKey string `yaml:"APIKey"`
+type K8shellCapabilities struct {
+	APIServerEnabled bool `yaml:"apiServerEnabled"`
 }
 
-// IdentityConfig represents the identity service configuration.
-type IdentityConfig struct {
-	BaseURL string `yaml:"baseURL"`
-	APIKey  string `yaml:"APIKey"`
-	Timeout int    `yaml:"timeout"`
+// CertManagerConfig represents the cert-manager configuration
+type CertManagerConfig struct {
+	Enabled     bool       `yaml:"enabled"`
+	Issuer      CertIssuer `yaml:"issuer"`
+	Duration    string     `yaml:"duration"`
+	RenewBefore string     `yaml:"renewBefore"`
+}
+
+// CertIssuer represents the certificate issuer configuration
+type CertIssuer struct {
+	Name string `yaml:"name"`
+	Kind string `yaml:"kind"`
 }
 
 // DefaultRegistry represents the default container registry configuration.
@@ -56,17 +64,30 @@ type BlueprintsFileConfig struct {
 }
 
 func NewConfig(configFile string) (*Config, error) {
-	var config Config
+	var cfg Config
 
-	processor := yamlconfig.NewDefaultProcessor()
-	if err := processor.LoadAndDecode(configFile, &config); err != nil {
+	processor := config.NewDefaultProcessor()
+	if err := processor.LoadAndDecode(configFile, &cfg); err != nil {
 		return nil, fmt.Errorf("failed to load configuration from '%s': %w", configFile, err)
 	}
 
-	if config.Http.Port == 0 || config.Http.APIKey == "" {
-		return nil, fmt.Errorf("missing required configuration values: port and APIKey must be set")
+	if cfg.GrpcConfig.Port == 0 {
+		return nil, fmt.Errorf("missing required configuration values: port must be set")
 	}
 
-	config.BaseDir = filepath.Dir(configFile)
-	return &config, nil
+	if cfg.CertManager.Enabled {
+		if cfg.CertManager.Issuer.Name == "" || cfg.CertManager.Issuer.Kind == "" {
+			return nil, fmt.Errorf("missing required configuration values: certManager.issuer.name and certManager.issuer.kind must be set when certManager.enabled is true")
+		}
+		if cfg.CertManager.Duration == "" {
+			cfg.CertManager.Duration = "24h"
+		}
+
+		if cfg.CertManager.RenewBefore == "" {
+			cfg.CertManager.RenewBefore = "12h"
+		}
+	}
+
+	cfg.BaseDir = filepath.Dir(configFile)
+	return &cfg, nil
 }

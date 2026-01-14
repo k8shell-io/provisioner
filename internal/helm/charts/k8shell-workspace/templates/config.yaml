@@ -8,4 +8,121 @@ metadata:
     type: config-init
 data:
   config.yaml: |
-    {{ .Values.__k8shelldconfig__ }} 
+    # system settings
+    system:
+      # true to enable profiling
+      # if enabled, pprof will be available at localhost:6060
+      pprof: false
+
+      # api server 
+      apiServer: 
+        enabled: {{ .Values.__apiserver__.enabled }}
+        address: http://api-server.{{ .Values.__namespace__ }}:9101
+
+      # grpc server
+      grpc:
+        port: 2822
+
+        {{- if .Values.__certmanager__.enabled }}
+        enableTLS: true
+        certFile: /etc/tls/k8shelld/tls.crt
+        keyFile: /etc/tls/k8shelld/tls.key
+        {{- else }}
+        enableTLS: false
+        {{- end }}
+
+        audience: k8shelld
+        allowed:
+          {{- $conn := .Values.k8shelld.connection -}}
+          {{- $out := dict "ns" .Values.__namespace__ "sa" "ssh-proxy" -}}
+          {{- if $conn }}
+            {{- if $conn.allowAnyNS }}
+              {{- $_ := set $out "ns" "*" }}
+            {{- end }}
+            {{- if $conn.allowAnySA }}
+              {{- $_ := set $out "sa" "*" }}
+            {{- end }}
+          {{- end }}
+          - namespace: {{ $out.ns | quote }}
+            serviceAccount: {{ $out.sa | quote }}
+          - namespace: {{ .Values.__namespace__ | quote }}
+            serviceAccount: {{ "api-server" | quote }}
+
+    # workspace user
+    user:
+      username: {{ .Values.__username__ }}
+      fullname: {{ .Values.__user__.fullname }}
+      uid: {{ .Values.__user__.uid }}
+      gid: {{ .Values.__user__.gid }}
+      shell: {{ .Values.shell }}
+      sudo: {{ .Values.sudo }}
+
+      {{- if .Values.docker.enabled }}
+      # supplementary groups
+      groups:
+        - name: k8shell-docker
+          gid: {{ if and (ne .Values.docker.subgid 0) }}{{ add .Values.docker.subgid .Values.docker.groupId -1 }}{{ else }}{{ .Values.docker.groupId }}{{ end }}
+      {{- end }}
+
+    {{- if .Values.portForwarding }}
+    # port forwarding rules
+    portForwarding:
+    {{- range .Values.portForwarding }}
+      - {{ . }}
+    {{- end }}
+    {{- end }}
+
+    # reap zombie processes
+    reapZombies:
+      enabled: true
+
+    # terminate orphaned processes, i.e. processes that were reparented to init (pid 1)
+    terminateOrphans:
+      enabled: true
+      checkInterval: 5
+      {{- if .Values.k8shelld.ignoreOrphans }}
+      exclude:
+      {{- range .Values.k8shelld.ignoreOrphans }}
+      - {{ . }}
+      {{- end }}
+      {{- end }}
+    
+    # docker settings
+    docker:
+      createDockerSockSymlink: {{ .Values.docker.enabled }}
+
+    # apps
+    # global switch to enable/disable apps
+    enableApps: {{ .Values.enableApps | default false }}
+
+    # apps configurations
+    {{- if .Values.apps }}
+    {{- $enabledApps := dict }}
+    {{- range $name, $conf := .Values.apps }}
+      {{- if $conf.enabled }}
+        {{- $_ := set $enabledApps $name $conf }}
+      {{- end }}
+    {{- end }}
+    {{- if gt (len $enabledApps) 0 }}
+    apps:
+    {{- range $name, $conf := $enabledApps }}
+      {{ $name }}:
+        listen: {{ $conf.listen }}
+        binary: {{ $conf.binary | quote }}
+        installAsRoot: {{ $conf.installAsRoot }}
+        versionCmd:
+        {{- range $arg := $conf.versionCmd }}
+          - {{ $arg | quote }}
+        {{- end }}
+        versionRegex: {{ $conf.versionRegex | quote }}
+        install: {{ $conf.install | quote }}
+        start:
+        {{- range $arg := $conf.start }}
+          - {{ $arg | quote }}
+        {{- end }}
+        restartPolicy: {{ $conf.restartPolicy }}
+        autoStart: {{ $conf.autoStart }}
+        protocol: {{ $conf.protocol }}
+    {{- end }}
+    {{- end }}
+    {{- end }}

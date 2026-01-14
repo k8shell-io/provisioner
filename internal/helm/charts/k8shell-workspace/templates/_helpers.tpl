@@ -2,19 +2,24 @@
 
 {{/* labels for helm resources */}}
 {{- define "workspace.labels" -}}
-k8shell.io/app: k8shell-workspace
-k8shell.io/organization: "{{ .Values.__organization__ }}"
-k8shell.io/blueprint: "{{ .Values.__blueprint__ }}"
+app.kubernetes.io/version: "{{ .Values.__appversion__ }}"
+app.kubernetes.io/name: k8shell-workspace
+app.kubernetes.io/instance: "{{ .Values.__workspace__ }}"
 k8shell.io/workspace: "{{ .Values.__workspace__ }}"
 k8shell.io/username: "{{ .Values.__username__ }}"
+k8shell.io/blueprint: "{{ .Values.__blueprint__ }}"
+k8shell.io/organization: "{{ .Values.__organization__ }}"
 {{- end -}}
 
 {{/* default networkpolicy egress rules */}}
 {{- define "default.egress" -}}
 - to:
-    - podSelector:
+    - namespaceSelector:
         matchLabels:
-          app: k8shell-proxy 
+          kubernetes.io/metadata.name: {{ .Values.__namespace__ }}
+        podSelector:
+          matchLabels:
+            app: ssh-proxy
     - podSelector:
         matchLabels:
           type: backend
