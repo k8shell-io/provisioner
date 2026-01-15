@@ -22,11 +22,11 @@ type WorkspaceLock struct {
 	holderID  string
 }
 
-func NewWorkspaceLock(client kubernetes.Interface, namespace, workspaceName string) *WorkspaceLock {
+func NewWorkspaceLock(client kubernetes.Interface, namespace, lockName string) *WorkspaceLock {
 	return &WorkspaceLock{
 		client:    client,
 		namespace: namespace,
-		leaseName: fmt.Sprintf("workspace-lease-%s", workspaceName),
+		leaseName: fmt.Sprintf("workspace-lease-%s", lockName),
 		holderID:  fmt.Sprintf("provisioner-%d", time.Now().UnixNano()), // Unique holder ID
 	}
 }
