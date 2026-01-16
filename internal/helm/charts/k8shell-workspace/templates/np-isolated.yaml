@@ -20,7 +20,10 @@ spec:
     - from:
         - namespaceSelector:
             matchLabels:
-              k8shell.io/app: ssh-proxy 
+              kubernetes.io/metadata.name: {{ .Values.__namespace__ }}
+          podSelector:
+            matchLabels:
+              k8shell.io/app: ssh-proxy
   egress:
 {{- if .Values.network.allowEgress }}
 {{- range $cidr := .Values.network.allowEgress }}

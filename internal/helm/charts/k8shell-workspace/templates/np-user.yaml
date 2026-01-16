@@ -28,9 +28,12 @@ spec:
               k8shell.io/app: k8shell-workspace
               k8shell.io/organization: {{ .Values.__organization__ }}
               k8shell.io/networkPolicy: system
-        - podSelector:
+        - namespaceSelector:
             matchLabels:
-              k8shell.io/app: ssh-proxy 
+              kubernetes.io/metadata.name: {{ .Values.__namespace__ }}
+          podSelector:
+            matchLabels:
+              k8shell.io/app: ssh-proxy
   egress:
 {{- if .Values.network.allowEgress }}
 {{- range $cidr := .Values.network.allowEgress }}

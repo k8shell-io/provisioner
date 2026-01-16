@@ -17,9 +17,9 @@ k8shell.io/networkPolicy: "{{ .Values.networkPolicy }}"
     - namespaceSelector:
         matchLabels:
           kubernetes.io/metadata.name: {{ .Values.__namespace__ }}
-        podSelector:
-          matchLabels:
-            app: ssh-proxy
+      podSelector:
+        matchLabels:
+          k8shell.io/app: ssh-proxy
     - podSelector:
         matchLabels:
           type: backend
