@@ -23,7 +23,7 @@ spec:
               k8shell.io/organization: {{ .Values.__organization__ }}
         - podSelector:
             matchLabels:
-              k8shell.io/app: k8shell-proxy 
+              k8shell.io/app: ssh-proxy 
   egress:
 {{- if .Values.network.allowEgress }}
 {{- range $cidr := .Values.network.allowEgress }}

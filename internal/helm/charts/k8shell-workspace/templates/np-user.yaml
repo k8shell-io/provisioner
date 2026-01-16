@@ -30,7 +30,7 @@ spec:
               k8shell.io/networkPolicy: system
         - podSelector:
             matchLabels:
-              k8shell.io/app: k8shell-proxy 
+              k8shell.io/app: ssh-proxy 
   egress:
 {{- if .Values.network.allowEgress }}
 {{- range $cidr := .Values.network.allowEgress }}

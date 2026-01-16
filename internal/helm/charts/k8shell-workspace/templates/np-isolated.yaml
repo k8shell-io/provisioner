@@ -9,11 +9,7 @@ metadata:
 spec:
   podSelector:
     matchLabels:
-<<<<<<< HEAD
-      app.kubernetes.io/name: k8shell-workspace
-=======
       k8shell.io/app: k8shell-workspace
->>>>>>> 2af5c4e (ws policy fixes)
       k8shell.io/organization: {{ .Values.__organization__ }}
       k8shell.io/workspace: {{ .Values.__workspace__ }}
   policyTypes:
@@ -24,14 +20,7 @@ spec:
     - from:
         - namespaceSelector:
             matchLabels:
-<<<<<<< HEAD
-              kubernetes.io/metadata.name: {{ .Values.__namespace__ }}
-            podSelector:
-              matchLabels:
-                k8shell.io/app: ssh-proxy
-=======
-              k8shell.io/app: k8shell-proxy 
->>>>>>> 2af5c4e (ws policy fixes)
+              k8shell.io/app: ssh-proxy 
   egress:
 {{- if .Values.network.allowEgress }}
 {{- range $cidr := .Values.network.allowEgress }}
