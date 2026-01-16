@@ -8,7 +8,7 @@ k8shell.io/organization: "{{ .Values.__organization__ }}"
 k8shell.io/blueprint: "{{ .Values.__blueprint__ }}"
 k8shell.io/workspace: "{{ .Values.__workspace__ }}"
 k8shell.io/username: "{{ .Values.__username__ }}"
-k8shell.io/networkPolicy: "{{ .Values.networkPolicy }}"
+k8shell.io/networkPolicy: "{{ .Values.network.networkPolicy }}"
 {{- end -}}
 
 {{/* default networkpolicy egress rules */}}
