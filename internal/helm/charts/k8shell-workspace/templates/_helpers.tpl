@@ -11,6 +11,24 @@ k8shell.io/username: "{{ .Values.__username__ }}"
 k8shell.io/networkPolicy: "{{ .Values.network.networkPolicy }}"
 {{- end -}}
 
+
+{{/* default networkpolicy ingress rules */}}
+{{- define "default.ingress" -}}
+- from:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: {{ .Values.__namespace__ }}
+      podSelector:
+        matchLabels:
+          k8shell.io/app: ssh-proxy
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: {{ .Values.__namespace__ }}
+      podSelector:
+        matchLabels:
+          k8shell.io/app: api-server
+{{- end -}}
+
 {{/* default networkpolicy egress rules */}}
 {{- define "default.egress" -}}
 - to:
@@ -20,6 +38,12 @@ k8shell.io/networkPolicy: "{{ .Values.network.networkPolicy }}"
       podSelector:
         matchLabels:
           k8shell.io/app: ssh-proxy
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: {{ .Values.__namespace__ }}
+      podSelector:
+        matchLabels:
+          k8shell.io/app: api-server
     - podSelector:
         matchLabels:
           type: backend
