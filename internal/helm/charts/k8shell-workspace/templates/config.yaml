@@ -7,7 +7,7 @@ metadata:
     {{- include "workspace.labels" . | nindent 4 }}  
     type: config-init
 data:
-  config.yaml: |
+  config.yaml: |-
     # system settings
     system:
       # true to enable profiling
@@ -126,3 +126,19 @@ data:
     {{- end }}
     {{- end }}
     {{- end }}
+
+    {{- $storages := list -}}
+
+    {{- range $name, $s := .Values.storages }}
+    {{- if $s.enabled }}
+    {{- $storages = append $storages (dict
+        "name" $name
+        "path" (required (printf "storages.%s.path is required" $name) $s.path)
+        "size" (required (printf "storages.%s.size is required" $name) ($s.size | toString))
+        "readOnly" (coalesce $s.readOnly $s.readonly false)
+      ) -}}
+    {{- end }}
+    {{- end }}
+
+    storages:
+{{ toYaml $storages | nindent 6 }}
