@@ -75,10 +75,13 @@ func NewServer(configFile string) (*Server, error) {
 		return nil, fmt.Errorf("failed to create gRPC service: %w", err)
 	}
 
-	server.grpc.RegisterService(func(s *grpc.Server) error {
+	err = server.grpc.RegisterService(func(s *grpc.Server) error {
 		provisionerpb.RegisterProvisionerServiceServer(s, NewProvisionerService(server))
 		return nil
 	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to register gRPC service: %w", err)
+	}
 
 	models.SetRefResolver(server)
 

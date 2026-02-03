@@ -71,5 +71,8 @@ func main() {
 		return
 	}
 
-	server.Serve()
+	err = server.Serve()
+	if err != nil {
+		log.Error().Msgf("Error running server: %v", err)
+	}
 }
