@@ -89,6 +89,7 @@ data:
     
     # docker settings
     docker:
+      enabled: {{ .Values.docker.enabled }}
       createDockerSockSymlink: {{ .Values.docker.enabled }}
 
     # apps
