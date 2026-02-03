@@ -91,6 +91,9 @@ data:
     docker:
       enabled: {{ .Values.docker.enabled }}
       createDockerSockSymlink: {{ .Values.docker.enabled }}
+      storages:{{- include "workspace.storages" (dict "storages" .Values.docker.storages) | nindent 8 }}
+
+    storages:{{- include "workspace.storages" (dict "storages" .Values.storages) | nindent 6 }}
 
     # apps
     # global switch to enable/disable apps
@@ -127,21 +130,3 @@ data:
     {{- end }}
     {{- end }}
     {{- end }}
-
-    {{- $storages := list -}}
-    {{- range $name, $s := .Values.storages }}
-    {{- if $s.enabled }}
-    {{- $ro := false -}}
-    {{- if hasKey $s "readonly" -}}
-      {{- $ro = ($s.readonly | default false) -}}
-    {{- end -}}
-    {{- $storages = append $storages (dict
-        "name" $name
-        "path" (required (printf "storages.%s.path is required" $name) $s.path)
-        "size" (required (printf "storages.%s.size is required" $name) ($s.size | toString))
-        "readonly" $ro
-      ) -}}
-    {{- end }}
-    {{- end }}
-
-    storages:{{- toYaml $storages | nindent 6 }}
