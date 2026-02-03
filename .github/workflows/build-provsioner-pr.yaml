@@ -68,15 +68,12 @@ jobs:
           echo "VERSION=$VERSION" >> $GITHUB_ENV
           echo "IMAGE_TAG=$IMAGE_TAG" >> $GITHUB_ENV
 
-      # Prepare Docker build context
-      - name: Prepare Docker build context
-        run: make prepare-docker
+      - name: Vendor Go modules
+        run: make vendor
 
-      # Extract image name from BUILD file for tagging
       - name: Load REPO_NAME from docker/provisioner/BUILD
         run: echo "REPO_NAME=$(cat docker/provisioner/BUILD):${{ env.IMAGE_TAG }}" >> $GITHUB_ENV
 
-      # Authenticate to Harbor registry
       - name: Login to Docker Registry
         uses: docker/login-action@v3
         with:
@@ -84,11 +81,10 @@ jobs:
           username: ${{ secrets.HARBOR_USER }}
           password: ${{ secrets.HARBOR_PASSWORD }}
 
-      # Build container image and push to registry with version metadata
       - name: Build and push image
         uses: docker/build-push-action@v6
         with:
-          context: docker/provisioner
+          context: .
           tags: registry.k8shell.io/${{ env.REPO_NAME }}
           push: true
           build-args: |
