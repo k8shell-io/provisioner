@@ -130,14 +130,17 @@ data:
     {{- $storages := list -}}
     {{- range $name, $s := .Values.storages }}
     {{- if $s.enabled }}
+    {{- $ro := false -}}
+    {{- if hasKey $s "readonly" -}}
+      {{- $ro = ($s.readonly | default false) -}}
+    {{- end -}}
     {{- $storages = append $storages (dict
         "name" $name
         "path" (required (printf "storages.%s.path is required" $name) $s.path)
         "size" (required (printf "storages.%s.size is required" $name) ($s.size | toString))
-        "readonly" (coalesce $s.readonly $s.readonly false)
+        "readonly" $ro
       ) -}}
     {{- end }}
     {{- end }}
 
-    storages:
-{{ toYaml $storages | nindent 6 }}
+    storages:{{- toYaml $storages | nindent 6 }}
