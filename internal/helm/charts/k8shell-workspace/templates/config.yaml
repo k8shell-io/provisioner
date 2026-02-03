@@ -128,14 +128,13 @@ data:
     {{- end }}
 
     {{- $storages := list -}}
-
     {{- range $name, $s := .Values.storages }}
     {{- if $s.enabled }}
     {{- $storages = append $storages (dict
         "name" $name
         "path" (required (printf "storages.%s.path is required" $name) $s.path)
         "size" (required (printf "storages.%s.size is required" $name) ($s.size | toString))
-        "readOnly" (coalesce $s.readOnly $s.readonly false)
+        "readonly" (coalesce $s.readonly $s.readonly false)
       ) -}}
     {{- end }}
     {{- end }}
