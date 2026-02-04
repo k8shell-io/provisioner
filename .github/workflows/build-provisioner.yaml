@@ -2,10 +2,6 @@ name: Build Provisioner Image
 
 on:
   push:
-    branches:
-      - main
-      - v0.11
-      - v0.12
     tags:
       - "v*"
 

@@ -7,7 +7,7 @@ metadata:
     {{- include "workspace.labels" . | nindent 4 }}  
     type: config-init
 data:
-  config.yaml: |
+  config.yaml: |-
     # system settings
     system:
       # true to enable profiling
@@ -89,7 +89,11 @@ data:
     
     # docker settings
     docker:
+      enabled: {{ .Values.docker.enabled }}
       createDockerSockSymlink: {{ .Values.docker.enabled }}
+      storages:{{- include "workspace.storages" (dict "storages" .Values.docker.storages) | nindent 8 }}
+
+    storages:{{- include "workspace.storages" (dict "storages" .Values.storages) | nindent 6 }}
 
     # apps
     # global switch to enable/disable apps

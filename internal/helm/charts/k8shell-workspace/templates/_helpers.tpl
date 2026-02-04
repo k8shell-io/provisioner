@@ -119,3 +119,28 @@ Convenience helper for main container image
 {{- define "workspace.mainImage" -}}
 {{- include "workspace.imageWithRegistry" (dict "image" .Values.image "registry" .Values.__registry__.host) -}}
 {{- end }}
+
+{{- /*
+Render storages config from a map like .Values.storages.
+
+Usage:
+  storages:{{ include "workspace.storages" (dict "storages" .Values.storages) | nindent 6 }}
+*/ -}}
+{{- define "workspace.storages" -}}
+{{- $storages := list -}}
+{{- range $name, $s := .storages }}
+  {{- if $s.enabled }}
+    {{- $ro := false -}}
+    {{- if hasKey $s "readonly" -}}
+      {{- $ro = ($s.readonly | default false) -}}
+    {{- end -}}
+    {{- $storages = append $storages (dict
+        "name" $name
+        "path" (required (printf "storages.%s.path is required" $name) $s.path)
+        "size" (required (printf "storages.%s.size is required" $name) ($s.size | toString))
+        "readonly" $ro
+      ) -}}
+  {{- end }}
+{{- end }}
+{{- toYaml $storages -}}
+{{- end -}}
