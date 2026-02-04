@@ -52,7 +52,7 @@ jobs:
       - name: Login to Docker Registry
         uses: docker/login-action@v3
         with:
-          registry: ${{ secrets.REGISTRY }}
+          registry: regustry.k8shell.io
           username: ${{ secrets.HARBOR_USER }}
           password: ${{ secrets.HARBOR_PASSWORD }}
 
@@ -60,7 +60,7 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: docker/provisioner
-          tags: ${{ secrets.REGISTRY }}/${{ env.REPO_NAME }}
+          tags: regustry.k8shell.io/${{ env.REPO_NAME }}
           push: true
           build-args: |
             VERSION=${{ env.VERSION }}
