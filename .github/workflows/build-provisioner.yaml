@@ -35,19 +35,10 @@ jobs:
           echo "COMMIT_ID=$COMMIT_ID" >> $GITHUB_ENV
 
       - name: Vendor Go modules
-        run: |
-          go mod vendor
-          mkdir -p docker/provisioner/files
-          cp -r vendor docker/provisioner/files/
-
-      - name: Copy sources to docker context
-        run: |
-          cp go.mod go.sum main.go -t docker/provisioner/files/
-          cp -r pkg internal docker/provisioner/files/
-          echo -n "k8shell-base/provisioner:$VERSION" > docker/provisioner/BUILD
+        run: make vendor
 
       - name: Load REPO_NAME from docker/provisioner/BUILD
-        run: echo "REPO_NAME=$(cat docker/provisioner/BUILD)" >> $GITHUB_ENV
+        run: echo "REPO_NAME=$(cat docker/provisioner/BUILD):${{ env.IMAGE_TAG }}" >> $GITHUB_ENV
 
       - name: Login to Docker Registry
         uses: docker/login-action@v3
@@ -59,7 +50,8 @@ jobs:
       - name: Build and push image
         uses: docker/build-push-action@v6
         with:
-          context: docker/provisioner
+          context: .
+          file: docker/provisioner/Dockerfile
           tags: registry.k8shell.io/${{ env.REPO_NAME }}
           push: true
           build-args: |
