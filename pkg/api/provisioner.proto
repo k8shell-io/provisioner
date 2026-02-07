@@ -13,6 +13,7 @@ service ProvisionerService {
   rpc GetWorkspaceStatus (Workspace) returns (common.WorkspaceStatus);
   rpc ListWorkspaces (ListWorkspacesRequest) returns (ListWorkspacesResponse);
   rpc ProvisionWorkspaceStream (ProvisionWorkspaceRequest) returns (stream ProvisionEvent);
+  rpc UpgradeWorkspace (UpgradeWorkspaceRequest) returns (UpgradeWorkspaceResponse);
   rpc DeleteWorkspace (Workspace) returns (DeleteWorkspaceResponse);
 }
 
@@ -40,6 +41,15 @@ message ProvisionWorkspaceRequest {
 }
 
 message ProvisionWorkspaceResponse {
+  string status = 1;
+  string message = 2;
+}
+
+message UpgradeWorkspaceRequest {
+  string workspace = 1;
+}
+
+message UpgradeWorkspaceResponse {
   string status = 1;
   string message = 2;
 }

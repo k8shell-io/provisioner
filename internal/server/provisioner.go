@@ -312,6 +312,31 @@ func (p *ProvisionerService) convertToGRPCError(err error) error {
 	return status.Errorf(codes.Internal, "%s", err.Error())
 }
 
+func (p *ProvisionerService) UpgradeWorkspace(ctx context.Context,
+	req *provisionerpb.UpgradeWorkspaceRequest) (*provisionerpb.UpgradeWorkspaceResponse, error) {
+
+	name := req.Workspace
+	if name == "" {
+		return nil, status.Errorf(codes.InvalidArgument, "workspace name is required")
+	}
+
+	w, err := ws.NewWorkspaceFromHelmRelease(ctx, name, p.server.helm, p.server.Identity,
+		&p.server.config.CertManager, &p.server.config.K8shellCapabilities)
+	if err != nil {
+		return nil, p.convertToGRPCError(err)
+	}
+
+	_, _, err = w.Upgrade(ctx, nil)
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "Failed to upgrade workspace %s: %v", name, err)
+	}
+
+	return &provisionerpb.UpgradeWorkspaceResponse{
+		Status:  "Success",
+		Message: fmt.Sprintf("Workspace %s upgraded successfully", name),
+	}, nil
+}
+
 // DeleteWorkspace deletes a workspace asynchronously with distributed locking
 func (p *ProvisionerService) DeleteWorkspace(ctx context.Context,
 	req *provisionerpb.Workspace) (*provisionerpb.DeleteWorkspaceResponse, error) {

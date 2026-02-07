@@ -2,8 +2,10 @@ package helm
 
 import (
 	"context"
+	stderrs "errors"
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	log "github.com/k8shell-io/common/pkg/logger"
@@ -13,6 +15,7 @@ import (
 	"helm.sh/helm/v3/pkg/chart"
 	"helm.sh/helm/v3/pkg/cli"
 	"helm.sh/helm/v3/pkg/release"
+	"helm.sh/helm/v3/pkg/storage/driver"
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
@@ -285,14 +288,34 @@ func (c *Client) Uninstall(releaseName string, timeout int, wait bool) error {
 	return nil
 }
 
-func (c *Client) Upgrade(ctx context.Context, opts InstallOptions) error {
+func (c *Client) CanUpgrade(ctx context.Context, opts InstallOptions) error {
 	actionConfig, err := c.createActionConfig(c.targetNamespace)
 	if err != nil {
 		return err
 	}
 
+	// release must exist and not be pending
+	get := action.NewGet(actionConfig)
+	existing, err := get.Run(opts.ReleaseName)
+	if err != nil {
+		if stderrs.Is(err, driver.ErrReleaseNotFound) {
+			return fmt.Errorf("release %q not found in namespace %q", opts.ReleaseName, c.targetNamespace)
+		}
+		return fmt.Errorf("failed to get release %q: %w", opts.ReleaseName, err)
+	}
+	if existing != nil && existing.Info != nil {
+		switch existing.Info.Status {
+		case release.StatusPendingInstall, release.StatusPendingUpgrade, release.StatusPendingRollback:
+			return fmt.Errorf("release %q is in a pending state (%s); cannot upgrade now", opts.ReleaseName, existing.Info.Status)
+		}
+	}
+
 	upgrade := action.NewUpgrade(actionConfig)
-	upgrade.Wait = opts.Wait
+	upgrade.Namespace = c.targetNamespace
+	upgrade.Wait = false
+	upgrade.DryRun = true
+	upgrade.DisableHooks = true
+	upgrade.Labels = opts.Labels
 
 	if opts.Timeout > 0 {
 		upgrade.Timeout = time.Duration(opts.Timeout) * time.Second
@@ -310,7 +333,99 @@ func (c *Client) Upgrade(ctx context.Context, opts InstallOptions) error {
 
 	_, err = upgrade.RunWithContext(ctx, opts.ReleaseName, chart, opts.Values)
 	if err != nil {
-		return fmt.Errorf("failed to upgrade release %s: %w", opts.ReleaseName, err)
+		return fmt.Errorf("the release %s cannot be upgraded: %w", opts.ReleaseName, err)
+	}
+
+	return nil
+}
+
+func (c *Client) CanUpgradeWithChangeCheck(ctx context.Context, opts InstallOptions) (hasChanges bool, err error) {
+	actionConfig, err := c.createActionConfig(c.targetNamespace)
+	if err != nil {
+		return false, err
+	}
+
+	// release must exist and not be pending
+	get := action.NewGet(actionConfig)
+	existing, err := get.Run(opts.ReleaseName)
+	if err != nil {
+		return false, err
+	}
+
+	upgrade := action.NewUpgrade(actionConfig)
+	upgrade.Namespace = c.targetNamespace
+	upgrade.Wait = false
+	upgrade.DryRun = true
+	upgrade.DisableHooks = true
+	upgrade.Labels = opts.Labels
+
+	originalChart, ok := c.charts[opts.ChartName]
+	if !ok {
+		return false, fmt.Errorf("chart %s not found", opts.ChartName)
+	}
+
+	ch := c.cloneChart(originalChart)
+	if opts.AppVersion != "" {
+		ch.Metadata.AppVersion = opts.AppVersion
+	}
+
+	dry, err := upgrade.RunWithContext(ctx, opts.ReleaseName, ch, opts.Values)
+	if err != nil {
+		return false, fmt.Errorf("the release %s cannot be upgraded: %w", opts.ReleaseName, err)
+	}
+
+	// Normalize to reduce false positives from trailing newlines / CRLF.
+	oldMan := strings.TrimSpace(strings.ReplaceAll(existing.Manifest, "\r\n", "\n"))
+	newMan := strings.TrimSpace(strings.ReplaceAll(dry.Manifest, "\r\n", "\n"))
+
+	return oldMan != newMan, nil
+}
+
+// Upgrade upgrades a Helm release in the specified namespace
+func (c *Client) Upgrade(ctx context.Context, opts InstallOptions) error {
+	actionConfig, err := c.createActionConfig(c.targetNamespace)
+	if err != nil {
+		return err
+	}
+
+	// release must exist and not be pending
+	get := action.NewGet(actionConfig)
+	existing, err := get.Run(opts.ReleaseName)
+	if err != nil {
+		if stderrs.Is(err, driver.ErrReleaseNotFound) {
+			return fmt.Errorf("release %q not found in namespace %q", opts.ReleaseName, c.targetNamespace)
+		}
+		return fmt.Errorf("failed to get release %q: %w", opts.ReleaseName, err)
+	}
+	if existing != nil && existing.Info != nil {
+		switch existing.Info.Status {
+		case release.StatusPendingInstall, release.StatusPendingUpgrade, release.StatusPendingRollback:
+			return fmt.Errorf("release %q is in a pending state (%s); cannot upgrade now", opts.ReleaseName, existing.Info.Status)
+		}
+	}
+
+	upgrade := action.NewUpgrade(actionConfig)
+	upgrade.Namespace = c.targetNamespace
+	upgrade.Wait = opts.Wait
+	upgrade.Labels = opts.Labels
+
+	if opts.Timeout > 0 {
+		upgrade.Timeout = time.Duration(opts.Timeout) * time.Second
+	}
+
+	originalChart, ok := c.charts[opts.ChartName]
+	if !ok {
+		return fmt.Errorf("chart %s not found", opts.ChartName)
+	}
+
+	chart := c.cloneChart(originalChart)
+	if opts.AppVersion != "" {
+		chart.Metadata.AppVersion = opts.AppVersion
+	}
+
+	_, err = upgrade.RunWithContext(ctx, opts.ReleaseName, chart, opts.Values)
+	if err != nil {
+		return fmt.Errorf("the release %s cannot be upgraded: %w", opts.ReleaseName, err)
 	}
 
 	return nil
@@ -340,6 +455,7 @@ func (c *Client) UpdateReleaseLabels(releaseName, namespace string, labels map[s
 	upgrade := action.NewUpgrade(actionConfig)
 	upgrade.ReuseValues = true
 	upgrade.Wait = false
+	upgrade.DisableHooks = true
 
 	_, err = upgrade.Run(releaseName, release.Chart, release.Config)
 	if err != nil {
