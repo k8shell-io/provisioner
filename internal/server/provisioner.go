@@ -326,9 +326,16 @@ func (p *ProvisionerService) UpgradeWorkspace(ctx context.Context,
 		return nil, p.convertToGRPCError(err)
 	}
 
-	_, _, err = w.Upgrade(ctx, nil)
+	_, changed, err := w.Upgrade(ctx, nil)
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "Failed to upgrade workspace %s: %v", name, err)
+	}
+
+	if !changed {
+		return &provisionerpb.UpgradeWorkspaceResponse{
+			Status:  "NoChange",
+			Message: fmt.Sprintf("Workspace %s is already up to date", name),
+		}, nil
 	}
 
 	return &provisionerpb.UpgradeWorkspaceResponse{
