@@ -342,106 +342,27 @@ func (c *Client) CanUpgrade(ctx context.Context, opts InstallOptions) error {
 	return nil
 }
 
-func (c *Client) CanUpgradeWithChangeCheck(ctx context.Context, opts InstallOptions) (hasChanges bool, err error) {
+func (c *Client) CanUpgradeDryRunServer(ctx context.Context, opts InstallOptions) error {
 	actionConfig, err := c.createActionConfig(c.targetNamespace)
 	if err != nil {
-		return false, err
-	}
-
-	// release must exist and not be pending
-	get := action.NewGet(actionConfig)
-	existing, err := get.Run(opts.ReleaseName)
-	if err != nil {
-		return false, err
+		return err
 	}
 
 	upgrade := action.NewUpgrade(actionConfig)
 	upgrade.Namespace = c.targetNamespace
-	upgrade.Wait = false
 	upgrade.DryRun = true
+	upgrade.DryRunOption = "server"
 	upgrade.DisableHooks = true
-	upgrade.Labels = opts.Labels
+	upgrade.Wait = false
 
 	originalChart, ok := c.charts[opts.ChartName]
 	if !ok {
-		return false, fmt.Errorf("chart %s not found", opts.ChartName)
+		return fmt.Errorf("chart %s not found", opts.ChartName)
 	}
-
 	ch := c.cloneChart(originalChart)
-	if opts.AppVersion != "" {
-		ch.Metadata.AppVersion = opts.AppVersion
-	}
 
-	dry, err := upgrade.RunWithContext(ctx, opts.ReleaseName, ch, opts.Values)
-	if err != nil {
-		return false, fmt.Errorf("the release %s cannot be upgraded: %w", opts.ReleaseName, err)
-	}
-
-	oldMan := strings.TrimSpace(strings.ReplaceAll(existing.Manifest, "\r\n", "\n"))
-	newMan := strings.TrimSpace(strings.ReplaceAll(dry.Manifest, "\r\n", "\n"))
-
-	c.log.Debug().Msgf("Existing manifest:\n%s\n\nNew manifest:\n%s", oldMan, newMan)
-
-	equal, err := manifestsEqual(oldMan, newMan)
-	if err != nil {
-		return false, fmt.Errorf("failed to compare manifests: %w", err)
-	}
-
-	return !equal, nil
-}
-
-func manifestsEqual(manifest1, manifest2 string) (bool, error) {
-	n1, err := normalizeManifest(manifest1)
-	if err != nil {
-		return false, err
-	}
-	n2, err := normalizeManifest(manifest2)
-	if err != nil {
-		return false, err
-	}
-	return n1 == n2, nil
-}
-
-func normalizeManifest(m string) (string, error) {
-	m = strings.ReplaceAll(m, "\r\n", "\n")
-	m = strings.TrimSpace(m)
-
-	var b strings.Builder
-	sc := bufio.NewScanner(strings.NewReader(m))
-	sc.Buffer(make([]byte, 1024), 10*1024*1024)
-
-	for sc.Scan() {
-		line := sc.Text()
-		line = strings.TrimRight(line, " \t")
-
-		trim := strings.TrimSpace(line)
-		if trim == "" {
-			continue
-		}
-		if trim == "---" {
-			continue
-		}
-		if strings.HasPrefix(line, "# Source:") {
-			continue
-		}
-
-		b.WriteString(line)
-		b.WriteByte('\n')
-	}
-
-	if err := sc.Err(); err != nil {
-		return "", err
-	}
-	return b.String(), nil
-}
-
-func manifestDigest(m string) (string, error) {
-	n, err := normalizeManifest(m)
-	if err != nil {
-		return "", err
-	}
-	sum := sha256.Sum256([]byte(n))
-	return hex.EncodeToString(sum[:]), nil
+	_, err = upgrade.RunWithContext(ctx, opts.ReleaseName, ch, opts.Values)
+	return err
 }
 
 // Upgrade upgrades a Helm release in the specified namespace
@@ -473,7 +394,7 @@ func (c *Client) Upgrade(ctx context.Context, opts InstallOptions) error {
 	upgrade.Labels = opts.Labels
 	upgrade.DryRun = false
 	upgrade.DisableHooks = true
-	upgrade.Force = true
+	upgrade.Force = false
 
 	if opts.Timeout > 0 {
 		upgrade.Timeout = time.Duration(opts.Timeout) * time.Second
@@ -576,6 +497,8 @@ func (c *Client) cloneChart(original *chart.Chart) *chart.Chart {
 	return cloned
 }
 
+// *** helpers
+
 // cloneMetadata creates a copy of chart metadata
 func cloneMetadata(original *chart.Metadata) *chart.Metadata {
 	if original == nil {
@@ -616,4 +539,46 @@ func cloneMetadata(original *chart.Metadata) *chart.Metadata {
 	}
 
 	return cloned
+}
+
+func normalizeManifest(m string) (string, error) {
+	m = strings.ReplaceAll(m, "\r\n", "\n")
+	m = strings.TrimSpace(m)
+
+	var b strings.Builder
+	sc := bufio.NewScanner(strings.NewReader(m))
+	sc.Buffer(make([]byte, 1024), 10*1024*1024)
+
+	for sc.Scan() {
+		line := sc.Text()
+		line = strings.TrimRight(line, " \t")
+
+		trim := strings.TrimSpace(line)
+		if trim == "" {
+			continue
+		}
+		if trim == "---" {
+			continue
+		}
+		if strings.HasPrefix(line, "# Source:") {
+			continue
+		}
+
+		b.WriteString(line)
+		b.WriteByte('\n')
+	}
+
+	if err := sc.Err(); err != nil {
+		return "", err
+	}
+	return b.String(), nil
+}
+
+func manifestDigest(m string) (string, error) {
+	n, err := normalizeManifest(m)
+	if err != nil {
+		return "", err
+	}
+	sum := sha256.Sum256([]byte(n))
+	return hex.EncodeToString(sum[:]), nil
 }

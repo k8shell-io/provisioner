@@ -451,6 +451,18 @@ func (w *Workspace) upgradeWithLock(ctx context.Context, opts *ProvisionOptions)
 	// 	return status, false, nil
 	// }
 
+	err = w.client.CanUpgradeDryRunServer(ctx, helm.InstallOptions{
+		ReleaseName: w.Name,
+		ChartName:   helm.WORKSPACE_CHART_NAME,
+		Values:      values,
+		Timeout:     opts.Timeout,
+		Labels:      labels,
+		AppVersion:  w.getK8shelldVersion(),
+	})
+	if err != nil {
+		return nil, false, fmt.Errorf("workspace %s cannot be upgraded (dry-run failed): %w", w.Name, err)
+	}
+
 	startTime := time.Now()
 	if err := w.client.Upgrade(ctx, helm.InstallOptions{
 		ReleaseName: w.Name,
