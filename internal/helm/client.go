@@ -378,6 +378,8 @@ func (c *Client) CanUpgradeWithChangeCheck(ctx context.Context, opts InstallOpti
 	oldMan := strings.TrimSpace(strings.ReplaceAll(existing.Manifest, "\r\n", "\n"))
 	newMan := strings.TrimSpace(strings.ReplaceAll(dry.Manifest, "\r\n", "\n"))
 
+	c.log.Debug().Msgf("Existing manifest:\n%s\n\nNew manifest:\n%s", oldMan, newMan)
+
 	return oldMan != newMan, nil
 }
 
