@@ -401,7 +401,7 @@ func normalizeManifest(m string) (string, error) {
 
 	var b strings.Builder
 	sc := bufio.NewScanner(strings.NewReader(m))
-	sc.Buffer(make([]byte, 1024), 1024*1024)
+	sc.Buffer(make([]byte, 1024), 10*1024*1024)
 
 	for sc.Scan() {
 		line := sc.Text()
@@ -412,6 +412,9 @@ func normalizeManifest(m string) (string, error) {
 			continue
 		}
 		if trim == "---" {
+			continue
+		}
+		if strings.HasPrefix(line, "# Source:") {
 			continue
 		}
 
