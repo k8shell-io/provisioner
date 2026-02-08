@@ -473,6 +473,7 @@ func (c *Client) Upgrade(ctx context.Context, opts InstallOptions) error {
 	upgrade.Labels = opts.Labels
 	upgrade.DryRun = false
 	upgrade.DisableHooks = true
+	upgrade.Force = true
 
 	if opts.Timeout > 0 {
 		upgrade.Timeout = time.Duration(opts.Timeout) * time.Second
