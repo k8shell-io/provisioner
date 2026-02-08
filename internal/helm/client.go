@@ -380,7 +380,12 @@ func (c *Client) CanUpgradeWithChangeCheck(ctx context.Context, opts InstallOpti
 
 	c.log.Debug().Msgf("Existing manifest:\n%s\n\nNew manifest:\n%s", oldMan, newMan)
 
-	return manifestsEqual(oldMan, newMan)
+	equal, err := manifestsEqual(oldMan, newMan)
+	if err != nil {
+		return false, fmt.Errorf("failed to compare manifests: %w", err)
+	}
+
+	return !equal, nil
 }
 
 func manifestsEqual(manifest1, manifest2 string) (bool, error) {
