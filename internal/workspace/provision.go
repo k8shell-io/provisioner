@@ -373,7 +373,7 @@ func (w *Workspace) isCriticalError(message string) error {
 
 // Upgrade upgrades an existing workspace release (or installs it if missing).
 // It uses a distributed lock to avoid concurrent upgrades for the same workspace.
-func (w *Workspace) Upgrade(ctx context.Context, opts *ProvisionOptions) (*models.PodStatus, bool, error) {
+func (w *Workspace) Upgrade(ctx context.Context, opts *ProvisionOptions) (*models.PodStatus, error) {
 	if opts == nil {
 		opts = &ProvisionOptions{
 			Timeout:     20,
@@ -388,9 +388,9 @@ func (w *Workspace) Upgrade(ctx context.Context, opts *ProvisionOptions) (*model
 	return w.upgradeWithLock(ctx, opts)
 }
 
-func (w *Workspace) upgradeWithLock(ctx context.Context, opts *ProvisionOptions) (*models.PodStatus, bool, error) {
+func (w *Workspace) upgradeWithLock(ctx context.Context, opts *ProvisionOptions) (*models.PodStatus, error) {
 	if err := w.lock(time.Duration(opts.LockTimeout) * time.Second); err != nil {
-		return nil, false, err
+		return nil, err
 	}
 	defer func() {
 		if releaseErr := w.unlock(); releaseErr != nil {
@@ -400,16 +400,16 @@ func (w *Workspace) upgradeWithLock(ctx context.Context, opts *ProvisionOptions)
 
 	// exists, err := w.IsInstalled(ctx)
 	// if err != nil {
-	// 	return nil, false, fmt.Errorf("failed to check if workspace exists: %w", err)
+	// 	return nil, fmt.Errorf("failed to check if workspace exists: %w", err)
 	// }
 
 	// if !exists {
-	// 	return nil, false, fmt.Errorf("workspace %s does not exist, cannot upgrade", w.Name)
+	// 	return nil, fmt.Errorf("workspace %s does not exist, cannot upgrade", w.Name)
 	// }
 
 	values, err := w.Values()
 	if err != nil {
-		return nil, false, err
+		return nil, err
 	}
 
 	// w.log.Debug().Msgf("Upgrading workspace %s with new values: %v", w.Name, values)
@@ -460,7 +460,7 @@ func (w *Workspace) upgradeWithLock(ctx context.Context, opts *ProvisionOptions)
 		AppVersion:  w.getK8shelldVersion(),
 	})
 	if err != nil {
-		return nil, false, fmt.Errorf("workspace %s cannot be upgraded (dry-run failed): %w", w.Name, err)
+		return nil, fmt.Errorf("workspace %s cannot be upgraded (dry-run failed): %w", w.Name, err)
 	}
 
 	startTime := time.Now()
@@ -473,12 +473,12 @@ func (w *Workspace) upgradeWithLock(ctx context.Context, opts *ProvisionOptions)
 		Labels:      labels,
 		AppVersion:  w.getK8shelldVersion(),
 	}); err != nil {
-		return nil, false, fmt.Errorf("failed to upgrade workspace %s: %w", w.Name, err)
+		return nil, fmt.Errorf("failed to upgrade workspace %s: %w", w.Name, err)
 	}
 
 	status, err := w.waitForPodRunning(ctx, startTime, opts)
 	if err != nil {
-		return nil, false, err
+		return nil, err
 	}
 
 	if status.Status == "Running" {
@@ -486,5 +486,5 @@ func (w *Workspace) upgradeWithLock(ctx context.Context, opts *ProvisionOptions)
 		w.log.Info().Msgf("Workspace %s upgrade completed in %s", w.Name, upgradeTime)
 	}
 
-	return status, true, nil
+	return status, nil
 }

@@ -390,9 +390,9 @@ func (c *Client) Upgrade(ctx context.Context, opts InstallOptions) error {
 
 	upgrade := action.NewUpgrade(actionConfig)
 	upgrade.Namespace = c.targetNamespace
-	upgrade.Wait = opts.Wait
-	upgrade.Labels = opts.Labels
-	upgrade.DryRun = false
+	upgrade.Wait = true
+	upgrade.Atomic = true
+	upgrade.CleanupOnFail = true
 	upgrade.DisableHooks = true
 	upgrade.Force = false
 
