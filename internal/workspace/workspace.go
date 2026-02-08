@@ -18,6 +18,7 @@ import (
 	"github.com/rs/zerolog"
 	"golang.org/x/sync/errgroup"
 	"gopkg.in/yaml.v3"
+	"helm.sh/helm/v3/pkg/release"
 	corev1 "k8s.io/api/core/v1"
 	k8sErrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -187,6 +188,32 @@ func GetSelector(labels map[string]string) string {
 	return strings.Join(selectors, ",")
 }
 
+// FindworkspaceByName finds a workspace by its name using Helm client and returns the corresponding release
+func FindworkspaceByName(ctx context.Context, helmClient *helm.Client, name string) (*release.Release, error) {
+	labels := map[string]string{
+		"app.kubernetes.io/name":     helm.WORKSPACE_CHART_NAME,
+		"app.kubernetes.io/instance": name,
+	}
+
+	selector := GetSelector(labels)
+	releases, err := helmClient.ListWithSelector(helmClient.TargetNamespace(), selector)
+	if err != nil {
+		if strings.Contains(err.Error(), "unable to parse") {
+			return nil, fmt.Errorf("failed to list releases: %w", models.ErrInvalidParameters)
+		}
+		return nil, fmt.Errorf("failed to list releases: %w", err)
+	}
+
+	if len(releases) == 0 {
+		return nil, fmt.Errorf("%w: %s", models.ErrWorkspaceNotFound, name)
+	}
+	if len(releases) > 1 {
+		return nil, fmt.Errorf("multiple releases found for workspace %s", name)
+	}
+
+	return releases[0], nil
+}
+
 // *** Workspace methods
 
 // NewWorkspace creates a new workspace with the specified Helm chart
@@ -211,32 +238,12 @@ func NewWorkspaceFromHelmRelease(ctx context.Context, name string, helmClient *h
 	identityClient *identity.Client, certManager *config.CertManagerConfig,
 	caps *config.K8shellCapabilities) (*Workspace, error) {
 
-	labels := map[string]string{
-		"app.kubernetes.io/name":     helm.WORKSPACE_CHART_NAME,
-		"app.kubernetes.io/instance": name,
-	}
-
-	selector := GetSelector(labels)
-	releases, err := helmClient.ListWithSelector(helmClient.TargetNamespace(), selector)
+	release, err := FindworkspaceByName(ctx, helmClient, name)
 	if err != nil {
-		if strings.Contains(err.Error(), "unable to parse") {
-			return nil, fmt.Errorf("failed to list releases: %w", models.ErrInvalidParameters)
-		}
-		return nil, fmt.Errorf("failed to list releases: %w", err)
+		return nil, err
 	}
-
-	if len(releases) == 0 {
-		return nil, fmt.Errorf("%w: %s", models.ErrWorkspaceNotFound, name)
-	}
-	if len(releases) > 1 {
-		return nil, fmt.Errorf("multiple releases found for workspace %s", name)
-	}
-
-	release := releases[0]
 	username := release.Labels["k8shell.io/username"]
 	blueprintName := release.Labels["k8shell.io/blueprint"]
-	//workspaceName := release.Labels["app.kubernetes.io/instance"]
-	//TODO: check workspace name matches pattern
 
 	userpb, err := identityClient.FindUser(ctx, &identitypb.FindUserRequest{Username: username})
 	if err != nil {
@@ -244,7 +251,7 @@ func NewWorkspaceFromHelmRelease(ctx context.Context, name string, helmClient *h
 	}
 	user := gapi.ProtoToUser(userpb)
 
-	values := releases[0].Config
+	values := release.Config
 	blueprint := &models.Blueprint{}
 	yamlBytes, err := yaml.Marshal(values)
 	if err != nil {

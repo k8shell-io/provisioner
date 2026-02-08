@@ -320,10 +320,46 @@ func (p *ProvisionerService) UpgradeWorkspace(ctx context.Context,
 		return nil, status.Errorf(codes.InvalidArgument, "workspace name is required")
 	}
 
-	w, err := ws.NewWorkspaceFromHelmRelease(ctx, name, p.server.helm, p.server.Identity,
+	release, err := ws.FindworkspaceByName(ctx, p.server.helm, name)
+	if err != nil {
+		if errors.Is(err, models.ErrWorkspaceNotFound) {
+			return nil, status.Errorf(codes.NotFound, "Workspace %s not found", name)
+		}
+		return nil, status.Errorf(codes.Internal, "Failed to find workspace: %v", err)
+	}
+	username := release.Labels["k8shell.io/username"]
+	bpName := release.Labels["k8shell.io/blueprint"]
+
+	userpb, err := p.server.Identity.FindUser(ctx, &identitypb.FindUserRequest{Username: username})
+	if err != nil {
+		return nil, fmt.Errorf("failed to get user %s: %w", username, err)
+	}
+	user := gapi.ProtoToUser(userpb)
+
+	scope, errx := p.server.GetBlueprintScope(bpName, user, nil, name)
+	if errx != nil {
+		return nil, p.convertToGRPCError(errx)
+	}
+
+	if !user.HasBlueprint(bpName) {
+		return nil, status.Errorf(codes.PermissionDenied,
+			"Access denied: user %s is not authorized to use blueprint %s", username, bpName)
+	}
+
+	blueprintObj, err := p.server.bpManager.GetBlueprint(bpName, scope)
+	if err != nil {
+		return nil, status.Errorf(codes.NotFound, "Blueprint %s not found", bpName)
+	}
+
+	if blueprintObj.IsTemplate {
+		return nil, status.Errorf(codes.InvalidArgument,
+			"Blueprint %s is a template and cannot be used to upgrade a workspace", bpName)
+	}
+
+	w, err := ws.NewWorkspace(name, blueprintObj, user, p.server.helm, p.server.Identity,
 		&p.server.config.CertManager, &p.server.config.K8shellCapabilities)
 	if err != nil {
-		return nil, p.convertToGRPCError(err)
+		return nil, status.Errorf(codes.Internal, "Failed to create workspace for upgrade: %v", err)
 	}
 
 	_, changed, err := w.Upgrade(ctx, nil)

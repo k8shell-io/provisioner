@@ -412,10 +412,11 @@ func (w *Workspace) upgradeWithLock(ctx context.Context, opts *ProvisionOptions)
 		return nil, false, err
 	}
 
-	// Keep behavior consistent with install path (headless svc may be needed for templates to match).
-	if err := w.createHeadlessService(ctx, values); err != nil {
-		return nil, false, fmt.Errorf("failed to create headless service: %w", err)
-	}
+	w.log.Debug().Msgf("Upgrading workspace %s with new values: %v", w.Name, values)
+
+	// if err := w.createHeadlessService(ctx, values); err != nil {
+	// 	return nil, false, fmt.Errorf("failed to create headless service: %w", err)
+	// }
 
 	labels := map[string]string{
 		"app.kubernetes.io/name":       helm.WORKSPACE_CHART_NAME,
