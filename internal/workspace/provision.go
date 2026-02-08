@@ -398,21 +398,21 @@ func (w *Workspace) upgradeWithLock(ctx context.Context, opts *ProvisionOptions)
 		}
 	}()
 
-	exists, err := w.IsInstalled(ctx)
-	if err != nil {
-		return nil, false, fmt.Errorf("failed to check if workspace exists: %w", err)
-	}
+	// exists, err := w.IsInstalled(ctx)
+	// if err != nil {
+	// 	return nil, false, fmt.Errorf("failed to check if workspace exists: %w", err)
+	// }
 
-	if !exists {
-		return nil, false, fmt.Errorf("workspace %s does not exist, cannot upgrade", w.Name)
-	}
+	// if !exists {
+	// 	return nil, false, fmt.Errorf("workspace %s does not exist, cannot upgrade", w.Name)
+	// }
 
 	values, err := w.Values()
 	if err != nil {
 		return nil, false, err
 	}
 
-	w.log.Debug().Msgf("Upgrading workspace %s with new values: %v", w.Name, values)
+	// w.log.Debug().Msgf("Upgrading workspace %s with new values: %v", w.Name, values)
 
 	// if err := w.createHeadlessService(ctx, values); err != nil {
 	// 	return nil, false, fmt.Errorf("failed to create headless service: %w", err)
@@ -430,26 +430,26 @@ func (w *Workspace) upgradeWithLock(ctx context.Context, opts *ProvisionOptions)
 		"k8shell.io/organization":      w.user.Organization,
 	}
 
-	hasChanges, err := w.client.CanUpgradeWithChangeCheck(ctx, helm.InstallOptions{
-		ReleaseName: w.Name,
-		ChartName:   helm.WORKSPACE_CHART_NAME,
-		Values:      values,
-		Timeout:     opts.Timeout,
-		Labels:      labels,
-		AppVersion:  w.getK8shelldVersion(),
-	})
-	if err != nil {
-		return nil, false, fmt.Errorf("workspace %s cannot be upgraded: %w", w.Name, err)
-	}
+	// hasChanges, err := w.client.CanUpgradeWithChangeCheck(ctx, helm.InstallOptions{
+	// 	ReleaseName: w.Name,
+	// 	ChartName:   helm.WORKSPACE_CHART_NAME,
+	// 	Values:      values,
+	// 	Timeout:     opts.Timeout,
+	// 	Labels:      labels,
+	// 	AppVersion:  w.getK8shelldVersion(),
+	// })
+	// if err != nil {
+	// 	return nil, false, fmt.Errorf("workspace %s cannot be upgraded: %w", w.Name, err)
+	// }
 
-	if !hasChanges {
-		w.log.Info().Msgf("Workspace %s is already up-to-date; no upgrade needed", w.Name)
-		status, stErr := w.GetPodStatus(ctx)
-		if stErr != nil {
-			return nil, false, fmt.Errorf("failed to get pod status for workspace %s: %v", w.Name, stErr)
-		}
-		return status, false, nil
-	}
+	// if !hasChanges {
+	// 	w.log.Info().Msgf("Workspace %s is already up-to-date; no upgrade needed", w.Name)
+	// 	status, stErr := w.GetPodStatus(ctx)
+	// 	if stErr != nil {
+	// 		return nil, false, fmt.Errorf("failed to get pod status for workspace %s: %v", w.Name, stErr)
+	// 	}
+	// 	return status, false, nil
+	// }
 
 	startTime := time.Now()
 	if err := w.client.Upgrade(ctx, helm.InstallOptions{

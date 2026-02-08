@@ -3,6 +3,8 @@ package helm
 import (
 	"bufio"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	stderrs "errors"
 	"fmt"
 	"os"
@@ -433,6 +435,15 @@ func normalizeManifest(m string) (string, error) {
 	return b.String(), nil
 }
 
+func manifestDigest(m string) (string, error) {
+	n, err := normalizeManifest(m)
+	if err != nil {
+		return "", err
+	}
+	sum := sha256.Sum256([]byte(n))
+	return hex.EncodeToString(sum[:]), nil
+}
+
 // Upgrade upgrades a Helm release in the specified namespace
 func (c *Client) Upgrade(ctx context.Context, opts InstallOptions) error {
 	actionConfig, err := c.createActionConfig(c.targetNamespace)
@@ -460,6 +471,8 @@ func (c *Client) Upgrade(ctx context.Context, opts InstallOptions) error {
 	upgrade.Namespace = c.targetNamespace
 	upgrade.Wait = opts.Wait
 	upgrade.Labels = opts.Labels
+	upgrade.DryRun = false
+	upgrade.DisableHooks = true
 
 	if opts.Timeout > 0 {
 		upgrade.Timeout = time.Duration(opts.Timeout) * time.Second
@@ -470,15 +483,27 @@ func (c *Client) Upgrade(ctx context.Context, opts InstallOptions) error {
 		return fmt.Errorf("chart %s not found", opts.ChartName)
 	}
 
-	chart := c.cloneChart(originalChart)
+	ch := c.cloneChart(originalChart)
 	if opts.AppVersion != "" {
-		chart.Metadata.AppVersion = opts.AppVersion
+		ch.Metadata.AppVersion = opts.AppVersion
 	}
 
-	_, err = upgrade.RunWithContext(ctx, opts.ReleaseName, chart, opts.Values)
+	oldD, _ := manifestDigest(existing.Manifest)
+
+	rel, err := upgrade.RunWithContext(ctx, opts.ReleaseName, ch, opts.Values)
 	if err != nil {
 		return fmt.Errorf("the release %s cannot be upgraded: %w", opts.ReleaseName, err)
 	}
+
+	newD, _ := manifestDigest(rel.Manifest)
+
+	c.log.Info().
+		Str("release", opts.ReleaseName).
+		Str("namespace", c.targetNamespace).
+		Int("revision", rel.Version).
+		Str("oldManifestDigest", oldD).
+		Str("newManifestDigest", newD).
+		Msg("helm upgrade completed")
 
 	return nil
 }
