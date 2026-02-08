@@ -5,12 +5,14 @@ import (
 	stderrs "errors"
 	"fmt"
 	"os"
+	"reflect"
 	"strings"
 	"time"
 
 	log "github.com/k8shell-io/common/pkg/logger"
 	"github.com/k8shell-io/provisioner/internal/config"
 	"github.com/rs/zerolog"
+	"github.com/stretchr/testify/assert/yaml"
 	"helm.sh/helm/v3/pkg/action"
 	"helm.sh/helm/v3/pkg/chart"
 	"helm.sh/helm/v3/pkg/cli"
@@ -380,7 +382,33 @@ func (c *Client) CanUpgradeWithChangeCheck(ctx context.Context, opts InstallOpti
 
 	c.log.Debug().Msgf("Existing manifest:\n%s\n\nNew manifest:\n%s", oldMan, newMan)
 
-	return oldMan != newMan, nil
+	return manifestsEqual(oldMan, newMan)
+}
+
+func manifestsEqual(manifest1, manifest2 string) (bool, error) {
+	docs1 := strings.Split(manifest1, "\n---\n")
+	docs2 := strings.Split(manifest2, "\n---\n")
+
+	if len(docs1) != len(docs2) {
+		return false, nil
+	}
+
+	for i := range docs1 {
+		var obj1, obj2 interface{}
+
+		if err := yaml.Unmarshal([]byte(docs1[i]), &obj1); err != nil {
+			return false, err
+		}
+		if err := yaml.Unmarshal([]byte(docs2[i]), &obj2); err != nil {
+			return false, err
+		}
+
+		if !reflect.DeepEqual(obj1, obj2) {
+			return false, nil
+		}
+	}
+
+	return true, nil
 }
 
 // Upgrade upgrades a Helm release in the specified namespace
