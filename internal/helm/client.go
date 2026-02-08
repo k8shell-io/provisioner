@@ -1,18 +1,17 @@
 package helm
 
 import (
+	"bufio"
 	"context"
 	stderrs "errors"
 	"fmt"
 	"os"
-	"reflect"
 	"strings"
 	"time"
 
 	log "github.com/k8shell-io/common/pkg/logger"
 	"github.com/k8shell-io/provisioner/internal/config"
 	"github.com/rs/zerolog"
-	"github.com/stretchr/testify/assert/yaml"
 	"helm.sh/helm/v3/pkg/action"
 	"helm.sh/helm/v3/pkg/chart"
 	"helm.sh/helm/v3/pkg/cli"
@@ -376,7 +375,6 @@ func (c *Client) CanUpgradeWithChangeCheck(ctx context.Context, opts InstallOpti
 		return false, fmt.Errorf("the release %s cannot be upgraded: %w", opts.ReleaseName, err)
 	}
 
-	// Normalize to reduce false positives from trailing newlines / CRLF.
 	oldMan := strings.TrimSpace(strings.ReplaceAll(existing.Manifest, "\r\n", "\n"))
 	newMan := strings.TrimSpace(strings.ReplaceAll(dry.Manifest, "\r\n", "\n"))
 
@@ -386,29 +384,45 @@ func (c *Client) CanUpgradeWithChangeCheck(ctx context.Context, opts InstallOpti
 }
 
 func manifestsEqual(manifest1, manifest2 string) (bool, error) {
-	docs1 := strings.Split(manifest1, "\n---\n")
-	docs2 := strings.Split(manifest2, "\n---\n")
+	n1, err := normalizeManifest(manifest1)
+	if err != nil {
+		return false, err
+	}
+	n2, err := normalizeManifest(manifest2)
+	if err != nil {
+		return false, err
+	}
+	return n1 == n2, nil
+}
 
-	if len(docs1) != len(docs2) {
-		return false, nil
+func normalizeManifest(m string) (string, error) {
+	m = strings.ReplaceAll(m, "\r\n", "\n")
+	m = strings.TrimSpace(m)
+
+	var b strings.Builder
+	sc := bufio.NewScanner(strings.NewReader(m))
+	sc.Buffer(make([]byte, 1024), 1024*1024)
+
+	for sc.Scan() {
+		line := sc.Text()
+		line = strings.TrimRight(line, " \t")
+
+		trim := strings.TrimSpace(line)
+		if trim == "" {
+			continue
+		}
+		if trim == "---" {
+			continue
+		}
+
+		b.WriteString(line)
+		b.WriteByte('\n')
 	}
 
-	for i := range docs1 {
-		var obj1, obj2 interface{}
-
-		if err := yaml.Unmarshal([]byte(docs1[i]), &obj1); err != nil {
-			return false, err
-		}
-		if err := yaml.Unmarshal([]byte(docs2[i]), &obj2); err != nil {
-			return false, err
-		}
-
-		if !reflect.DeepEqual(obj1, obj2) {
-			return false, nil
-		}
+	if err := sc.Err(); err != nil {
+		return "", err
 	}
-
-	return true, nil
+	return b.String(), nil
 }
 
 // Upgrade upgrades a Helm release in the specified namespace
