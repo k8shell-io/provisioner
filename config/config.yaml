@@ -23,12 +23,12 @@ certManager:
 # grpc server
 grpc:
   port: 9030
-  enableTLS: true
+  enableTLS: false
   certFile: /opt/shared/provisioner/tls/tls.crt
   keyFile: /opt/shared/provisioner/tls/tls.key
 
   # JWT required claims for authentication
-  authEnabled: true
+  authEnabled: false
   audience: provisioner
   allowed:
     - serviceAccount: ssh-proxy
