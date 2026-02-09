@@ -398,25 +398,10 @@ func (w *Workspace) upgradeWithLock(ctx context.Context, opts *ProvisionOptions)
 		}
 	}()
 
-	// exists, err := w.IsInstalled(ctx)
-	// if err != nil {
-	// 	return nil, fmt.Errorf("failed to check if workspace exists: %w", err)
-	// }
-
-	// if !exists {
-	// 	return nil, fmt.Errorf("workspace %s does not exist, cannot upgrade", w.Name)
-	// }
-
 	values, err := w.Values()
 	if err != nil {
 		return nil, err
 	}
-
-	// w.log.Debug().Msgf("Upgrading workspace %s with new values: %v", w.Name, values)
-
-	// if err := w.createHeadlessService(ctx, values); err != nil {
-	// 	return nil, false, fmt.Errorf("failed to create headless service: %w", err)
-	// }
 
 	labels := map[string]string{
 		"app.kubernetes.io/name":       helm.WORKSPACE_CHART_NAME,
@@ -428,39 +413,6 @@ func (w *Workspace) upgradeWithLock(ctx context.Context, opts *ProvisionOptions)
 		"k8shell.io/username":          w.user.Username,
 		"k8shell.io/blueprint":         w.blueprint.Name,
 		"k8shell.io/organization":      w.user.Organization,
-	}
-
-	// hasChanges, err := w.client.CanUpgradeWithChangeCheck(ctx, helm.InstallOptions{
-	// 	ReleaseName: w.Name,
-	// 	ChartName:   helm.WORKSPACE_CHART_NAME,
-	// 	Values:      values,
-	// 	Timeout:     opts.Timeout,
-	// 	Labels:      labels,
-	// 	AppVersion:  w.getK8shelldVersion(),
-	// })
-	// if err != nil {
-	// 	return nil, false, fmt.Errorf("workspace %s cannot be upgraded: %w", w.Name, err)
-	// }
-
-	// if !hasChanges {
-	// 	w.log.Info().Msgf("Workspace %s is already up-to-date; no upgrade needed", w.Name)
-	// 	status, stErr := w.GetPodStatus(ctx)
-	// 	if stErr != nil {
-	// 		return nil, false, fmt.Errorf("failed to get pod status for workspace %s: %v", w.Name, stErr)
-	// 	}
-	// 	return status, false, nil
-	// }
-
-	err = w.client.CanUpgradeDryRunServer(ctx, helm.InstallOptions{
-		ReleaseName: w.Name,
-		ChartName:   helm.WORKSPACE_CHART_NAME,
-		Values:      values,
-		Timeout:     opts.Timeout,
-		Labels:      labels,
-		AppVersion:  w.getK8shelldVersion(),
-	})
-	if err != nil {
-		return nil, fmt.Errorf("workspace %s cannot be upgraded (dry-run failed): %w", w.Name, err)
 	}
 
 	startTime := time.Now()
