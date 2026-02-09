@@ -1,9 +1,14 @@
 package helm
 
 import (
+	"bufio"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	stderrs "errors"
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	log "github.com/k8shell-io/common/pkg/logger"
@@ -13,6 +18,7 @@ import (
 	"helm.sh/helm/v3/pkg/chart"
 	"helm.sh/helm/v3/pkg/cli"
 	"helm.sh/helm/v3/pkg/release"
+	"helm.sh/helm/v3/pkg/storage/driver"
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
@@ -285,14 +291,34 @@ func (c *Client) Uninstall(releaseName string, timeout int, wait bool) error {
 	return nil
 }
 
-func (c *Client) Upgrade(ctx context.Context, opts InstallOptions) error {
+func (c *Client) CanUpgrade(ctx context.Context, opts InstallOptions) error {
 	actionConfig, err := c.createActionConfig(c.targetNamespace)
 	if err != nil {
 		return err
 	}
 
+	// release must exist and not be pending
+	get := action.NewGet(actionConfig)
+	existing, err := get.Run(opts.ReleaseName)
+	if err != nil {
+		if stderrs.Is(err, driver.ErrReleaseNotFound) {
+			return fmt.Errorf("release %q not found in namespace %q", opts.ReleaseName, c.targetNamespace)
+		}
+		return fmt.Errorf("failed to get release %q: %w", opts.ReleaseName, err)
+	}
+	if existing != nil && existing.Info != nil {
+		switch existing.Info.Status {
+		case release.StatusPendingInstall, release.StatusPendingUpgrade, release.StatusPendingRollback:
+			return fmt.Errorf("release %q is in a pending state (%s); cannot upgrade now", opts.ReleaseName, existing.Info.Status)
+		}
+	}
+
 	upgrade := action.NewUpgrade(actionConfig)
-	upgrade.Wait = opts.Wait
+	upgrade.Namespace = c.targetNamespace
+	upgrade.Wait = false
+	upgrade.DryRun = true
+	upgrade.DisableHooks = true
+	upgrade.Labels = opts.Labels
 
 	if opts.Timeout > 0 {
 		upgrade.Timeout = time.Duration(opts.Timeout) * time.Second
@@ -310,8 +336,96 @@ func (c *Client) Upgrade(ctx context.Context, opts InstallOptions) error {
 
 	_, err = upgrade.RunWithContext(ctx, opts.ReleaseName, chart, opts.Values)
 	if err != nil {
-		return fmt.Errorf("failed to upgrade release %s: %w", opts.ReleaseName, err)
+		return fmt.Errorf("the release %s cannot be upgraded: %w", opts.ReleaseName, err)
 	}
+
+	return nil
+}
+
+func (c *Client) CanUpgradeDryRunServer(ctx context.Context, opts InstallOptions) error {
+	actionConfig, err := c.createActionConfig(c.targetNamespace)
+	if err != nil {
+		return err
+	}
+
+	upgrade := action.NewUpgrade(actionConfig)
+	upgrade.Namespace = c.targetNamespace
+	upgrade.DryRun = true
+	upgrade.DryRunOption = "server"
+	upgrade.DisableHooks = true
+	upgrade.Wait = false
+
+	originalChart, ok := c.charts[opts.ChartName]
+	if !ok {
+		return fmt.Errorf("chart %s not found", opts.ChartName)
+	}
+	ch := c.cloneChart(originalChart)
+
+	_, err = upgrade.RunWithContext(ctx, opts.ReleaseName, ch, opts.Values)
+	return err
+}
+
+// Upgrade upgrades a Helm release in the specified namespace
+func (c *Client) Upgrade(ctx context.Context, opts InstallOptions) error {
+	actionConfig, err := c.createActionConfig(c.targetNamespace)
+	if err != nil {
+		return err
+	}
+
+	// release must exist and not be pending
+	get := action.NewGet(actionConfig)
+	existing, err := get.Run(opts.ReleaseName)
+	if err != nil {
+		if stderrs.Is(err, driver.ErrReleaseNotFound) {
+			return fmt.Errorf("release %q not found in namespace %q", opts.ReleaseName, c.targetNamespace)
+		}
+		return fmt.Errorf("failed to get release %q: %w", opts.ReleaseName, err)
+	}
+	if existing != nil && existing.Info != nil {
+		switch existing.Info.Status {
+		case release.StatusPendingInstall, release.StatusPendingUpgrade, release.StatusPendingRollback:
+			return fmt.Errorf("release %q is in a pending state (%s); cannot upgrade now", opts.ReleaseName, existing.Info.Status)
+		}
+	}
+
+	upgrade := action.NewUpgrade(actionConfig)
+	upgrade.Namespace = c.targetNamespace
+	upgrade.Wait = true
+	upgrade.Atomic = true
+	upgrade.CleanupOnFail = true
+	upgrade.DisableHooks = true
+	upgrade.Force = false
+
+	if opts.Timeout > 0 {
+		upgrade.Timeout = time.Duration(opts.Timeout) * time.Second
+	}
+
+	originalChart, ok := c.charts[opts.ChartName]
+	if !ok {
+		return fmt.Errorf("chart %s not found", opts.ChartName)
+	}
+
+	ch := c.cloneChart(originalChart)
+	if opts.AppVersion != "" {
+		ch.Metadata.AppVersion = opts.AppVersion
+	}
+
+	oldD, _ := manifestDigest(existing.Manifest)
+
+	rel, err := upgrade.RunWithContext(ctx, opts.ReleaseName, ch, opts.Values)
+	if err != nil {
+		return fmt.Errorf("the release %s cannot be upgraded: %w", opts.ReleaseName, err)
+	}
+
+	newD, _ := manifestDigest(rel.Manifest)
+
+	c.log.Info().
+		Str("release", opts.ReleaseName).
+		Str("namespace", c.targetNamespace).
+		Int("revision", rel.Version).
+		Str("oldManifestDigest", oldD).
+		Str("newManifestDigest", newD).
+		Msg("helm upgrade completed")
 
 	return nil
 }
@@ -340,6 +454,7 @@ func (c *Client) UpdateReleaseLabels(releaseName, namespace string, labels map[s
 	upgrade := action.NewUpgrade(actionConfig)
 	upgrade.ReuseValues = true
 	upgrade.Wait = false
+	upgrade.DisableHooks = true
 
 	_, err = upgrade.Run(releaseName, release.Chart, release.Config)
 	if err != nil {
@@ -382,6 +497,8 @@ func (c *Client) cloneChart(original *chart.Chart) *chart.Chart {
 	return cloned
 }
 
+// *** helpers
+
 // cloneMetadata creates a copy of chart metadata
 func cloneMetadata(original *chart.Metadata) *chart.Metadata {
 	if original == nil {
@@ -422,4 +539,46 @@ func cloneMetadata(original *chart.Metadata) *chart.Metadata {
 	}
 
 	return cloned
+}
+
+func normalizeManifest(m string) (string, error) {
+	m = strings.ReplaceAll(m, "\r\n", "\n")
+	m = strings.TrimSpace(m)
+
+	var b strings.Builder
+	sc := bufio.NewScanner(strings.NewReader(m))
+	sc.Buffer(make([]byte, 1024), 10*1024*1024)
+
+	for sc.Scan() {
+		line := sc.Text()
+		line = strings.TrimRight(line, " \t")
+
+		trim := strings.TrimSpace(line)
+		if trim == "" {
+			continue
+		}
+		if trim == "---" {
+			continue
+		}
+		if strings.HasPrefix(line, "# Source:") {
+			continue
+		}
+
+		b.WriteString(line)
+		b.WriteByte('\n')
+	}
+
+	if err := sc.Err(); err != nil {
+		return "", err
+	}
+	return b.String(), nil
+}
+
+func manifestDigest(m string) (string, error) {
+	n, err := normalizeManifest(m)
+	if err != nil {
+		return "", err
+	}
+	sum := sha256.Sum256([]byte(n))
+	return hex.EncodeToString(sum[:]), nil
 }

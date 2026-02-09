@@ -2,7 +2,6 @@
 
 {{/* labels for helm resources */}}
 {{- define "workspace.labels" -}}
-# existing labels (keep)
 k8shell.io/app: k8shell-workspace
 k8shell.io/organization: "{{ .Values.__organization__ }}"
 k8shell.io/blueprint: "{{ .Values.__blueprint__ }}"

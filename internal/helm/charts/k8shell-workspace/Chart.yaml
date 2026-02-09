@@ -1,7 +1,7 @@
 apiVersion: v2
 name: k8shell-workspace
 description: k8shell workspace chart
-version: 1.0.4
+version: 1.0.5
 appVersion: 0.0.0 # This is set dynamically in the provisioner from the k8shelld image tag
 
 annotations:

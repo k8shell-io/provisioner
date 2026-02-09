@@ -12,6 +12,7 @@ metadata:
     {{- if and .Values.subdomain .Values.hostname }}
     k8shell.io/subdomain: {{ .Values.subdomain }}
     {{- end }}
+    app.kubernetes.io/version: {{ .Values.__appversion__ }}
 spec:
   {{ if .Values.__registry__.regcred }}
   imagePullSecrets:
@@ -103,8 +104,7 @@ spec:
         subPath: sftp
         readOnly: true
       - name: config-volume
-        mountPath: /etc/k8shell/config.yaml
-        subPath: config.yaml
+        mountPath: /etc/k8shell
         readOnly: true
       - name: main-volume
         mountPath: /usr/local/k8shell/system
