@@ -12,6 +12,7 @@ metadata:
     {{- if and .Values.subdomain .Values.hostname }}
     k8shell.io/subdomain: {{ .Values.subdomain }}
     {{- end }}
+    app.kubernetes.io/version: {{ .Values.__appversion__ }}
 spec:
   {{ if .Values.__registry__.regcred }}
   imagePullSecrets:
