@@ -291,8 +291,8 @@ func (p *ProvisionerService) prepareWorkspaceProvisioning(ctx context.Context,
 		}
 	}
 
-	workspace, err := ws.NewWorkspace(userStr.WorkspaceName, blueprintObj, user, p.server.helm, p.server.Identity,
-		&p.server.config.CertManager, &p.server.config.K8shellCapabilities)
+	workspace, err := ws.NewWorkspace(userStr.WorkspaceName, blueprintObj, user, userStr,
+		p.server.helm, p.server.Identity, &p.server.config.CertManager, &p.server.config.K8shellCapabilities)
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "Failed to create workspace: %v", err)
 	}
@@ -330,6 +330,15 @@ func (p *ProvisionerService) UpgradeWorkspace(ctx context.Context,
 	username := release.Labels["k8shell.io/username"]
 	bpName := release.Labels["k8shell.io/blueprint"]
 
+	var userStr *models.CanonicalUserStr
+	userstrStr, ok := release.Labels["k8shell.io/userstr"]
+	if ok {
+		userStr, err = models.NewCanonicalUserStrFromBase64(userstrStr)
+		if err != nil {
+			return nil, status.Errorf(codes.Internal, "Failed to parse userstr from workspace labels: %v", err)
+		}
+	}
+
 	userpb, err := p.server.Identity.FindUser(ctx, &identitypb.FindUserRequest{Username: username})
 	if err != nil {
 		return nil, fmt.Errorf("failed to get user %s: %w", username, err)
@@ -356,7 +365,7 @@ func (p *ProvisionerService) UpgradeWorkspace(ctx context.Context,
 			"Blueprint %s is a template and cannot be used to upgrade a workspace", bpName)
 	}
 
-	w, err := ws.NewWorkspace(name, blueprintObj, user, p.server.helm, p.server.Identity,
+	w, err := ws.NewWorkspace(name, blueprintObj, user, userStr, p.server.helm, p.server.Identity,
 		&p.server.config.CertManager, &p.server.config.K8shellCapabilities)
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "Failed to create workspace for upgrade: %v", err)

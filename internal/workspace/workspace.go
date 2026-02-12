@@ -340,9 +340,16 @@ func FindworkspaceByName(ctx context.Context, helmClient *helm.Client, name stri
 // *** Workspace methods
 
 // NewWorkspace creates a new workspace with the specified Helm chart
-func NewWorkspace(workspaceName string, blueprint *models.Blueprint, user *models.User, helmClient *helm.Client,
-	identityClient *identity.Client, certManager *config.CertManagerConfig,
-	caps *config.K8shellCapabilities) (*Workspace, error) {
+func NewWorkspace(
+	workspaceName string,
+	blueprint *models.Blueprint,
+	user *models.User,
+	userStr *models.CanonicalUserStr,
+	helmClient *helm.Client,
+	identityClient *identity.Client,
+	certManager *config.CertManagerConfig,
+	caps *config.K8shellCapabilities,
+) (*Workspace, error) {
 
 	return &Workspace{
 		Name:        workspaceName,
@@ -353,6 +360,7 @@ func NewWorkspace(workspaceName string, blueprint *models.Blueprint, user *model
 		certManager: certManager,
 		caps:        caps,
 		user:        user,
+		userStr:     userStr,
 	}, nil
 }
 
@@ -440,6 +448,11 @@ func (w *Workspace) Values() (map[string]interface{}, error) {
 		return nil, fmt.Errorf("failed to convert cert manager config to map: %w", err)
 	}
 
+	userstrB64 := ""
+	if w.userStr != nil {
+		userstrB64 = w.userStr.Base64()
+	}
+
 	values["__user__"] = userValues
 	values["__username__"] = w.user.Username
 	values["__workspace__"] = w.Name
@@ -450,7 +463,7 @@ func (w *Workspace) Values() (map[string]interface{}, error) {
 	values["__certmanager__"] = cmValues
 	values["__appversion__"] = w.getK8shelldVersion()
 	values["__identity__"] = w.user.Source
-	values["__userstr__"] = w.userStr.Base64()
+	values["__userstr__"] = userstrB64
 	values["__apiserver__"] = map[string]interface{}{
 		"enabled": w.caps.APIServerEnabled,
 	}
