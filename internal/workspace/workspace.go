@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"fmt"
 	"os"
 	"strings"
@@ -250,6 +251,10 @@ func GetWorkspaces(ctx context.Context, v1 typedcorev1.CoreV1Interface, namespac
 	out := make([]*models.WorkspaceStatus, 0, len(podList.Items))
 	for i := range podList.Items {
 		p := &podList.Items[i]
+
+		if err := validatePodLabelsHashAnnotation(p); err != nil {
+			continue
+		}
 
 		var splash string
 		if splashAnnotation, exists := p.Annotations["workspace.k8shell.io/splash"]; exists {
@@ -730,4 +735,119 @@ func podMountsSecret(pod *corev1.Pod, secretName string) bool {
 		}
 	}
 	return false
+}
+
+// validatePodLabelsHashAnnotation verifies that pod annotation "k8shell.io/labels-hash"
+// matches sha256(renderedLabels) where renderedLabels is the exact output of Helm
+// template helper `workspace.workspaceLabels`.
+func validatePodLabelsHashAnnotation(p *corev1.Pod) error {
+	if p == nil {
+		return fmt.Errorf("%w: nil pod", models.ErrInvalidParameters)
+	}
+	ann := ""
+	if p.Annotations != nil {
+		ann = strings.TrimSpace(p.Annotations["k8shell.io/labels-hash"])
+	}
+	if ann == "" {
+		return fmt.Errorf("%w: missing k8shell.io/labels-hash annotation for pod %s",
+			models.ErrInvalidParameters, p.Name)
+	}
+
+	if !isLowerHexString(ann) {
+		return fmt.Errorf("%w: invalid k8shell.io/labels-hash annotation for pod %s",
+			models.ErrInvalidParameters, p.Name)
+	}
+
+	fullHex, err := computeWorkspaceLabelsHashFromPod(p)
+	if err != nil {
+		return fmt.Errorf("%w: %v", models.ErrInvalidParameters, err)
+	}
+	if ann != fullHex {
+		return fmt.Errorf("%w: k8shell.io/labels-hash annotation does not match computed hash for pod %s",
+			models.ErrInvalidParameters, p.Name)
+	}
+
+	return nil
+}
+
+func computeWorkspaceLabelsHashFromPod(p *corev1.Pod) (fullHex string, err error) {
+	rendered, err := renderWorkspaceLabelsForHashFromPod(p)
+	if err != nil {
+		return "", err
+	}
+
+	sum := sha256.Sum256([]byte(rendered))
+	fullHex = hex.EncodeToString(sum[:])
+	return fullHex, nil
+}
+
+// renderWorkspaceLabelsForHashFromPod reconstructs the exact label block that the Helm helper
+// `workspace.workspaceLabels` renders (the block that `workspace.workspaceLabelsHash` hashes).
+//
+// IMPORTANT: ordering + quoting must match the Helm template, otherwise hashes won't match.
+func renderWorkspaceLabelsForHashFromPod(p *corev1.Pod) (string, error) {
+	if p == nil {
+		return "", fmt.Errorf("%w: nil pod", models.ErrInvalidParameters)
+	}
+	lbl := p.Labels
+	if lbl == nil {
+		return "", fmt.Errorf("%w: pod %s has no labels", models.ErrInvalidParameters, p.Name)
+	}
+
+	// These keys/quoting mirror _helpers.tpl.
+	// If you change _helpers.tpl, update this list accordingly.
+	required := []struct {
+		key    string
+		quoted bool
+	}{
+		{"k8shell.io/app", false},
+		{"app.kubernetes.io/version", false},
+		{"k8shell.io/workspace", true},
+		{"k8shell.io/blueprint", true},
+		{"k8shell.io/username", true},
+		{"k8shell.io/organization", true},
+		{"k8shell.io/identity", true},
+		{"k8shell.io/userstr", true},
+		{"k8shell.io/networkPolicy", true},
+	}
+
+	var b strings.Builder
+	for i, item := range required {
+		v, ok := lbl[item.key]
+		if !ok {
+			return "", fmt.Errorf("%w: pod %s missing label %q required for labels-hash", models.ErrInvalidParameters, p.Name, item.key)
+		}
+
+		if i > 0 {
+			b.WriteByte('\n')
+		}
+
+		if item.quoted {
+			// Must match the Helm template's quoting style.
+			b.WriteString(item.key)
+			b.WriteString(`: "`)
+			b.WriteString(v)
+			b.WriteString(`"`)
+		} else {
+			b.WriteString(item.key)
+			b.WriteString(": ")
+			b.WriteString(v)
+		}
+	}
+
+	return b.String(), nil
+}
+
+func isLowerHexString(s string) bool {
+	if s == "" {
+		return false
+	}
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') {
+			continue
+		}
+		return false
+	}
+	return true
 }

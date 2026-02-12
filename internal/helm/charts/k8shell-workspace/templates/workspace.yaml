@@ -7,7 +7,7 @@ metadata:
     {{- if .Values.splash }}
     workspace.k8shell.io/splash: {{ .Values.splash | b64enc | quote }}
     {{- end }}
-    k8shell.io/labels-hash: {{ include "workspace.workspaceLabelsHash" . | trunc 63 | quote }}
+    k8shell.io/labels-hash: {{ include "workspace.workspaceLabelsHash" . | quote }}
     k8shell.io/manifest-hash: {{ .Values.__manifesthash__ | quote }}
   labels:
     {{- include "workspace.workspaceLabels" . | nindent 4 }} 
