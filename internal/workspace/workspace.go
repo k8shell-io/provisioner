@@ -144,6 +144,9 @@ func GetWorkspaces(ctx context.Context, v1 typedcorev1.CoreV1Interface, namespac
 			},
 			Name:         nameLabel,
 			Username:     p.Labels["k8shell.io/username"],
+			RepoOwner:    p.Labels["k8shell.io/repo-owner"],
+			RepoName:     p.Labels["k8shell.io/repo-name"],
+			RepoRef:      p.Labels["k8shell.io/repo-ref"],
 			Blueprint:    p.Labels["k8shell.io/blueprint"],
 			Organization: p.Labels["k8shell.io/organization"],
 			Host:         host,
@@ -319,6 +322,9 @@ func (w *Workspace) Values() (map[string]interface{}, error) {
 
 	values["__user__"] = userValues
 	values["__username__"] = w.user.Username
+	values["__repoowner__"] = w.userStr.Identity.RepoOwner
+	values["__reponame__"] = w.userStr.Identity.RepoName
+	values["__reporef__"] = w.userStr.Identity.RepoRef
 	values["__workspace__"] = w.Name
 	values["__blueprint__"] = w.blueprint.Name
 	values["__organization__"] = w.user.Organization
