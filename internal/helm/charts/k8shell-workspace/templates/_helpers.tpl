@@ -23,7 +23,7 @@ k8shell.io/username: "{{ .Values.__username__ }}"
 k8shell.io/organization: "{{ .Values.__organization__ }}"
 k8shell.io/identity: "{{ .Values.__identity__ }}"
 k8shell.io/userstr: "{{ .Values.__userstr__ }}"
-k8shell.io/networkPolicy: "{{ .Values.network.networkPolicy }}"
+k8shell.io/network-policy: "{{ .Values.network.networkPolicy }}"
 {{- if and .Values.subdomain .Values.hostname }}
 k8shell.io/subdomain: {{ .Values.subdomain }}
 {{- end }}
