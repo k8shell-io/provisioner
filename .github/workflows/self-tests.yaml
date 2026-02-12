@@ -152,8 +152,8 @@ jobs:
         run: make build
 
       # Verify binaries execute successfully
-      - name: Run binary smoke tests (test-binary)
-        run: make test-binary
+      - name: Run binary smoke tests (test-self)
+        run: make test-self
 
       - name: Upload test reports
         if: always()
@@ -198,7 +198,7 @@ jobs:
           
       # Vendor dependencies and copy source files to Docker build context
       - name: Prepare Docker build context
-        run: make vendor prepare-docker
+        run: make vendor
         env:
           VERSION: ${{ env.VERSION }}
           IMAGE_TAG: ${{ env.IMAGE_TAG }}
@@ -215,7 +215,8 @@ jobs:
       - name: Build and push image
         uses: docker/build-push-action@v6
         with:
-          context: docker/k8shelld
+          context: .
+          file: docker/provisioner/Dockerfile
           tags: |
             registry.k8shell.io/${{ env.REPO_NAME }}:${{ env.IMAGE_TAG }}
             registry.k8shell.io/${{ env.REPO_NAME }}:${{ env.IMAGE_TAG_LATEST }}
