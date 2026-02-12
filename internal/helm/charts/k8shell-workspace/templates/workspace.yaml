@@ -6,13 +6,11 @@ metadata:
   {{- if .Values.splash }}
   annotations:
     workspace.k8shell.io/splash: {{ .Values.splash | b64enc | quote }}
+    k8shell.io/labels-hash: {{ include "workspace.workspaceLabelsHash" . | trunc 63 | quote }}
+    k8shell.io/manifest-hash: {{ .Values.__manifesthash__ | quote }}
   {{- end }}
   labels:
-    {{- include "workspace.labels" . | nindent 4 }} 
-    {{- if and .Values.subdomain .Values.hostname }}
-    k8shell.io/subdomain: {{ .Values.subdomain }}
-    {{- end }}
-    app.kubernetes.io/version: {{ .Values.__appversion__ }}
+    {{- include "workspace.workspaceLabels" . | nindent 4 }} 
 spec:
   {{ if .Values.__registry__.regcred }}
   imagePullSecrets:

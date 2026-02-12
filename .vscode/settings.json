@@ -11,5 +11,9 @@
             "--go-grpc_out=.",
             "--go-grpc_opt=module=github.com/k8shell-io/provisioner"
         ]
-    }
+    },
+    "go.testFlags": [
+        "-v",
+        "-count=1"
+    ]
 }

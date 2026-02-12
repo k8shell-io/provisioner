@@ -85,7 +85,7 @@ func NewServer(configFile string) (*Server, error) {
 
 	models.SetRefResolver(server)
 
-	lock := workspace.NewWorkspaceLock(server.helm.GetKubeClient(), server.config.TargetNamespace, "init")
+	lock := workspace.NewWorkspaceLock(server.helm.KubeClient(), server.config.TargetNamespace, "init")
 	ok, err := lock.TryAcquire(context.Background())
 	if !ok || err == workspace.ErrLockAlreadyHeld {
 		server.log.Info().Msg("Workspace lock is already held by another process, proceeding without initialization")

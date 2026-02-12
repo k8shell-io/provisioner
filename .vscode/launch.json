@@ -28,7 +28,7 @@
                 "--config",
                 "config/config.yaml"
             ],
-            "showLog": true
+            "showLog": true,
             //"stopOnEntry": true
         }
     ]

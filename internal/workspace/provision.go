@@ -149,6 +149,11 @@ func (w *Workspace) doInstallation(ctx context.Context, opts *ProvisionOptions) 
 		return nil, err
 	}
 
+	values["__manifesthash__"], err = w.TemplateHash(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to compute template hash: %w", err)
+	}
+
 	if err := w.createHeadlessService(ctx, values); err != nil {
 		return nil, fmt.Errorf("failed to create headless service: %w", err)
 	}
@@ -222,7 +227,7 @@ func (w *Workspace) createHeadlessService(ctx context.Context, values map[string
 		},
 	}
 
-	_, err := w.client.GetKubeClient().CoreV1().Services(namespace).Create(ctx, service, metav1.CreateOptions{})
+	_, err := w.client.KubeClient().CoreV1().Services(namespace).Create(ctx, service, metav1.CreateOptions{})
 	if err != nil {
 		if apierrors.IsAlreadyExists(err) {
 			w.log.Info().Msgf("Headless service %s already exists", serviceName)
@@ -292,7 +297,7 @@ func (w *Workspace) waitForPodRunning(ctx context.Context, startTime time.Time,
 
 // watchEvents watches and reports Kubernetes events for the pod
 func (w *Workspace) watchEvents(ctx context.Context, podName string, criticalErrorChan chan<- error, opts *ProvisionOptions) {
-	eventList, err := w.client.GetKubeClient().CoreV1().Events(w.client.TargetNamespace()).List(ctx, metav1.ListOptions{
+	eventList, err := w.client.KubeClient().CoreV1().Events(w.client.TargetNamespace()).List(ctx, metav1.ListOptions{
 		FieldSelector: fmt.Sprintf("involvedObject.name=%s", podName),
 		Limit:         1,
 	})
@@ -309,7 +314,7 @@ func (w *Workspace) watchEvents(ctx context.Context, podName string, criticalErr
 		listOptions.ResourceVersion = eventList.ResourceVersion
 	}
 
-	watcher, err := w.client.GetKubeClient().CoreV1().Events(w.client.TargetNamespace()).Watch(ctx, listOptions)
+	watcher, err := w.client.KubeClient().CoreV1().Events(w.client.TargetNamespace()).Watch(ctx, listOptions)
 	if err != nil {
 		w.log.Warn().Err(err).Msg("Failed to watch events")
 		return
