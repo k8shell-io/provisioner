@@ -33,10 +33,11 @@ func NewProvisionerService(server *Server) *ProvisionerService {
 	}
 }
 
-// GetWorkspaceStatus retrieves the status of a specific workspace
-func (p *ProvisionerService) GetWorkspaceStatus(ctx context.Context,
-	req *provisionerpb.Workspace) (*commonpb.WorkspaceStatus, error) {
-	s, err := ws.GetWorkspaceStatus(ctx, p.server.helm, req.Workspace)
+// FindWorkspace retrieves the status of a specific workspace
+func (p *ProvisionerService) FindWorkspace(ctx context.Context,
+	req *provisionerpb.FindWorkspaceRequest) (*commonpb.WorkspaceStatus, error) {
+	s, err := ws.FindWorkspace(ctx, p.server.helm.KubeClient().CoreV1(),
+		p.server.helm.TargetNamespace(), req.Workspace)
 	if err != nil {
 		if errors.Is(err, models.ErrWorkspaceNotFound) {
 			return nil, status.Errorf(codes.NotFound, "Workspace %s not found", req.Workspace)
@@ -46,62 +47,27 @@ func (p *ProvisionerService) GetWorkspaceStatus(ctx context.Context,
 	return gapi.WorkspaceStatusToProto(s), nil
 }
 
-// GetUserWorkspaceInfo retrieves all workspaces for a given user and optional blueprint
-func (p *ProvisionerService) GetUserWorkspaceInfo(ctx context.Context,
-	req *provisionerpb.GetUserWorkspacesRequest) (*commonpb.WorkspaceInfo, error) {
-
-	username := req.Username
-	blueprint := req.Blueprint
-
-	userpb, err := p.server.Identity.FindUser(ctx, &identitypb.FindUserRequest{Username: username})
-	if err != nil {
-		return nil, status.Errorf(codes.NotFound, "Failed to get user: %v", err)
-	}
-	user := gapi.ProtoToUser(userpb)
-
-	if blueprint == "" {
-		blueprint, err = p.server.bpManager.GetDefaultUserBlueprint(user)
-		if err != nil {
-			return nil, status.Errorf(codes.InvalidArgument,
-				"No blueprint specified and no default blueprint found for user: %v", err)
-		}
-	}
-
-	workspaces, err := ws.GetWorkspaceInfo(p.server.helm, "", username, blueprint)
-	if err != nil {
-		return nil, status.Errorf(codes.Internal, "Failed to get workspace info: %v", err)
-	}
-
-	if len(workspaces) == 0 {
-		return nil, status.Errorf(codes.NotFound, "No workspaces found for user %s with blueprint %s", username, blueprint)
-	}
-
-	if len(workspaces) > 1 {
-		return nil, status.Errorf(codes.Internal,
-			"multiple workspaces found for user %s with blueprint %s", username, blueprint)
-	}
-
-	return gapi.WorkspaceInfoToProto(&workspaces[0]), nil
-}
-
 // ListWorkspaces lists all workspaces, optionally filtered by user and/or blueprint
-func (p *ProvisionerService) ListWorkspaces(ctx context.Context,
-	req *provisionerpb.ListWorkspacesRequest) (*provisionerpb.ListWorkspacesResponse, error) {
+func (p *ProvisionerService) GetWorkspaces(ctx context.Context,
+	req *provisionerpb.GetWorkspacesRequest) (*provisionerpb.GetWorkspacesResponse, error) {
 
-	username := req.Username
-	blueprint := req.Blueprint
-
-	workspaces, err := ws.GetWorkspaceInfo(p.server.helm, "", username, blueprint)
+	workspaces, err := ws.GetWorkspaces(ctx, p.server.helm.KubeClient().CoreV1(),
+		p.server.helm.TargetNamespace(), ws.GetWorkspacesOptions{
+			Username:     req.Username,
+			Blueprint:    req.Blueprint,
+			Organization: req.Organization,
+			Workspace:    req.Workspace,
+		})
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "Failed to list workspaces: %v", err)
 	}
 
-	var protoWorkspaces []*commonpb.WorkspaceInfo
-	for _, w := range workspaces {
-		protoWorkspaces = append(protoWorkspaces, gapi.WorkspaceInfoToProto(&w))
+	var protoWorkspaces []*commonpb.WorkspaceStatus
+	for _, w := range workspaces.Workspaces {
+		protoWorkspaces = append(protoWorkspaces, gapi.WorkspaceStatusToProto(w))
 	}
 
-	return &provisionerpb.ListWorkspacesResponse{
+	return &provisionerpb.GetWorkspacesResponse{
 		Workspaces: protoWorkspaces,
 	}, nil
 }
@@ -384,7 +350,7 @@ func (p *ProvisionerService) UpgradeWorkspace(ctx context.Context,
 
 // DeleteWorkspace deletes a workspace asynchronously with distributed locking
 func (p *ProvisionerService) DeleteWorkspace(ctx context.Context,
-	req *provisionerpb.Workspace) (*provisionerpb.DeleteWorkspaceResponse, error) {
+	req *provisionerpb.DeleteWorkspaceRequest) (*provisionerpb.DeleteWorkspaceResponse, error) {
 
 	name := req.Workspace
 	if name == "" {

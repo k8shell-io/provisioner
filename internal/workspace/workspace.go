@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/base64"
-	"encoding/hex"
 	"fmt"
 	"os"
 	"strings"
@@ -18,7 +17,6 @@ import (
 	"github.com/k8shell-io/provisioner/internal/config"
 	"github.com/k8shell-io/provisioner/internal/helm"
 	"github.com/rs/zerolog"
-	"golang.org/x/sync/errgroup"
 	"gopkg.in/yaml.v3"
 	"helm.sh/helm/v3/pkg/release"
 	corev1 "k8s.io/api/core/v1"
@@ -54,8 +52,6 @@ type GetWorkspacesOptions struct {
 	Organization string // filters for workspaces based on labels; empty means no filtering
 	Blueprint    string // filters for workspaces based on labels; empty means no filtering
 	Workspace    string // filters for workspaces based on labels; empty means no filtering
-	Limit        int64  // number of items to return; if <= 0, defaults to 20
-	Continue     string // token for next page; empty for first page
 }
 
 // GetWorkspacesResult defines the result structure for GetWorkspaces function,
@@ -65,159 +61,28 @@ type GetWorkspacesResult struct {
 	Continue   string                    // token for next page; empty when no more pages
 }
 
-// GetWorkspaceInfo retrieves information about workspaces
-func GetWorkspaceInfo(helmClient *helm.Client, name string, username string,
-	blueprint string) ([]models.WorkspaceInfo, error) {
-	labels := map[string]string{
-		"app.kubernetes.io/name": helm.WORKSPACE_CHART_NAME,
-	}
-
-	if name != "" {
-		labels["app.kubernetes.io/instance"] = name
-	}
-
-	if username != "" {
-		labels["k8shell.io/username"] = username
-	}
-
-	if blueprint != "" {
-		labels["k8shell.io/blueprint"] = blueprint
-	}
-
-	selector := GetSelector(labels)
-	releases, err := helmClient.ListWithSelector(helmClient.TargetNamespace(), selector)
+// FindWorkspace finds a workspace by name and returns its status
+func FindWorkspace(ctx context.Context, v1 typedcorev1.CoreV1Interface, namespace string,
+	workspace string) (*models.WorkspaceStatus, error) {
+	ws, err := GetWorkspaces(ctx, v1, namespace, GetWorkspacesOptions{
+		Workspace: workspace,
+	})
 	if err != nil {
-		if strings.Contains(err.Error(), "unable to parse") {
-			return nil, fmt.Errorf("failed to list releases: %w", models.ErrInvalidParameters)
-		}
-		return nil, fmt.Errorf("failed to list releases: %w", err)
-	}
-
-	resp := make([]models.WorkspaceInfo, 0, len(releases))
-	for _, release := range releases {
-		resp = append(resp, models.WorkspaceInfo{
-			Name:       release.Labels["app.kubernetes.io/instance"],
-			Username:   release.Labels["k8shell.io/username"],
-			Blueprint:  release.Labels["k8shell.io/blueprint"],
-			Deployed:   release.Info.LastDeployed.Time,
-			AppVersion: release.Chart.Metadata.AppVersion,
-			Chart:      release.Chart.Metadata.Name,
-			ChartVer:   release.Chart.Metadata.Version,
-		})
-	}
-	return resp, nil
-}
-
-func GetWorkspaceStatus(ctx context.Context, helmClient *helm.Client,
-	name string) (*models.WorkspaceStatus, error) {
-	v1 := helmClient.KubeClient().CoreV1()
-
-	var pod *corev1.Pod
-	var podService *corev1.Service
-	var tlsSecret *corev1.Secret
-	namespace := helmClient.TargetNamespace()
-
-	g, ctx := errgroup.WithContext(ctx)
-
-	// Fetch pod
-	g.Go(func() error {
-		var err error
-		pod, err = v1.Pods(namespace).Get(ctx, name, metav1.GetOptions{})
-		if err != nil {
-			if strings.Contains(err.Error(), "not found") {
-				return fmt.Errorf("%w: %s", models.ErrWorkspaceNotFound, name)
-			}
-			if strings.Contains(err.Error(), "unable to parse") {
-				return fmt.Errorf("%w: %s", models.ErrInvalidParameters, name)
-			}
-			return fmt.Errorf("failed to get workspace %s: %w", name, err)
-		}
-		return nil
-	})
-
-	// Fetch grpc service
-	g.Go(func() error {
-		var err error
-		podService, err = v1.Services(namespace).Get(ctx, name, metav1.GetOptions{})
-		if err != nil {
-			if strings.Contains(err.Error(), "not found") {
-				return fmt.Errorf("%w: %s", models.ErrWorkspaceNotFound, name)
-			}
-			return fmt.Errorf("failed to get pod service %s: %w", name, err)
-		}
-		return nil
-	})
-
-	// Fetch TLS secret
-	g.Go(func() error {
-		tlsSecret, _ = v1.Secrets(namespace).Get(ctx, name+"-tls", metav1.GetOptions{})
-		return nil
-	})
-
-	if err := g.Wait(); err != nil {
 		return nil, err
 	}
-
-	var splash string
-	if splashAnnotation, exists := pod.Annotations["workspace.k8shell.io/splash"]; exists {
-		if decoded, err := base64.StdEncoding.DecodeString(splashAnnotation); err == nil {
-			splash = string(decoded)
-		} else {
-			splash = ""
-		}
+	if len(ws.Workspaces) == 0 {
+		return nil, fmt.Errorf("%w: %s", models.ErrWorkspaceNotFound, workspace)
 	}
-
-	// get app version (it should be the same as is in helm app version)
-	var appVersion, exists = pod.Labels["app.kubernetes.io/version"]
-	if !exists {
-		appVersion = "1.0.0"
+	if len(ws.Workspaces) > 1 {
+		return nil, fmt.Errorf("multiple workspaces found with name %s", workspace)
 	}
-
-	// TODO: fix tlsEnabled to be bool
-	tlsEnabled := false
-	if tlsSecret != nil {
-		tlsEnabled = true
-	}
-
-	status := &models.WorkspaceStatus{
-		PodStatus: models.PodStatus{
-			Created: pod.CreationTimestamp.Time,
-			Status:  string(pod.Status.Phase),
-			Message: getPodStatusMessage(pod),
-		},
-		Name:       pod.Labels["k8shell.io/workspace"],
-		Username:   pod.Labels["k8shell.io/username"],
-		Blueprint:  pod.Labels["k8shell.io/blueprint"],
-		Host:       podService.Name + "." + podService.Namespace,
-		PodIP:      pod.Status.PodIP,
-		Port:       int(podService.Spec.Ports[0].Port),
-		TLSEnabled: tlsEnabled,
-		Splash:     splash,
-		AppVersion: appVersion,
-	}
-
-	return status, nil
+	return ws.Workspaces[0], nil
 }
 
 // GetWorkspaces lists workspace pods matching optional filters and returns status details
 // similar to GetWorkspaceStatus, without fetching Service/Secret per workspace.
-//
-// Filters map to pod labels:
-// - k8shell.io/username
-// - k8shell.io/organization
-// - k8shell.io/blueprint
-// - k8shell.io/workspace
-//
-// Pagination:
-// - defaults to first page with 20 items when not specified
-// - uses Kubernetes server-side pagination via Limit/Continue.
 func GetWorkspaces(ctx context.Context, v1 typedcorev1.CoreV1Interface, namespace string,
 	opts GetWorkspacesOptions) (*GetWorkspacesResult, error) {
-	limit := opts.Limit
-	if limit <= 0 {
-		limit = WORKSPACE_DEFAULT_PAGE_SIZE
-	}
-
 	labels := map[string]string{}
 	labels["k8shell.io/app"] = "k8shell-workspace"
 
@@ -238,8 +103,6 @@ func GetWorkspaces(ctx context.Context, v1 typedcorev1.CoreV1Interface, namespac
 
 	podList, err := v1.Pods(namespace).List(ctx, metav1.ListOptions{
 		LabelSelector: selector,
-		Limit:         limit,
-		Continue:      opts.Continue,
 	})
 	if err != nil {
 		if strings.Contains(err.Error(), "unable to parse") {
@@ -251,10 +114,6 @@ func GetWorkspaces(ctx context.Context, v1 typedcorev1.CoreV1Interface, namespac
 	out := make([]*models.WorkspaceStatus, 0, len(podList.Items))
 	for i := range podList.Items {
 		p := &podList.Items[i]
-
-		if err := validatePodLabelsHashAnnotation(p); err != nil {
-			continue
-		}
 
 		var splash string
 		if splashAnnotation, exists := p.Annotations["workspace.k8shell.io/splash"]; exists {
@@ -735,119 +594,4 @@ func podMountsSecret(pod *corev1.Pod, secretName string) bool {
 		}
 	}
 	return false
-}
-
-// validatePodLabelsHashAnnotation verifies that pod annotation "k8shell.io/labels-hash"
-// matches sha256(renderedLabels) where renderedLabels is the exact output of Helm
-// template helper `workspace.workspaceLabels`.
-func validatePodLabelsHashAnnotation(p *corev1.Pod) error {
-	if p == nil {
-		return fmt.Errorf("%w: nil pod", models.ErrInvalidParameters)
-	}
-	ann := ""
-	if p.Annotations != nil {
-		ann = strings.TrimSpace(p.Annotations["k8shell.io/labels-hash"])
-	}
-	if ann == "" {
-		return fmt.Errorf("%w: missing k8shell.io/labels-hash annotation for pod %s",
-			models.ErrInvalidParameters, p.Name)
-	}
-
-	if !isLowerHexString(ann) {
-		return fmt.Errorf("%w: invalid k8shell.io/labels-hash annotation for pod %s",
-			models.ErrInvalidParameters, p.Name)
-	}
-
-	fullHex, err := computeWorkspaceLabelsHashFromPod(p)
-	if err != nil {
-		return fmt.Errorf("%w: %v", models.ErrInvalidParameters, err)
-	}
-	if ann != fullHex {
-		return fmt.Errorf("%w: k8shell.io/labels-hash annotation does not match computed hash for pod %s",
-			models.ErrInvalidParameters, p.Name)
-	}
-
-	return nil
-}
-
-func computeWorkspaceLabelsHashFromPod(p *corev1.Pod) (fullHex string, err error) {
-	rendered, err := renderWorkspaceLabelsForHashFromPod(p)
-	if err != nil {
-		return "", err
-	}
-
-	sum := sha256.Sum256([]byte(rendered))
-	fullHex = hex.EncodeToString(sum[:])
-	return fullHex, nil
-}
-
-// renderWorkspaceLabelsForHashFromPod reconstructs the exact label block that the Helm helper
-// `workspace.workspaceLabels` renders (the block that `workspace.workspaceLabelsHash` hashes).
-//
-// IMPORTANT: ordering + quoting must match the Helm template, otherwise hashes won't match.
-func renderWorkspaceLabelsForHashFromPod(p *corev1.Pod) (string, error) {
-	if p == nil {
-		return "", fmt.Errorf("%w: nil pod", models.ErrInvalidParameters)
-	}
-	lbl := p.Labels
-	if lbl == nil {
-		return "", fmt.Errorf("%w: pod %s has no labels", models.ErrInvalidParameters, p.Name)
-	}
-
-	// These keys/quoting mirror _helpers.tpl.
-	// If you change _helpers.tpl, update this list accordingly.
-	required := []struct {
-		key    string
-		quoted bool
-	}{
-		{"k8shell.io/app", false},
-		{"app.kubernetes.io/version", false},
-		{"k8shell.io/workspace", true},
-		{"k8shell.io/blueprint", true},
-		{"k8shell.io/username", true},
-		{"k8shell.io/organization", true},
-		{"k8shell.io/identity", true},
-		{"k8shell.io/userstr", true},
-		{"k8shell.io/networkPolicy", true},
-	}
-
-	var b strings.Builder
-	for i, item := range required {
-		v, ok := lbl[item.key]
-		if !ok {
-			return "", fmt.Errorf("%w: pod %s missing label %q required for labels-hash", models.ErrInvalidParameters, p.Name, item.key)
-		}
-
-		if i > 0 {
-			b.WriteByte('\n')
-		}
-
-		if item.quoted {
-			// Must match the Helm template's quoting style.
-			b.WriteString(item.key)
-			b.WriteString(`: "`)
-			b.WriteString(v)
-			b.WriteString(`"`)
-		} else {
-			b.WriteString(item.key)
-			b.WriteString(": ")
-			b.WriteString(v)
-		}
-	}
-
-	return b.String(), nil
-}
-
-func isLowerHexString(s string) bool {
-	if s == "" {
-		return false
-	}
-	for i := 0; i < len(s); i++ {
-		c := s[i]
-		if (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') {
-			continue
-		}
-		return false
-	}
-	return true
 }

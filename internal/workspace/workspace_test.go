@@ -14,14 +14,14 @@ import (
 func TestGetWorkspaces(t *testing.T) {
 	ctx := context.Background()
 
-	helmClient, err := helm.NewClient("workspaces-test", config.DefaultRegistry{})
+	helmClient, err := helm.NewClient("workspaces-staging", config.DefaultRegistry{})
 	if err != nil {
 		t.Fatalf("failed to create Helm client: %v", err)
 	}
 
 	start := time.Now()
 	got, err := workspace.GetWorkspaces(ctx, helmClient.KubeClient().CoreV1(),
-		"workspaces-test",
+		"workspaces-staging",
 		workspace.GetWorkspacesOptions{
 			Username: "vitvatom",
 		})
