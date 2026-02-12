@@ -190,7 +190,7 @@ jobs:
             IMAGE_TAG_LATEST="latest"
           fi
 
-          echo "REPO_NAME=$(cat docker/k8shelld/BUILD)" >> $GITHUB_ENV
+          echo "REPO_NAME=$(cat docker/provisioner/BUILD)" >> $GITHUB_ENV
           echo "COMMIT_ID=$COMMIT_ID" >> $GITHUB_ENV
           echo "VERSION=$VERSION" >> $GITHUB_ENV
           echo "IMAGE_TAG=$IMAGE_TAG" >> $GITHUB_ENV
@@ -236,5 +236,5 @@ jobs:
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "Pull command:" >> $GITHUB_STEP_SUMMARY
           echo '```bash' >> $GITHUB_STEP_SUMMARY
-          echo "docker pull ${{ secrets.REGISTRY }}/${{ env.REPO_NAME }}:${{ env.IMAGE_TAG }}" >> $GITHUB_STEP_SUMMARY
+          echo "docker pull registry.k8shell.io/${{ env.REPO_NAME }}:${{ env.IMAGE_TAG }}" >> $GITHUB_STEP_SUMMARY
           echo '```' >> $GITHUB_STEP_SUMMARY
