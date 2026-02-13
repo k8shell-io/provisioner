@@ -18,6 +18,8 @@ import (
 	"google.golang.org/grpc/status"
 )
 
+const TOTAL_PROVISION_EVENTS = 12
+
 // ProvisionerService implements the gRPC service for workspace provisioning
 type ProvisionerService struct {
 	server *Server
@@ -33,10 +35,11 @@ func NewProvisionerService(server *Server) *ProvisionerService {
 	}
 }
 
-// GetWorkspaceStatus retrieves the status of a specific workspace
-func (p *ProvisionerService) GetWorkspaceStatus(ctx context.Context,
-	req *provisionerpb.Workspace) (*commonpb.WorkspaceStatus, error) {
-	s, err := ws.GetWorkspaceStatus(ctx, p.server.helm, req.Workspace)
+// FindWorkspace retrieves the status of a specific workspace
+func (p *ProvisionerService) FindWorkspace(ctx context.Context,
+	req *provisionerpb.FindWorkspaceRequest) (*commonpb.WorkspaceStatus, error) {
+	s, err := ws.FindWorkspace(ctx, p.server.helm.KubeClient().CoreV1(),
+		p.server.helm.TargetNamespace(), req.Workspace)
 	if err != nil {
 		if errors.Is(err, models.ErrWorkspaceNotFound) {
 			return nil, status.Errorf(codes.NotFound, "Workspace %s not found", req.Workspace)
@@ -46,62 +49,30 @@ func (p *ProvisionerService) GetWorkspaceStatus(ctx context.Context,
 	return gapi.WorkspaceStatusToProto(s), nil
 }
 
-// GetUserWorkspaceInfo retrieves all workspaces for a given user and optional blueprint
-func (p *ProvisionerService) GetUserWorkspaceInfo(ctx context.Context,
-	req *provisionerpb.GetUserWorkspacesRequest) (*commonpb.WorkspaceInfo, error) {
-
-	username := req.Username
-	blueprint := req.Blueprint
-
-	userpb, err := p.server.Identity.FindUser(ctx, &identitypb.FindUserRequest{Username: username})
-	if err != nil {
-		return nil, status.Errorf(codes.NotFound, "Failed to get user: %v", err)
-	}
-	user := gapi.ProtoToUser(userpb)
-
-	if blueprint == "" {
-		blueprint, err = p.server.bpManager.GetDefaultUserBlueprint(user)
-		if err != nil {
-			return nil, status.Errorf(codes.InvalidArgument,
-				"No blueprint specified and no default blueprint found for user: %v", err)
-		}
-	}
-
-	workspaces, err := ws.GetWorkspaceInfo(p.server.helm, "", username, blueprint)
-	if err != nil {
-		return nil, status.Errorf(codes.Internal, "Failed to get workspace info: %v", err)
-	}
-
-	if len(workspaces) == 0 {
-		return nil, status.Errorf(codes.NotFound, "No workspaces found for user %s with blueprint %s", username, blueprint)
-	}
-
-	if len(workspaces) > 1 {
-		return nil, status.Errorf(codes.Internal,
-			"multiple workspaces found for user %s with blueprint %s", username, blueprint)
-	}
-
-	return gapi.WorkspaceInfoToProto(&workspaces[0]), nil
-}
-
 // ListWorkspaces lists all workspaces, optionally filtered by user and/or blueprint
-func (p *ProvisionerService) ListWorkspaces(ctx context.Context,
-	req *provisionerpb.ListWorkspacesRequest) (*provisionerpb.ListWorkspacesResponse, error) {
+func (p *ProvisionerService) GetWorkspaces(ctx context.Context,
+	req *provisionerpb.GetWorkspacesRequest) (*provisionerpb.GetWorkspacesResponse, error) {
 
-	username := req.Username
-	blueprint := req.Blueprint
-
-	workspaces, err := ws.GetWorkspaceInfo(p.server.helm, "", username, blueprint)
+	workspaces, err := ws.GetWorkspaces(ctx, p.server.helm.KubeClient().CoreV1(),
+		p.server.helm.TargetNamespace(), ws.GetWorkspacesOptions{
+			Username:     req.Username,
+			Blueprint:    req.Blueprint,
+			Organization: req.Organization,
+			Workspace:    req.Workspace,
+			RepoName:     req.RepoName,
+			RepoOwner:    req.RepoOwner,
+			RepoRef:      req.RepoRef,
+		})
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "Failed to list workspaces: %v", err)
 	}
 
-	var protoWorkspaces []*commonpb.WorkspaceInfo
-	for _, w := range workspaces {
-		protoWorkspaces = append(protoWorkspaces, gapi.WorkspaceInfoToProto(&w))
+	var protoWorkspaces []*commonpb.WorkspaceStatus
+	for _, w := range workspaces.Workspaces {
+		protoWorkspaces = append(protoWorkspaces, gapi.WorkspaceStatusToProto(w))
 	}
 
-	return &provisionerpb.ListWorkspacesResponse{
+	return &provisionerpb.GetWorkspacesResponse{
 		Workspaces: protoWorkspaces,
 	}, nil
 }
@@ -140,6 +111,8 @@ func (p *ProvisionerService) ProvisionWorkspaceStream(req *provisionerpb.Provisi
 	messages := make(chan models.WorkspaceStreamEvent, 100)
 	done := make(chan *models.PodStatus)
 	errorChan := make(chan error)
+	progress := 0
+	percent := 0
 
 	timeout := int(req.Timeout)
 	if timeout <= 0 {
@@ -174,13 +147,32 @@ func (p *ProvisionerService) ProvisionWorkspaceStream(req *provisionerpb.Provisi
 			if !ok {
 				continue
 			}
-			if err := stream.Send(&provisionerpb.ProvisionEvent{
-				Type:       "event",
-				Timestamp:  msg.Timestamp,
-				ObjectName: msg.ObjectName,
-				Message:    msg.Message,
-			}); err != nil {
-				return err
+			if req.SendEvents {
+				if err := stream.Send(&provisionerpb.ProvisionEvent{
+					Type:       "event",
+					Timestamp:  msg.Timestamp,
+					ObjectName: msg.ObjectName,
+					Message:    msg.Message,
+				}); err != nil {
+					return err
+				}
+			}
+
+			if req.SendProgress {
+				progress++
+				newPerc := min((progress*100)/TOTAL_PROVISION_EVENTS, 100)
+				if newPerc > percent {
+					percent = newPerc
+					if err := stream.Send(&provisionerpb.ProvisionEvent{
+						Type:       "progress",
+						Timestamp:  time.Now().Format("2006-01-02 15:04:05"),
+						ObjectName: workspace.Name,
+						Status:     fmt.Sprintf("%d", percent),
+						Message:    fmt.Sprintf("%d%% complete", percent),
+					}); err != nil {
+						return err
+					}
+				}
 			}
 
 		case status := <-done:
@@ -189,7 +181,7 @@ func (p *ProvisionerService) ProvisionWorkspaceStream(req *provisionerpb.Provisi
 					Type:       "status",
 					Timestamp:  time.Now().Format("2006-01-02 15:04:05"),
 					ObjectName: workspace.Name,
-					Status:     status.Status,
+					Status:     string(status.Status),
 					Message:    status.Message,
 				}); err != nil {
 					return err
@@ -291,8 +283,8 @@ func (p *ProvisionerService) prepareWorkspaceProvisioning(ctx context.Context,
 		}
 	}
 
-	workspace, err := ws.NewWorkspace(userStr.WorkspaceName, blueprintObj, user, p.server.helm, p.server.Identity,
-		&p.server.config.CertManager, &p.server.config.K8shellCapabilities)
+	workspace, err := ws.NewWorkspace(userStr.WorkspaceName, blueprintObj, user, userStr,
+		p.server.helm, p.server.Identity, &p.server.config.CertManager, &p.server.config.K8shellCapabilities)
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "Failed to create workspace: %v", err)
 	}
@@ -330,6 +322,15 @@ func (p *ProvisionerService) UpgradeWorkspace(ctx context.Context,
 	username := release.Labels["k8shell.io/username"]
 	bpName := release.Labels["k8shell.io/blueprint"]
 
+	var userStr *models.CanonicalUserStr
+	userstrStr, ok := release.Labels["k8shell.io/userstr"]
+	if ok {
+		userStr, err = models.NewCanonicalUserStrFromBase64(userstrStr)
+		if err != nil {
+			return nil, status.Errorf(codes.Internal, "Failed to parse userstr from workspace labels: %v", err)
+		}
+	}
+
 	userpb, err := p.server.Identity.FindUser(ctx, &identitypb.FindUserRequest{Username: username})
 	if err != nil {
 		return nil, fmt.Errorf("failed to get user %s: %w", username, err)
@@ -356,7 +357,7 @@ func (p *ProvisionerService) UpgradeWorkspace(ctx context.Context,
 			"Blueprint %s is a template and cannot be used to upgrade a workspace", bpName)
 	}
 
-	w, err := ws.NewWorkspace(name, blueprintObj, user, p.server.helm, p.server.Identity,
+	w, err := ws.NewWorkspace(name, blueprintObj, user, userStr, p.server.helm, p.server.Identity,
 		&p.server.config.CertManager, &p.server.config.K8shellCapabilities)
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "Failed to create workspace for upgrade: %v", err)
@@ -375,7 +376,7 @@ func (p *ProvisionerService) UpgradeWorkspace(ctx context.Context,
 
 // DeleteWorkspace deletes a workspace asynchronously with distributed locking
 func (p *ProvisionerService) DeleteWorkspace(ctx context.Context,
-	req *provisionerpb.Workspace) (*provisionerpb.DeleteWorkspaceResponse, error) {
+	req *provisionerpb.DeleteWorkspaceRequest) (*provisionerpb.DeleteWorkspaceResponse, error) {
 
 	name := req.Workspace
 	if name == "" {

@@ -3,11 +3,35 @@
 {{/* labels for helm resources */}}
 {{- define "workspace.labels" -}}
 k8shell.io/app: k8shell-workspace
-k8shell.io/organization: "{{ .Values.__organization__ }}"
-k8shell.io/blueprint: "{{ .Values.__blueprint__ }}"
 k8shell.io/workspace: "{{ .Values.__workspace__ }}"
+{{- end -}}
+
+{{/* labels for helm resources */}}
+{{- define "workspace.workspaceLabels" -}}
+k8shell.io/app: k8shell-workspace
+app.kubernetes.io/version: {{ .Values.__appversion__ }}
+k8shell.io/workspace: "{{ .Values.__workspace__ }}"
+k8shell.io/blueprint: "{{ .Values.__blueprint__ }}"
+{{- if and .Values.__repoowner__ .Values.__reponame__ }}
+k8shell.io/repo-owner: "{{ .Values.__repoowner__ }}"
+k8shell.io/repo-name: "{{ .Values.__reponame__ }}"
+{{- end }}
+{{- if .Values.__reporef__ }}
+k8shell.io/repo-ref: "{{ .Values.__reporef__ }}"
+{{- end }}
 k8shell.io/username: "{{ .Values.__username__ }}"
-k8shell.io/networkPolicy: "{{ .Values.network.networkPolicy }}"
+k8shell.io/organization: "{{ .Values.__organization__ }}"
+k8shell.io/identity: "{{ .Values.__identity__ }}"
+k8shell.io/userstr: "{{ .Values.__userstr__ }}"
+k8shell.io/network-policy: "{{ .Values.network.networkPolicy }}"
+{{- if and .Values.subdomain .Values.hostname }}
+k8shell.io/subdomain: {{ .Values.subdomain }}
+{{- end }}
+{{- end -}}
+
+{{/* Stable hash of the rendered workspace labels */}}
+{{- define "workspace.workspaceLabelsHash" -}}
+{{- include "workspace.workspaceLabels" . | sha256sum -}}
 {{- end -}}
 
 

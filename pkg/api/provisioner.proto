@@ -9,21 +9,29 @@ import "common/pkg/gapi/common.proto";
 // *** Provisioner service
 
 service ProvisionerService {
-  rpc GetUserWorkspaceInfo (GetUserWorkspacesRequest) returns (common.WorkspaceInfo);
-  rpc GetWorkspaceStatus (Workspace) returns (common.WorkspaceStatus);
-  rpc ListWorkspaces (ListWorkspacesRequest) returns (ListWorkspacesResponse);
+  rpc GetWorkspaces (GetWorkspacesRequest) returns (GetWorkspacesResponse);
+  rpc FindWorkspace (FindWorkspaceRequest) returns (common.WorkspaceStatus);
   rpc ProvisionWorkspaceStream (ProvisionWorkspaceRequest) returns (stream ProvisionEvent);
   rpc UpgradeWorkspace (UpgradeWorkspaceRequest) returns (UpgradeWorkspaceResponse);
-  rpc DeleteWorkspace (Workspace) returns (DeleteWorkspaceResponse);
+  rpc DeleteWorkspace (DeleteWorkspaceRequest) returns (DeleteWorkspaceResponse);
 }
 
-message Workspace {
+message FindWorkspaceRequest {
   string workspace = 1;
 }
 
-message GetUserWorkspacesRequest {
-  string username = 1;
-  string blueprint = 2;
+message GetWorkspacesRequest {
+  string workspace = 1;
+  string username = 2;
+  string organization = 3;
+  string blueprint = 4;
+  string repo_name = 5;
+  string repo_owner = 6;
+  string repo_ref = 7;
+}
+
+message GetWorkspacesResponse {
+  repeated common.WorkspaceStatus workspaces = 1;
 }
 
 message ListWorkspacesRequest {
@@ -38,6 +46,8 @@ message ListWorkspacesResponse {
 message ProvisionWorkspaceRequest {
   string userstr = 1;
   int32 timeout = 2; 
+  bool sendProgress = 3;
+  bool sendEvents = 4;
 }
 
 message ProvisionWorkspaceResponse {
@@ -60,6 +70,10 @@ message ProvisionEvent {
   string object_name = 3;
   string status = 4; 
   string message = 5;
+}
+
+message DeleteWorkspaceRequest {
+  string workspace = 1;
 }
 
 message DeleteWorkspaceResponse {

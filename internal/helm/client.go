@@ -87,11 +87,11 @@ func NewClient(targetNamespace string, registry config.DefaultRegistry) (*Client
 	}, nil
 }
 
-func (c *Client) GetKubeClient() kubernetes.Interface {
+func (c *Client) KubeClient() kubernetes.Interface {
 	return c.kubeClient
 }
 
-// GetTargetNamespace returns the target namespace for Helm operations
+// TargetNamespace returns the target namespace for Helm operations
 func (c *Client) TargetNamespace() string {
 	return c.targetNamespace
 }

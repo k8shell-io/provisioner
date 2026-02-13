@@ -149,6 +149,11 @@ func (w *Workspace) doInstallation(ctx context.Context, opts *ProvisionOptions) 
 		return nil, err
 	}
 
+	values["__manifesthash__"], err = w.TemplateHash(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to compute template hash: %w", err)
+	}
+
 	if err := w.createHeadlessService(ctx, values); err != nil {
 		return nil, fmt.Errorf("failed to create headless service: %w", err)
 	}
@@ -184,7 +189,7 @@ func (w *Workspace) doInstallation(ctx context.Context, opts *ProvisionOptions) 
 		return nil, err
 	}
 
-	if status.Status == "Running" {
+	if status.Status == models.WorkspaceStatusRunning {
 		provisionTime := time.Since(startTime)
 		w.log.Info().Msgf("Workspace %s is now running, provisioned in %s", w.Name, provisionTime)
 	}
@@ -222,7 +227,7 @@ func (w *Workspace) createHeadlessService(ctx context.Context, values map[string
 		},
 	}
 
-	_, err := w.client.GetKubeClient().CoreV1().Services(namespace).Create(ctx, service, metav1.CreateOptions{})
+	_, err := w.client.KubeClient().CoreV1().Services(namespace).Create(ctx, service, metav1.CreateOptions{})
 	if err != nil {
 		if apierrors.IsAlreadyExists(err) {
 			w.log.Info().Msgf("Headless service %s already exists", serviceName)
@@ -244,7 +249,7 @@ func (w *Workspace) waitForPodRunning(ctx context.Context, startTime time.Time,
 	defer timeout.Stop()
 
 	watchCtx, cancelWatch := context.WithCancel(ctx)
-	defer cancelWatch() // This handles ALL cleanup
+	defer cancelWatch()
 
 	criticalErrorChan := make(chan error, 1)
 	go w.watchEvents(watchCtx, podName, criticalErrorChan, opts)
@@ -273,16 +278,16 @@ func (w *Workspace) waitForPodRunning(ctx context.Context, startTime time.Time,
 			}
 
 			switch status.Status {
-			case "Running":
+			case models.WorkspaceStatusRunning:
 				return status, nil
 
-			case "Failed", "Succeeded":
-				return status, fmt.Errorf("workspace pod %s is in final state: %s - %s",
+			case models.WorkspaceStatusFailing, models.WorkspaceStatusStopped:
+				return status, fmt.Errorf("workspace %s is in final state: %s - %s",
 					podName, status.Status, status.Message)
 
-			case "Pending":
+			case models.WorkspaceStatusProvisioning:
 				if time.Since(startTime) > time.Duration(opts.Timeout)*time.Second {
-					return status, fmt.Errorf("workspace pod %s has been pending for too long: %s",
+					return status, fmt.Errorf("workspace %s has been starting for too long: %s",
 						podName, status.Message)
 				}
 			}
@@ -291,8 +296,12 @@ func (w *Workspace) waitForPodRunning(ctx context.Context, startTime time.Time,
 }
 
 // watchEvents watches and reports Kubernetes events for the pod
-func (w *Workspace) watchEvents(ctx context.Context, podName string, criticalErrorChan chan<- error, opts *ProvisionOptions) {
-	eventList, err := w.client.GetKubeClient().CoreV1().Events(w.client.TargetNamespace()).List(ctx, metav1.ListOptions{
+func (w *Workspace) watchEvents(ctx context.Context, podName string,
+	criticalErrorChan chan<- error, opts *ProvisionOptions) {
+
+	v1 := w.client.KubeClient().CoreV1()
+
+	eventList, err := v1.Events(w.client.TargetNamespace()).List(ctx, metav1.ListOptions{
 		FieldSelector: fmt.Sprintf("involvedObject.name=%s", podName),
 		Limit:         1,
 	})
@@ -309,38 +318,56 @@ func (w *Workspace) watchEvents(ctx context.Context, podName string, criticalErr
 		listOptions.ResourceVersion = eventList.ResourceVersion
 	}
 
-	watcher, err := w.client.GetKubeClient().CoreV1().Events(w.client.TargetNamespace()).Watch(ctx, listOptions)
+	watcher, err := v1.Events(w.client.TargetNamespace()).Watch(ctx, listOptions)
 	if err != nil {
 		w.log.Warn().Err(err).Msg("Failed to watch events")
 		return
 	}
 	defer watcher.Stop()
 
+	seenEvents := map[string]bool{}
+
 	for {
 		select {
 		case <-ctx.Done():
 			return
 
-		case event := <-watcher.ResultChan():
-			if event.Type == watch.Added || event.Type == watch.Modified {
-				if k8sEvent, ok := event.Object.(*corev1.Event); ok {
-					eventMessage := models.WorkspaceStreamEvent{
-						Type:       "event",
-						Timestamp:  k8sEvent.CreationTimestamp.Format("2006-01-02 15:04:05"),
-						ObjectName: k8sEvent.InvolvedObject.Name,
-						Message:    k8sEvent.Message,
-					}
+		case event, ok := <-watcher.ResultChan():
+			if !ok {
+				return
+			}
 
-					w.log.Info().Msg(eventMessage.String())
-					if opts.Messages != nil {
-						opts.Messages <- eventMessage
-					}
+			if event.Type != watch.Added && event.Type != watch.Modified {
+				continue
+			}
 
-					if criticalErr := w.isCriticalError(eventMessage.Message); criticalErr != nil {
-						criticalErrorChan <- criticalErr
-						return
-					}
-				}
+			k8sEvent, ok := event.Object.(*corev1.Event)
+			if !ok || k8sEvent == nil {
+				continue
+			}
+
+			key := k8sEvent.InvolvedObject.Name + "\x00" + k8sEvent.Message
+
+			if _, exists := seenEvents[key]; exists {
+				continue
+			}
+			seenEvents[key] = true
+
+			eventMessage := models.WorkspaceStreamEvent{
+				Type:       "event",
+				Timestamp:  k8sEvent.CreationTimestamp.Format("2006-01-02 15:04:05"),
+				ObjectName: k8sEvent.InvolvedObject.Name,
+				Message:    k8sEvent.Message,
+			}
+
+			w.log.Debug().Msg(eventMessage.String())
+			if opts.Messages != nil {
+				opts.Messages <- eventMessage
+			}
+
+			if criticalErr := w.isCriticalError(eventMessage.Message); criticalErr != nil {
+				criticalErrorChan <- criticalErr
+				return
 			}
 		}
 	}

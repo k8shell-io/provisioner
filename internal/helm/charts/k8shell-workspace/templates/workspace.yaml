@@ -3,16 +3,13 @@ kind: Pod
 metadata:
   name: {{ .Values.__workspace__ }}
   namespace: {{ .Release.Namespace }}
-  {{- if .Values.splash }}
   annotations:
+    {{- if .Values.splash }}
     workspace.k8shell.io/splash: {{ .Values.splash | b64enc | quote }}
-  {{- end }}
-  labels:
-    {{- include "workspace.labels" . | nindent 4 }} 
-    {{- if and .Values.subdomain .Values.hostname }}
-    k8shell.io/subdomain: {{ .Values.subdomain }}
     {{- end }}
-    app.kubernetes.io/version: {{ .Values.__appversion__ }}
+    k8shell.io/manifest-hash: {{ .Values.__manifesthash__ | quote }}
+  labels:
+    {{- include "workspace.workspaceLabels" . | nindent 4 }} 
 spec:
   {{ if .Values.__registry__.regcred }}
   imagePullSecrets:

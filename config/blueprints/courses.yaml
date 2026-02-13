@@ -4,15 +4,16 @@ blueprints:
     image: workspaces/awd:0.8-3.2
     sudo: true
 
-    splash: | 
-      This workspace includes a preconfigured PostgreSQL server and Oracle database client.
-      Use the 'psutils' command to initialize, start, and stop the PostgreSQL server.
-
     k8shelld:
       ignoreOrphans:
         - .*postgresql.*
 
+    splash: |
+      This workspace includes a preconfigured PostgreSQL server and Oracle database client.
+      Use the 'psutils' command to initialize, start, and stop the PostgreSQL server.
+
     portForwarding:
+      - localnetworks:0
       - 10.126.2.52:1521
 
     storages:
@@ -20,24 +21,61 @@ blueprints:
         annotations:
           zfs-csi.k8shell.io/squash: "no_root_squash"
 
-  - name: sql
+  - name: am2
     template: default
-    image: workspaces/sql:0.8-3.2
-    sudo: false
+    image: workspaces/am2:0.8-3.2
+    sudo: true
+
+    resources:
+      cpu: 8
+      memory: 8Gi
+
+  - name: ddw
+    template: default
+    image: workspaces/ddw:0.8-4.0
+    sudo: true
+
+    resources:
+      cpu: 12
+      memory: 12Gi
+
+    storages:
+      home:
+        size: 20Gi
+
+    network:
+      networkPolicy: user
+
+    apps:
+      mlflow:
+        enabled: true
+        listen: 5000
+        installAsRoot: true
+        binary: "/usr/local/bin/mlflow"
+        versionCmd: ["/usr/local/bin/mlflow", "--version"]
+        versionRegex: ".*([0-9]+\\.[0-9]+\\.[0-9]+)$"
+        install: ""
+        start: ["/usr/local/bin/mlflow", "server", "--host", "0.0.0.0", "--port", "5000", "--allowed-hosts", "*", "--cors-allowed-origins", "*", "--x-frame-options", "NONE", "--backend-store-uri", "sqlite:///mlflow.db", "--artifacts-destination", "mlflow-artifacts"]
+        restartPolicy: always
+        autoStart: true
+        protocol: "http"
 
   - name: dev
     template: default
-    image: workspaces/dev:0.8-1.1
+    image: workspaces/dev:1.12
+
+    k8shelld:
+      connection:
+        allowAnyNS: true
+        allowAnySA: true
+
+    portForwarding:
+      - localnetworks:0
+      - 10.42.0.0/16:0
 
     sudo: true
     network:
       networkPolicy: system
-    # serviceAccount: !cel |
-    #   user.username in ['alice', 'kuchajar', 'vitvatom']
-    #     ? "admin-sa"
-    #     : user.username in ['nvkptr']
-    #       ? "k8shell-proxy"
-    #       : "default"
 
     resources:
       cpu: 8
@@ -45,3 +83,10 @@ blueprints:
 
     docker:
       enabled: true
+
+    apps:
+      vscode:
+        enabled: true
+        autoStart: true
+      jupyter:
+        enabled: true
