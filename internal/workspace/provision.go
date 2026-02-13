@@ -296,8 +296,12 @@ func (w *Workspace) waitForPodRunning(ctx context.Context, startTime time.Time,
 }
 
 // watchEvents watches and reports Kubernetes events for the pod
-func (w *Workspace) watchEvents(ctx context.Context, podName string, criticalErrorChan chan<- error, opts *ProvisionOptions) {
-	eventList, err := w.client.KubeClient().CoreV1().Events(w.client.TargetNamespace()).List(ctx, metav1.ListOptions{
+func (w *Workspace) watchEvents(ctx context.Context, podName string,
+	criticalErrorChan chan<- error, opts *ProvisionOptions) {
+
+	v1 := w.client.KubeClient().CoreV1()
+
+	eventList, err := v1.Events(w.client.TargetNamespace()).List(ctx, metav1.ListOptions{
 		FieldSelector: fmt.Sprintf("involvedObject.name=%s", podName),
 		Limit:         1,
 	})
@@ -314,38 +318,56 @@ func (w *Workspace) watchEvents(ctx context.Context, podName string, criticalErr
 		listOptions.ResourceVersion = eventList.ResourceVersion
 	}
 
-	watcher, err := w.client.KubeClient().CoreV1().Events(w.client.TargetNamespace()).Watch(ctx, listOptions)
+	watcher, err := v1.Events(w.client.TargetNamespace()).Watch(ctx, listOptions)
 	if err != nil {
 		w.log.Warn().Err(err).Msg("Failed to watch events")
 		return
 	}
 	defer watcher.Stop()
 
+	seenEvents := map[string]bool{}
+
 	for {
 		select {
 		case <-ctx.Done():
 			return
 
-		case event := <-watcher.ResultChan():
-			if event.Type == watch.Added || event.Type == watch.Modified {
-				if k8sEvent, ok := event.Object.(*corev1.Event); ok {
-					eventMessage := models.WorkspaceStreamEvent{
-						Type:       "event",
-						Timestamp:  k8sEvent.CreationTimestamp.Format("2006-01-02 15:04:05"),
-						ObjectName: k8sEvent.InvolvedObject.Name,
-						Message:    k8sEvent.Message,
-					}
+		case event, ok := <-watcher.ResultChan():
+			if !ok {
+				return
+			}
 
-					w.log.Debug().Msg(eventMessage.String())
-					if opts.Messages != nil {
-						opts.Messages <- eventMessage
-					}
+			if event.Type != watch.Added && event.Type != watch.Modified {
+				continue
+			}
 
-					if criticalErr := w.isCriticalError(eventMessage.Message); criticalErr != nil {
-						criticalErrorChan <- criticalErr
-						return
-					}
-				}
+			k8sEvent, ok := event.Object.(*corev1.Event)
+			if !ok || k8sEvent == nil {
+				continue
+			}
+
+			key := k8sEvent.InvolvedObject.Name + "\x00" + k8sEvent.Message
+
+			if _, exists := seenEvents[key]; exists {
+				continue
+			}
+			seenEvents[key] = true
+
+			eventMessage := models.WorkspaceStreamEvent{
+				Type:       "event",
+				Timestamp:  k8sEvent.CreationTimestamp.Format("2006-01-02 15:04:05"),
+				ObjectName: k8sEvent.InvolvedObject.Name,
+				Message:    k8sEvent.Message,
+			}
+
+			w.log.Debug().Msg(eventMessage.String())
+			if opts.Messages != nil {
+				opts.Messages <- eventMessage
+			}
+
+			if criticalErr := w.isCriticalError(eventMessage.Message); criticalErr != nil {
+				criticalErrorChan <- criticalErr
+				return
 			}
 		}
 	}
