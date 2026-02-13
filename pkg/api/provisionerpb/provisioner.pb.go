@@ -299,11 +299,12 @@ func (x *ListWorkspacesResponse) GetWorkspaces() []*commonpb.WorkspaceInfo {
 }
 
 type ProvisionWorkspaceRequest struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Userstr       string                 `protobuf:"bytes,1,opt,name=userstr,proto3" json:"userstr,omitempty"`
-	Timeout       int32                  `protobuf:"varint,2,opt,name=timeout,proto3" json:"timeout,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	state                protoimpl.MessageState `protogen:"open.v1"`
+	Userstr              string                 `protobuf:"bytes,1,opt,name=userstr,proto3" json:"userstr,omitempty"`
+	Timeout              int32                  `protobuf:"varint,2,opt,name=timeout,proto3" json:"timeout,omitempty"`
+	SendProgressPercents bool                   `protobuf:"varint,3,opt,name=sendProgressPercents,proto3" json:"sendProgressPercents,omitempty"`
+	unknownFields        protoimpl.UnknownFields
+	sizeCache            protoimpl.SizeCache
 }
 
 func (x *ProvisionWorkspaceRequest) Reset() {
@@ -348,6 +349,13 @@ func (x *ProvisionWorkspaceRequest) GetTimeout() int32 {
 		return x.Timeout
 	}
 	return 0
+}
+
+func (x *ProvisionWorkspaceRequest) GetSendProgressPercents() bool {
+	if x != nil {
+		return x.SendProgressPercents
+	}
+	return false
 }
 
 type ProvisionWorkspaceResponse struct {
@@ -688,10 +696,11 @@ const file_pkg_api_provisioner_proto_rawDesc = "" +
 	"\x16ListWorkspacesResponse\x125\n" +
 	"\n" +
 	"workspaces\x18\x01 \x03(\v2\x15.common.WorkspaceInfoR\n" +
-	"workspaces\"O\n" +
+	"workspaces\"\x83\x01\n" +
 	"\x19ProvisionWorkspaceRequest\x12\x18\n" +
 	"\auserstr\x18\x01 \x01(\tR\auserstr\x12\x18\n" +
-	"\atimeout\x18\x02 \x01(\x05R\atimeout\"N\n" +
+	"\atimeout\x18\x02 \x01(\x05R\atimeout\x122\n" +
+	"\x14sendProgressPercents\x18\x03 \x01(\bR\x14sendProgressPercents\"N\n" +
 	"\x1aProvisionWorkspaceResponse\x12\x16\n" +
 	"\x06status\x18\x01 \x01(\tR\x06status\x12\x18\n" +
 	"\amessage\x18\x02 \x01(\tR\amessage\"7\n" +

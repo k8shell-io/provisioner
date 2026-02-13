@@ -46,6 +46,7 @@ message ListWorkspacesResponse {
 message ProvisionWorkspaceRequest {
   string userstr = 1;
   int32 timeout = 2; 
+  bool sendProgressPercents = 3;
 }
 
 message ProvisionWorkspaceResponse {

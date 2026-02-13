@@ -18,6 +18,8 @@ import (
 	"google.golang.org/grpc/status"
 )
 
+const TOTAL_PROVISION_EVENTS = 12
+
 // ProvisionerService implements the gRPC service for workspace provisioning
 type ProvisionerService struct {
 	server *Server
@@ -109,6 +111,8 @@ func (p *ProvisionerService) ProvisionWorkspaceStream(req *provisionerpb.Provisi
 	messages := make(chan models.WorkspaceStreamEvent, 100)
 	done := make(chan *models.PodStatus)
 	errorChan := make(chan error)
+	progress := 0
+	percent := 0
 
 	timeout := int(req.Timeout)
 	if timeout <= 0 {
@@ -150,6 +154,23 @@ func (p *ProvisionerService) ProvisionWorkspaceStream(req *provisionerpb.Provisi
 				Message:    msg.Message,
 			}); err != nil {
 				return err
+			}
+
+			if req.SendProgressPercents {
+				progress++
+				newPerc := min((progress*100)/TOTAL_PROVISION_EVENTS, 100)
+				if newPerc > percent {
+					percent = newPerc
+					if err := stream.Send(&provisionerpb.ProvisionEvent{
+						Type:       "progress",
+						Timestamp:  time.Now().Format("2006-01-02 15:04:05"),
+						ObjectName: workspace.Name,
+						Status:     fmt.Sprintf("%d", percent),
+						Message:    fmt.Sprintf("%d%% complete", percent),
+					}); err != nil {
+						return err
+					}
+				}
 			}
 
 		case status := <-done:
