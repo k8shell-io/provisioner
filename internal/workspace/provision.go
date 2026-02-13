@@ -249,7 +249,7 @@ func (w *Workspace) waitForPodRunning(ctx context.Context, startTime time.Time,
 	defer timeout.Stop()
 
 	watchCtx, cancelWatch := context.WithCancel(ctx)
-	defer cancelWatch() // This handles ALL cleanup
+	defer cancelWatch()
 
 	criticalErrorChan := make(chan error, 1)
 	go w.watchEvents(watchCtx, podName, criticalErrorChan, opts)

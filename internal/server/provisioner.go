@@ -147,16 +147,18 @@ func (p *ProvisionerService) ProvisionWorkspaceStream(req *provisionerpb.Provisi
 			if !ok {
 				continue
 			}
-			if err := stream.Send(&provisionerpb.ProvisionEvent{
-				Type:       "event",
-				Timestamp:  msg.Timestamp,
-				ObjectName: msg.ObjectName,
-				Message:    msg.Message,
-			}); err != nil {
-				return err
+			if req.SendEvents {
+				if err := stream.Send(&provisionerpb.ProvisionEvent{
+					Type:       "event",
+					Timestamp:  msg.Timestamp,
+					ObjectName: msg.ObjectName,
+					Message:    msg.Message,
+				}); err != nil {
+					return err
+				}
 			}
 
-			if req.SendProgressPercents {
+			if req.SendProgress {
 				progress++
 				newPerc := min((progress*100)/TOTAL_PROVISION_EVENTS, 100)
 				if newPerc > percent {
