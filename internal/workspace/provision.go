@@ -189,7 +189,7 @@ func (w *Workspace) doInstallation(ctx context.Context, opts *ProvisionOptions) 
 		return nil, err
 	}
 
-	if status.Status == "Running" {
+	if status.Status == models.WorkspaceStatusRunning {
 		provisionTime := time.Since(startTime)
 		w.log.Info().Msgf("Workspace %s is now running, provisioned in %s", w.Name, provisionTime)
 	}
@@ -278,16 +278,16 @@ func (w *Workspace) waitForPodRunning(ctx context.Context, startTime time.Time,
 			}
 
 			switch status.Status {
-			case "Running":
+			case models.WorkspaceStatusRunning:
 				return status, nil
 
-			case "Failed", "Succeeded":
-				return status, fmt.Errorf("workspace pod %s is in final state: %s - %s",
+			case models.WorkspaceStatusFailing, models.WorkspaceStatusStopped:
+				return status, fmt.Errorf("workspace %s is in final state: %s - %s",
 					podName, status.Status, status.Message)
 
-			case "Pending":
+			case models.WorkspaceStatusProvisioning:
 				if time.Since(startTime) > time.Duration(opts.Timeout)*time.Second {
-					return status, fmt.Errorf("workspace pod %s has been pending for too long: %s",
+					return status, fmt.Errorf("workspace %s has been starting for too long: %s",
 						podName, status.Message)
 				}
 			}
@@ -336,7 +336,7 @@ func (w *Workspace) watchEvents(ctx context.Context, podName string, criticalErr
 						Message:    k8sEvent.Message,
 					}
 
-					w.log.Info().Msg(eventMessage.String())
+					w.log.Debug().Msg(eventMessage.String())
 					if opts.Messages != nil {
 						opts.Messages <- eventMessage
 					}
