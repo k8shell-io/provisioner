@@ -214,6 +214,10 @@ github.com/k8shell-io/common v0.12.120 h1:WFQGAyVhSKEDtrrQ09yL6L8Uy8LZoXEsSNwHqW
 github.com/k8shell-io/common v0.12.120/go.mod h1:2M6NGERtuyaWAD7Q0qCob5+6sMTHBMy1pJ0/zLK6cLQ=
 github.com/k8shell-io/common v0.12.121 h1:6CvobackwuF4iNfrsW91xizQWK8Tdy7m5G4lF0qBCmo=
 github.com/k8shell-io/common v0.12.121/go.mod h1:2M6NGERtuyaWAD7Q0qCob5+6sMTHBMy1pJ0/zLK6cLQ=
+github.com/k8shell-io/common v0.12.122 h1:PsSDlkYOmjWWUbbnoqvUOuU81OFlNxJzCNxUVhbtHPo=
+github.com/k8shell-io/common v0.12.122/go.mod h1:2M6NGERtuyaWAD7Q0qCob5+6sMTHBMy1pJ0/zLK6cLQ=
+github.com/k8shell-io/common v0.12.123 h1:yu7Cmfiq1vbl90ioBXXaeNt4bFiPquQGKcKQkiIdz0I=
+github.com/k8shell-io/common v0.12.123/go.mod h1:2M6NGERtuyaWAD7Q0qCob5+6sMTHBMy1pJ0/zLK6cLQ=
 github.com/k8shell-io/identity/pkg/api v0.1.11 h1:19FgSAZIvwCH03UPO1xKK7ezJrqvVsddgSnJpeCTCWw=
 github.com/k8shell-io/identity/pkg/api v0.1.11/go.mod h1:7MBXrvnAz8KA1kAjfDFlnqCZ+X4yjG0gUaNLoQ3CAFg=
 github.com/k8shell-io/yaml-cel v0.2.6 h1:Te7o2b1Y/9Gm6Z3j29zGKzOnGn3NoDu1tpq4ib3mua0=
