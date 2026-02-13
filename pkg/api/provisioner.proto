@@ -21,10 +21,13 @@ message FindWorkspaceRequest {
 }
 
 message GetWorkspacesRequest {
+  string workspace = 1;
   string username = 2;
   string organization = 3;
   string blueprint = 4;
-  string workspace = 1;
+  string repo_name = 5;
+  string repo_owner = 6;
+  string repo_ref = 7;
 }
 
 message GetWorkspacesResponse {

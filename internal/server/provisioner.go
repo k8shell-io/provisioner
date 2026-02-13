@@ -57,6 +57,9 @@ func (p *ProvisionerService) GetWorkspaces(ctx context.Context,
 			Blueprint:    req.Blueprint,
 			Organization: req.Organization,
 			Workspace:    req.Workspace,
+			RepoName:     req.RepoName,
+			RepoOwner:    req.RepoOwner,
+			RepoRef:      req.RepoRef,
 		})
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "Failed to list workspaces: %v", err)

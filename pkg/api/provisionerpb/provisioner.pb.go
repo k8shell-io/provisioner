@@ -68,10 +68,13 @@ func (x *FindWorkspaceRequest) GetWorkspace() string {
 
 type GetWorkspacesRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
+	Workspace     string                 `protobuf:"bytes,1,opt,name=workspace,proto3" json:"workspace,omitempty"`
 	Username      string                 `protobuf:"bytes,2,opt,name=username,proto3" json:"username,omitempty"`
 	Organization  string                 `protobuf:"bytes,3,opt,name=organization,proto3" json:"organization,omitempty"`
 	Blueprint     string                 `protobuf:"bytes,4,opt,name=blueprint,proto3" json:"blueprint,omitempty"`
-	Workspace     string                 `protobuf:"bytes,1,opt,name=workspace,proto3" json:"workspace,omitempty"`
+	RepoName      string                 `protobuf:"bytes,5,opt,name=repo_name,json=repoName,proto3" json:"repo_name,omitempty"`
+	RepoOwner     string                 `protobuf:"bytes,6,opt,name=repo_owner,json=repoOwner,proto3" json:"repo_owner,omitempty"`
+	RepoRef       string                 `protobuf:"bytes,7,opt,name=repo_ref,json=repoRef,proto3" json:"repo_ref,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -106,6 +109,13 @@ func (*GetWorkspacesRequest) Descriptor() ([]byte, []int) {
 	return file_pkg_api_provisioner_proto_rawDescGZIP(), []int{1}
 }
 
+func (x *GetWorkspacesRequest) GetWorkspace() string {
+	if x != nil {
+		return x.Workspace
+	}
+	return ""
+}
+
 func (x *GetWorkspacesRequest) GetUsername() string {
 	if x != nil {
 		return x.Username
@@ -127,9 +137,23 @@ func (x *GetWorkspacesRequest) GetBlueprint() string {
 	return ""
 }
 
-func (x *GetWorkspacesRequest) GetWorkspace() string {
+func (x *GetWorkspacesRequest) GetRepoName() string {
 	if x != nil {
-		return x.Workspace
+		return x.RepoName
+	}
+	return ""
+}
+
+func (x *GetWorkspacesRequest) GetRepoOwner() string {
+	if x != nil {
+		return x.RepoOwner
+	}
+	return ""
+}
+
+func (x *GetWorkspacesRequest) GetRepoRef() string {
+	if x != nil {
+		return x.RepoRef
 	}
 	return ""
 }
@@ -644,12 +668,16 @@ const file_pkg_api_provisioner_proto_rawDesc = "" +
 	"\n" +
 	"\x19pkg/api/provisioner.proto\x12\vprovisioner\x1a\x1ccommon/pkg/gapi/common.proto\"4\n" +
 	"\x14FindWorkspaceRequest\x12\x1c\n" +
-	"\tworkspace\x18\x01 \x01(\tR\tworkspace\"\x92\x01\n" +
-	"\x14GetWorkspacesRequest\x12\x1a\n" +
+	"\tworkspace\x18\x01 \x01(\tR\tworkspace\"\xe9\x01\n" +
+	"\x14GetWorkspacesRequest\x12\x1c\n" +
+	"\tworkspace\x18\x01 \x01(\tR\tworkspace\x12\x1a\n" +
 	"\busername\x18\x02 \x01(\tR\busername\x12\"\n" +
 	"\forganization\x18\x03 \x01(\tR\forganization\x12\x1c\n" +
-	"\tblueprint\x18\x04 \x01(\tR\tblueprint\x12\x1c\n" +
-	"\tworkspace\x18\x01 \x01(\tR\tworkspace\"P\n" +
+	"\tblueprint\x18\x04 \x01(\tR\tblueprint\x12\x1b\n" +
+	"\trepo_name\x18\x05 \x01(\tR\brepoName\x12\x1d\n" +
+	"\n" +
+	"repo_owner\x18\x06 \x01(\tR\trepoOwner\x12\x19\n" +
+	"\brepo_ref\x18\a \x01(\tR\arepoRef\"P\n" +
 	"\x15GetWorkspacesResponse\x127\n" +
 	"\n" +
 	"workspaces\x18\x01 \x03(\v2\x17.common.WorkspaceStatusR\n" +

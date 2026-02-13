@@ -46,12 +46,15 @@ type Values struct {
 	Values map[string]interface{}
 }
 
-// GetWorkspacesOptions defines the options for retrieving workspaces with filtering and pagination
+// GetWorkspacesOptions defines the options for retrieving workspaces with filtering
 type GetWorkspacesOptions struct {
-	Username     string // filters for workspaces based on labels; empty means no filtering
-	Organization string // filters for workspaces based on labels; empty means no filtering
-	Blueprint    string // filters for workspaces based on labels; empty means no filtering
-	Workspace    string // filters for workspaces based on labels; empty means no filtering
+	Username     string
+	Organization string
+	Blueprint    string
+	Workspace    string
+	RepoName     string
+	RepoOwner    string
+	RepoRef      string
 }
 
 // GetWorkspacesResult defines the result structure for GetWorkspaces function,
@@ -97,6 +100,15 @@ func GetWorkspaces(ctx context.Context, v1 typedcorev1.CoreV1Interface, namespac
 	}
 	if opts.Blueprint != "" {
 		labels["k8shell.io/blueprint"] = opts.Blueprint
+	}
+	if opts.RepoName != "" {
+		labels["k8shell.io/repo-name"] = opts.RepoName
+	}
+	if opts.RepoOwner != "" {
+		labels["k8shell.io/repo-owner"] = opts.RepoOwner
+	}
+	if opts.RepoRef != "" {
+		labels["k8shell.io/repo-ref"] = opts.RepoRef
 	}
 
 	selector := GetSelector(labels)
