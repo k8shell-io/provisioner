@@ -10,14 +10,12 @@ blueprints:
     subdomain: !cel "user.organization"
     hostname: !cel "user.username + '-' + metadata.name"
 
-    k8shelld: 
-      image: k8shell-base/k8shelld:v0.11.9-1
+    k8shelld:
+      image: k8shell-base/k8shelld:v0.12.61
       imagePullPolicy: Always
       ignoreOrphans:
         - .*JetBrains.*
-      # connection:
-      #   allowAnyNS: false
-      #   allowAnyNSA: false
+        - .*zed.*
 
     portForwarding:
       - localnetworks:0
@@ -43,13 +41,22 @@ blueprints:
       # the actual group id will be 100000 + group_id - 1 where 100000 is subordinate group id
       groupId: 999
 
-      # subordinate group id used in the dind image; 
+      # subordinate group id used in the dind image;
       # this should be set to 100000 when the dind image is rootless otehrwise it should be set to 0
       #subgid: 100000
       subgid: 0
 
       # use the same volumes as in the main workspace
       parentStorages: true
+
+      # list of storages in the workspace
+      storages:
+        graphdb:
+          enabled: true
+          storageClass: zfs-localpv
+          size: 5Gi
+          path: "/var/lib/docker"
+          readonly: False
 
     # list of storages in the workspace
     storages:
@@ -58,7 +65,7 @@ blueprints:
         storageClass: !cel env("WORKSPACE_STORAGE_CLASS")
         size: 10Gi
         path: !cel "'/home/' + user.username"
-        readonly: False      
+        readonly: False
         annotations:
           zfs-csi.k8shell.io/volume-name: !cel "metadata.name + '/' + user.username"
           zfs-csi.k8shell.io/retain-on-delete: "true"
@@ -78,15 +85,7 @@ blueprints:
 
     initScripts:
       - workspace@: |
-          ln -s /opt/shared $HOME/shared            
-
-      - vscode@: |
-          # add the vscode server settings
-          mkdir -p $HOME/.vscode-server/data/Machine
-          [ ! -f /$HOME/.vscode-server/data/Machine/settings.json ] && \
-          if [ ! -f /$HOME/.vscode-server/data/Machine/settings.json ] && [ -f /opt/ext/vscode-server/settings.json ]; then
-            cp /opt/ext/vscode-server/settings.json $HOME/.vscode-server/data/Machine/settings.json
-          fi
+          ln -s /opt/shared $HOME/shared
 
       - git@: |
           # set the git configuration
@@ -101,5 +100,31 @@ blueprints:
             mkdir -p $HOME/.docker
             echo "{\"credsStore\":\"k8shell\"}" > $HOME/.docker/config.json
           fi
-            
+
+    enableApps: true
+    apps:
+      vscode:
+        enabled: false
+        listen: 8080
+        installAsRoot: true
+        binary: "/usr/bin/code-server"
+        versionCmd: ["/usr/bin/code-server", "--version"]
+        versionRegex: "^([0-9]+\\.[0-9]+\\.[0-9]+)"
+        install: |
+          curl -fsSL https://code-server.dev/install.sh | sh
+        start: ["/usr/bin/code-server", "--auth=none", "--bind-addr=127.0.0.1:8080", "."]
+        restartPolicy: always
+        protocol: "http"
+
+      jupyter:
+        enabled: false
+        listen: 8888
+        binary: "${HOME}/.local/bin/jupyter-lab"
+        versionCmd: ["${HOME}/.local/bin/jupyter-lab", "--version"]
+        versionRegex: "^([0-9]+\\.[0-9]+\\.[0-9]+)"
+        install: |
+          pip install jupyter
+        start: ["${HOME}/.local/bin/jupyter-lab", "--ip=0.0.0.0", "--port=8888", "--no-browser"]
+        restartPolicy: always
+        protocol: "http"
 
