@@ -13,7 +13,7 @@
             "program": "main.go",
             "env": {
                 "SECRET_FILES": "/opt/shared/provisioner/secrets",
-                "WORKSPACE_REGISTRY": "fitcr.ksi.in.fit.cvut.cz",
+                "WORKSPACE_REGISTRY": "registry.k8shell.io",
                 "WORKSPACE_STORAGE_CLASS": "zfs-csi-k8shell-test",
                 // "TARGET_NAMESPACE": "workspaces-test", // k8shell-workspace
                 "TARGET_NAMESPACE": "workspaces-staging",

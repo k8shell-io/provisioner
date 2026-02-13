@@ -158,7 +158,7 @@ func (p *ProvisionerService) ProvisionWorkspaceStream(req *provisionerpb.Provisi
 					Type:       "status",
 					Timestamp:  time.Now().Format("2006-01-02 15:04:05"),
 					ObjectName: workspace.Name,
-					Status:     status.Status,
+					Status:     string(status.Status),
 					Message:    status.Message,
 				}); err != nil {
 					return err

@@ -5,7 +5,7 @@ targetNamespace: ${TARGET_NAMESPACE}
 
 defaultRegistry:
   host: ${WORKSPACE_REGISTRY}
-  certCA: !file ${SECRET_FILES}/private_ca.pem
+  # certCA: !file ${SECRET_FILES}/private_ca.pem
   username: !file ${SECRET_FILES}/registry_username
   password: !file ${SECRET_FILES}/registry_password
 
