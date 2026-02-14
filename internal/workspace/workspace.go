@@ -155,12 +155,16 @@ func GetWorkspaces(ctx context.Context, v1 typedcorev1.CoreV1Interface, namespac
 
 		cpu := p.Spec.Containers[0].Resources.Limits.Cpu().String()
 		memory := p.Spec.Containers[0].Resources.Limits.Memory().String()
+		restarts := podRestartCount(p)
+		_, lastFailMsg := podLastFailure(p)
 
 		out = append(out, &models.WorkspaceStatus{
 			PodStatus: models.PodStatus{
-				Created: p.CreationTimestamp.Time,
-				Status:  workspacePodStatus(p),
-				Message: workspacePodMessage(p),
+				Created:         p.CreationTimestamp.Time,
+				Status:          workspacePodStatus(p),
+				Message:         workspacePodMessage(p),
+				Restarts:        restarts,
+				LastFailMessage: lastFailMsg,
 			},
 			Name:         nameLabel,
 			Username:     p.Labels["k8shell.io/username"],
@@ -642,7 +646,6 @@ func workspacePodMessage(pod *corev1.Pod) string {
 // podTopReason returns the "best" actionable reason/message from init containers first,
 // then regular containers. This is what catches CrashLoopBackOff while phase is Running.
 func podTopReason(pod *corev1.Pod) (reason string, message string) {
-	// Init containers
 	for _, cs := range pod.Status.InitContainerStatuses {
 		if cs.State.Waiting != nil && cs.State.Waiting.Reason != "" {
 			return cs.State.Waiting.Reason, cs.State.Waiting.Message
@@ -655,15 +658,10 @@ func podTopReason(pod *corev1.Pod) (reason string, message string) {
 		}
 	}
 
-	// Regular containers
 	for _, cs := range pod.Status.ContainerStatuses {
-		// Waiting reason is key for CrashLoopBackOff, ImagePullBackOff, etc.
 		if cs.State.Waiting != nil && cs.State.Waiting.Reason != "" {
-			// Skip generic noise if you want:
-			// if cs.State.Waiting.Reason == "ContainerCreating" { continue }
 			return cs.State.Waiting.Reason, cs.State.Waiting.Message
 		}
-		// Terminated with non-zero exit
 		if cs.State.Terminated != nil && cs.State.Terminated.ExitCode != 0 {
 			if cs.State.Terminated.Reason != "" {
 				return cs.State.Terminated.Reason, cs.State.Terminated.Message
@@ -713,4 +711,69 @@ func isProvisioningReason(reason string) bool {
 	default:
 		return false
 	}
+}
+
+// podRestartCount returns total restarts across init + regular containers.
+func podRestartCount(pod *corev1.Pod) int32 {
+	if pod == nil {
+		return 0
+	}
+
+	var total int32
+	for _, cs := range pod.Status.InitContainerStatuses {
+		total += cs.RestartCount
+	}
+	for _, cs := range pod.Status.ContainerStatuses {
+		total += cs.RestartCount
+	}
+	return total
+}
+
+// podLastFailure returns the most recent non-zero exit termination reason/message.
+// It prefers the latest FinishedAt among init/regular containers.
+// If no termination is found, it falls back to a failing waiting reason (e.g. CrashLoopBackOff).
+func podLastFailure(pod *corev1.Pod) (reason string, message string) {
+	if pod == nil {
+		return "", ""
+	}
+
+	var bestReason, bestMsg string
+	var bestAt time.Time
+	found := false
+
+	considerTerminated := func(t *corev1.ContainerStateTerminated) {
+		if t == nil || t.ExitCode == 0 {
+			return
+		}
+		at := t.FinishedAt.Time
+		if !found || at.After(bestAt) {
+			found = true
+			bestAt = at
+			bestReason = t.Reason
+			bestMsg = t.Message
+			if bestReason == "" {
+				bestReason = "ContainerTerminated"
+			}
+		}
+	}
+
+	for _, cs := range pod.Status.InitContainerStatuses {
+		considerTerminated(cs.State.Terminated)
+		considerTerminated(cs.LastTerminationState.Terminated)
+	}
+	for _, cs := range pod.Status.ContainerStatuses {
+		considerTerminated(cs.State.Terminated)
+		considerTerminated(cs.LastTerminationState.Terminated)
+	}
+
+	if found {
+		return bestReason, bestMsg
+	}
+
+	r, m := podTopReason(pod)
+	if r != "" && isFailingReason(r) {
+		return r, m
+	}
+
+	return "", ""
 }
