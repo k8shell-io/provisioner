@@ -87,6 +87,7 @@ func FindWorkspace(ctx context.Context, v1 typedcorev1.CoreV1Interface, namespac
 // similar to GetWorkspaceStatus, without fetching Service/Secret per workspace.
 func GetWorkspaces(ctx context.Context, v1 typedcorev1.CoreV1Interface, namespace string,
 	opts GetWorkspacesOptions) (*GetWorkspacesResult, error) {
+
 	labels := map[string]string{}
 	labels["k8shell.io/app"] = "k8shell-workspace"
 
@@ -156,7 +157,7 @@ func GetWorkspaces(ctx context.Context, v1 typedcorev1.CoreV1Interface, namespac
 		cpu := p.Spec.Containers[0].Resources.Limits.Cpu().String()
 		memory := p.Spec.Containers[0].Resources.Limits.Memory().String()
 		restarts := podRestartCount(p)
-		_, lastFailMsg := podLastFailure(p)
+		lastFailMsg := podLastFailure(p)
 
 		out = append(out, &models.WorkspaceStatus{
 			PodStatus: models.PodStatus{
@@ -732,9 +733,9 @@ func podRestartCount(pod *corev1.Pod) int32 {
 // podLastFailure returns the most recent non-zero exit termination reason/message.
 // It prefers the latest FinishedAt among init/regular containers.
 // If no termination is found, it falls back to a failing waiting reason (e.g. CrashLoopBackOff).
-func podLastFailure(pod *corev1.Pod) (reason string, message string) {
+func podLastFailure(pod *corev1.Pod) string {
 	if pod == nil {
-		return "", ""
+		return ""
 	}
 
 	var bestReason, bestMsg string
@@ -767,13 +768,29 @@ func podLastFailure(pod *corev1.Pod) (reason string, message string) {
 	}
 
 	if found {
-		return bestReason, bestMsg
+		return formatLastFailMessage(bestReason, bestMsg)
 	}
 
 	r, m := podTopReason(pod)
 	if r != "" && isFailingReason(r) {
-		return r, m
+		return formatLastFailMessage(r, m)
 	}
 
-	return "", ""
+	return ""
+}
+
+func formatLastFailMessage(reason, msg string) string {
+	reason = strings.TrimSpace(reason)
+	msg = strings.TrimSpace(msg)
+
+	if reason == "" && msg == "" {
+		return ""
+	}
+	if reason != "" && msg != "" {
+		return reason + ": " + msg
+	}
+	if reason != "" {
+		return reason
+	}
+	return msg
 }
