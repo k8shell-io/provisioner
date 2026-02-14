@@ -38,7 +38,7 @@ func NewProvisionerService(server *Server) *ProvisionerService {
 // FindWorkspace retrieves the details of a specific workspace
 func (p *ProvisionerService) FindWorkspace(ctx context.Context,
 	req *provisionerpb.FindWorkspaceRequest) (*commonpb.WorkspaceStatus, error) {
-	s, err := ws.FindWorkspace(ctx, p.server.helm.KubeClient().CoreV1(),
+	s, _, err := ws.FindWorkspace(ctx, p.server.helm.KubeClient().CoreV1(),
 		p.server.helm.TargetNamespace(), req.Workspace)
 	if err != nil {
 		if errors.Is(err, models.ErrWorkspaceNotFound) {
@@ -316,7 +316,8 @@ func (p *ProvisionerService) UpgradeWorkspaceResources(ctx context.Context,
 		return nil, status.Errorf(codes.InvalidArgument, "at least one of cpu or memory must be specified")
 	}
 
-	release, err := ws.FindworkspaceByName(ctx, p.server.helm, name)
+	_, pod, err := ws.FindWorkspace(ctx, p.server.helm.KubeClient().CoreV1(),
+		p.server.helm.TargetNamespace(), name)
 	if err != nil {
 		if errors.Is(err, models.ErrWorkspaceNotFound) {
 			return nil, status.Errorf(codes.NotFound, "Workspace %s not found", name)
@@ -324,7 +325,7 @@ func (p *ProvisionerService) UpgradeWorkspaceResources(ctx context.Context,
 		return nil, status.Errorf(codes.Internal, "Failed to find workspace: %v", err)
 	}
 
-	wl, err := ws.ParseWorkspaceLabels(release.Labels)
+	wl, err := ws.ParseWorkspaceLabels(pod.Labels)
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "Failed to parse workspace labels: %v", err)
 	}
@@ -335,27 +336,7 @@ func (p *ProvisionerService) UpgradeWorkspaceResources(ctx context.Context,
 	}
 	user := gapi.ProtoToUser(userpb)
 
-	scope, errx := p.server.GetBlueprintScope(wl.Blueprint, user, nil, name)
-	if errx != nil {
-		return nil, p.convertToGRPCError(errx)
-	}
-
-	if !user.HasBlueprint(wl.Blueprint) {
-		return nil, status.Errorf(codes.PermissionDenied,
-			"Access denied: user %s is not authorized to use blueprint %s", wl.Username, wl.Blueprint)
-	}
-
-	blueprintObj, err := p.server.bpManager.GetBlueprint(wl.Blueprint, scope)
-	if err != nil {
-		return nil, status.Errorf(codes.NotFound, "Blueprint %s not found", wl.Blueprint)
-	}
-
-	if blueprintObj.IsTemplate {
-		return nil, status.Errorf(codes.InvalidArgument,
-			"Blueprint %s is a template and cannot be used to upgrade a workspace", wl.Blueprint)
-	}
-
-	w, err := ws.NewWorkspace(name, blueprintObj, user, wl.UserStr, p.server.helm, p.server.Identity,
+	w, err := ws.NewWorkspace(name, nil, user, wl.UserStr, p.server.helm, p.server.Identity,
 		&p.server.config.CertManager, &p.server.config.K8shellCapabilities)
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "Failed to create workspace for upgrade: %v", err)
@@ -363,6 +344,9 @@ func (p *ProvisionerService) UpgradeWorkspaceResources(ctx context.Context,
 
 	err = w.ResizeResources(ctx, req.Cpu, req.Memory)
 	if err != nil {
+		if errors.Is(err, ws.ErrInvalidValue) {
+			return nil, status.Errorf(codes.InvalidArgument, "Failed to resize workspace resources: %v", err)
+		}
 		return nil, status.Errorf(codes.Internal, "Failed to resize workspace resources: %v", err)
 	}
 

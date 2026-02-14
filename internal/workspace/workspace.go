@@ -61,25 +61,26 @@ type GetWorkspacesOptions struct {
 // including the list of workspaces and pagination token
 type GetWorkspacesResult struct {
 	Workspaces []*models.WorkspaceStatus // list of workspaces matching the filters and pagination
+	Pods       []corev1.Pod              // corresponding pods for the workspaces, used for internal processing
 	Continue   string                    // token for next page; empty when no more pages
 }
 
 // FindWorkspace finds a workspace by name and returns its status
 func FindWorkspace(ctx context.Context, v1 typedcorev1.CoreV1Interface, namespace string,
-	workspace string) (*models.WorkspaceStatus, error) {
+	workspace string) (*models.WorkspaceStatus, *corev1.Pod, error) {
 	ws, err := GetWorkspaces(ctx, v1, namespace, GetWorkspacesOptions{
 		Workspace: workspace,
 	})
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	if len(ws.Workspaces) == 0 {
-		return nil, fmt.Errorf("%w: %s", models.ErrWorkspaceNotFound, workspace)
+		return nil, nil, fmt.Errorf("%w: %s", models.ErrWorkspaceNotFound, workspace)
 	}
 	if len(ws.Workspaces) > 1 {
-		return nil, fmt.Errorf("multiple workspaces found with name %s", workspace)
+		return nil, nil, fmt.Errorf("multiple workspaces found with name %s", workspace)
 	}
-	return ws.Workspaces[0], nil
+	return ws.Workspaces[0], &ws.Pods[0], nil
 }
 
 // GetWorkspaces lists workspace pods matching optional filters and returns status details
@@ -127,6 +128,10 @@ func GetWorkspaces(ctx context.Context, v1 typedcorev1.CoreV1Interface, namespac
 	for i := range podList.Items {
 		p := &podList.Items[i]
 
+		if len(p.Spec.Containers) == 0 {
+			continue
+		}
+
 		var splash string
 		if splashAnnotation, exists := p.Annotations["workspace.k8shell.io/splash"]; exists {
 			if decoded, derr := base64.StdEncoding.DecodeString(splashAnnotation); derr == nil {
@@ -148,6 +153,9 @@ func GetWorkspaces(ctx context.Context, v1 typedcorev1.CoreV1Interface, namespac
 			nameLabel = p.Name
 		}
 
+		cpu := p.Spec.Containers[0].Resources.Limits.Cpu().String()
+		memory := p.Spec.Containers[0].Resources.Limits.Memory().String()
+
 		out = append(out, &models.WorkspaceStatus{
 			PodStatus: models.PodStatus{
 				Created: p.CreationTimestamp.Time,
@@ -167,11 +175,14 @@ func GetWorkspaces(ctx context.Context, v1 typedcorev1.CoreV1Interface, namespac
 			TLSEnabled:   tlsEnabled,
 			Splash:       splash,
 			AppVersion:   appVersion,
+			CPU:          cpu,
+			Memory:       memory,
 		})
 	}
 
 	return &GetWorkspacesResult{
 		Workspaces: out,
+		Pods:       podList.Items,
 		Continue:   podList.Continue,
 	}, nil
 }
