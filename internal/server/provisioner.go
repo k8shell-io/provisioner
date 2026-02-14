@@ -366,6 +366,10 @@ func (p *ProvisionerService) DeleteWorkspace(ctx context.Context,
 		return nil, status.Errorf(codes.InvalidArgument, "workspace name is required")
 	}
 
+	if req.DelaySeconds > 60 {
+		return nil, status.Errorf(codes.InvalidArgument, "delay seconds cannot be greater than 60 seconds")
+	}
+
 	w, err := ws.NewWorkspaceFromHelmRelease(ctx, name, p.server.helm, p.server.Identity,
 		&p.server.config.CertManager, &p.server.config.K8shellCapabilities)
 	if err != nil {
@@ -401,7 +405,7 @@ func (p *ProvisionerService) DeleteWorkspace(ctx context.Context,
 			}
 		}()
 
-		time.Sleep(2 * time.Second)
+		time.Sleep(time.Duration(req.DelaySeconds) * time.Second)
 		p.log.Debug().Msgf("Starting async deletion of workspace %s", name)
 
 		err := w.Uninstall(context.Background(), time.Duration(10)*time.Second, false, false)

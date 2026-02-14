@@ -82,6 +82,7 @@ message ProvisionEvent {
 
 message DeleteWorkspaceRequest {
   string workspace = 1;
+  uint32 delay_seconds = 2;
 }
 
 message DeleteWorkspaceResponse {

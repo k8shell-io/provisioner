@@ -661,6 +661,7 @@ func (x *ProvisionEvent) GetMessage() string {
 type DeleteWorkspaceRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Workspace     string                 `protobuf:"bytes,1,opt,name=workspace,proto3" json:"workspace,omitempty"`
+	DelaySeconds  uint32                 `protobuf:"varint,2,opt,name=delay_seconds,json=delaySeconds,proto3" json:"delay_seconds,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -700,6 +701,13 @@ func (x *DeleteWorkspaceRequest) GetWorkspace() string {
 		return x.Workspace
 	}
 	return ""
+}
+
+func (x *DeleteWorkspaceRequest) GetDelaySeconds() uint32 {
+	if x != nil {
+		return x.DelaySeconds
+	}
+	return 0
 }
 
 type DeleteWorkspaceResponse struct {
@@ -799,9 +807,10 @@ const file_pkg_api_provisioner_proto_rawDesc = "" +
 	"\vobject_name\x18\x03 \x01(\tR\n" +
 	"objectName\x12\x16\n" +
 	"\x06status\x18\x04 \x01(\tR\x06status\x12\x18\n" +
-	"\amessage\x18\x05 \x01(\tR\amessage\"6\n" +
+	"\amessage\x18\x05 \x01(\tR\amessage\"[\n" +
 	"\x16DeleteWorkspaceRequest\x12\x1c\n" +
-	"\tworkspace\x18\x01 \x01(\tR\tworkspace\"3\n" +
+	"\tworkspace\x18\x01 \x01(\tR\tworkspace\x12#\n" +
+	"\rdelay_seconds\x18\x02 \x01(\rR\fdelaySeconds\"3\n" +
 	"\x17DeleteWorkspaceResponse\x12\x18\n" +
 	"\amessage\x18\x01 \x01(\tR\amessage2\xce\x04\n" +
 	"\x12ProvisionerService\x12V\n" +
