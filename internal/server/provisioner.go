@@ -304,12 +304,16 @@ func (p *ProvisionerService) convertToGRPCError(err error) error {
 	return status.Errorf(codes.Internal, "%s", err.Error())
 }
 
-func (p *ProvisionerService) UpgradeWorkspace(ctx context.Context,
-	req *provisionerpb.UpgradeWorkspaceRequest) (*provisionerpb.UpgradeWorkspaceResponse, error) {
+func (p *ProvisionerService) UpgradeWorkspaceResources(ctx context.Context,
+	req *provisionerpb.UpgradeWorkspaceResourcesRequest) (*provisionerpb.UpgradeWorkspaceResponse, error) {
 
 	name := req.Workspace
 	if name == "" {
 		return nil, status.Errorf(codes.InvalidArgument, "workspace name is required")
+	}
+
+	if req.Cpu == "" && req.Memory == "" {
+		return nil, status.Errorf(codes.InvalidArgument, "at least one of cpu or memory must be specified")
 	}
 
 	release, err := ws.FindworkspaceByName(ctx, p.server.helm, name)
@@ -319,59 +323,54 @@ func (p *ProvisionerService) UpgradeWorkspace(ctx context.Context,
 		}
 		return nil, status.Errorf(codes.Internal, "Failed to find workspace: %v", err)
 	}
-	username := release.Labels["k8shell.io/username"]
-	bpName := release.Labels["k8shell.io/blueprint"]
 
-	var userStr *models.CanonicalUserStr
-	userstrStr, ok := release.Labels["k8shell.io/userstr"]
-	if ok {
-		userStr, err = models.NewCanonicalUserStrFromBase64(userstrStr)
-		if err != nil {
-			return nil, status.Errorf(codes.Internal, "Failed to parse userstr from workspace labels: %v", err)
-		}
+	wl, err := ws.ParseWorkspaceLabels(release.Labels)
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "Failed to parse workspace labels: %v", err)
 	}
 
-	userpb, err := p.server.Identity.FindUser(ctx, &identitypb.FindUserRequest{Username: username})
+	userpb, err := p.server.Identity.FindUser(ctx, &identitypb.FindUserRequest{Username: wl.Username})
 	if err != nil {
-		return nil, fmt.Errorf("failed to get user %s: %w", username, err)
+		return nil, fmt.Errorf("failed to get user %s: %w", wl.Username, err)
 	}
 	user := gapi.ProtoToUser(userpb)
 
-	scope, errx := p.server.GetBlueprintScope(bpName, user, nil, name)
+	scope, errx := p.server.GetBlueprintScope(wl.Blueprint, user, nil, name)
 	if errx != nil {
 		return nil, p.convertToGRPCError(errx)
 	}
 
-	if !user.HasBlueprint(bpName) {
+	if !user.HasBlueprint(wl.Blueprint) {
 		return nil, status.Errorf(codes.PermissionDenied,
-			"Access denied: user %s is not authorized to use blueprint %s", username, bpName)
+			"Access denied: user %s is not authorized to use blueprint %s", wl.Username, wl.Blueprint)
 	}
 
-	blueprintObj, err := p.server.bpManager.GetBlueprint(bpName, scope)
+	blueprintObj, err := p.server.bpManager.GetBlueprint(wl.Blueprint, scope)
 	if err != nil {
-		return nil, status.Errorf(codes.NotFound, "Blueprint %s not found", bpName)
+		return nil, status.Errorf(codes.NotFound, "Blueprint %s not found", wl.Blueprint)
 	}
 
 	if blueprintObj.IsTemplate {
 		return nil, status.Errorf(codes.InvalidArgument,
-			"Blueprint %s is a template and cannot be used to upgrade a workspace", bpName)
+			"Blueprint %s is a template and cannot be used to upgrade a workspace", wl.Blueprint)
 	}
 
-	w, err := ws.NewWorkspace(name, blueprintObj, user, userStr, p.server.helm, p.server.Identity,
+	w, err := ws.NewWorkspace(name, blueprintObj, user, wl.UserStr, p.server.helm, p.server.Identity,
 		&p.server.config.CertManager, &p.server.config.K8shellCapabilities)
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "Failed to create workspace for upgrade: %v", err)
 	}
 
-	_, err = w.Upgrade(ctx, nil)
+	err = w.ResizeResources(ctx, req.Cpu, req.Memory)
 	if err != nil {
-		return nil, status.Errorf(codes.Internal, "Failed to upgrade workspace %s: %v", name, err)
+		return nil, status.Errorf(codes.Internal, "Failed to resize workspace resources: %v", err)
 	}
 
 	return &provisionerpb.UpgradeWorkspaceResponse{
 		Status:  "Success",
-		Message: fmt.Sprintf("Workspace %s upgraded successfully", name),
+		Message: fmt.Sprintf("Workspace %s resources upgraded successfully", name),
 	}, nil
+
 }
 
 // DeleteWorkspace deletes a workspace asynchronously with distributed locking

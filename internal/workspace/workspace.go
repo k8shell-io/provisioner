@@ -441,6 +441,58 @@ func toMap(b any) (map[string]interface{}, error) {
 
 // *** helpers
 
+// WorkspaceLabels holds parsed workspace metadata stored in k8shell labels.
+type WorkspaceLabels struct {
+	Workspace    string
+	Username     string
+	Organization string
+	Blueprint    string
+	RepoOwner    string
+	RepoName     string
+	RepoRef      string
+	AppVersion   string
+	UserStr      *models.CanonicalUserStr
+}
+
+// ParseWorkspaceLabels parses the label set attached to a workspace pod
+func ParseWorkspaceLabels(labels map[string]string) (*WorkspaceLabels, error) {
+	if labels == nil {
+		return nil, fmt.Errorf("workspace labels are nil")
+	}
+
+	username, ok := labels["k8shell.io/username"]
+	if !ok || username == "" {
+		return nil, fmt.Errorf("missing label k8shell.io/username")
+	}
+
+	blueprint, ok := labels["k8shell.io/blueprint"]
+	if !ok || blueprint == "" {
+		return nil, fmt.Errorf("missing label k8shell.io/blueprint")
+	}
+
+	userstrB64, ok := labels["k8shell.io/userstr"]
+	if !ok || userstrB64 == "" {
+		return nil, fmt.Errorf("missing label k8shell.io/userstr")
+	}
+
+	canUser, err := models.NewCanonicalUserStrFromBase64(userstrB64)
+	if err != nil {
+		return nil, fmt.Errorf("parse k8shell.io/userstr: %w", err)
+	}
+
+	return &WorkspaceLabels{
+		Workspace:    labels["k8shell.io/workspace"],
+		Username:     username,
+		Organization: labels["k8shell.io/organization"],
+		Blueprint:    blueprint,
+		RepoOwner:    labels["k8shell.io/repo-owner"],
+		RepoName:     labels["k8shell.io/repo-name"],
+		RepoRef:      labels["k8shell.io/repo-ref"],
+		AppVersion:   labels["app.kubernetes.io/version"],
+		UserStr:      canUser,
+	}, nil
+}
+
 func getNamespace() string {
 	data, err := os.ReadFile("/var/run/secrets/kubernetes.io/serviceaccount/namespace")
 	if err != nil {
