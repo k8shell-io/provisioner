@@ -35,7 +35,7 @@ func NewProvisionerService(server *Server) *ProvisionerService {
 	}
 }
 
-// FindWorkspace retrieves the status of a specific workspace
+// FindWorkspace retrieves the details of a specific workspace
 func (p *ProvisionerService) FindWorkspace(ctx context.Context,
 	req *provisionerpb.FindWorkspaceRequest) (*commonpb.WorkspaceStatus, error) {
 	s, err := ws.FindWorkspace(ctx, p.server.helm.KubeClient().CoreV1(),
@@ -99,10 +99,10 @@ func (p *ProvisionerService) ProvisionWorkspaceStream(req *provisionerpb.Provisi
 	}
 
 	if err := stream.Send(&provisionerpb.ProvisionEvent{
-		Type:       "status",
+		Type:       string(models.WorkspaceStreamEventTypeStatus),
 		Timestamp:  time.Now().Format("2006-01-02 15:04:05"),
 		ObjectName: workspace.Name,
-		Status:     "Starting",
+		Status:     string(models.WorkspaceStatusProvisioning),
 		Message:    "Provisioning started",
 	}); err != nil {
 		return err
@@ -149,7 +149,7 @@ func (p *ProvisionerService) ProvisionWorkspaceStream(req *provisionerpb.Provisi
 			}
 			if req.SendEvents {
 				if err := stream.Send(&provisionerpb.ProvisionEvent{
-					Type:       "event",
+					Type:       string(models.WorkspaceStreamEventTypeEvent),
 					Timestamp:  msg.Timestamp,
 					ObjectName: msg.ObjectName,
 					Message:    msg.Message,
@@ -164,7 +164,7 @@ func (p *ProvisionerService) ProvisionWorkspaceStream(req *provisionerpb.Provisi
 				if newPerc > percent {
 					percent = newPerc
 					if err := stream.Send(&provisionerpb.ProvisionEvent{
-						Type:       "progress",
+						Type:       string(models.WorkspaceStreamEventTypeProgress),
 						Timestamp:  time.Now().Format("2006-01-02 15:04:05"),
 						ObjectName: workspace.Name,
 						Status:     fmt.Sprintf("%d", percent),
@@ -178,7 +178,7 @@ func (p *ProvisionerService) ProvisionWorkspaceStream(req *provisionerpb.Provisi
 		case status := <-done:
 			if status != nil {
 				if err := stream.Send(&provisionerpb.ProvisionEvent{
-					Type:       "status",
+					Type:       string(models.WorkspaceStreamEventTypeStatus),
 					Timestamp:  time.Now().Format("2006-01-02 15:04:05"),
 					ObjectName: workspace.Name,
 					Status:     string(status.Status),
@@ -192,7 +192,7 @@ func (p *ProvisionerService) ProvisionWorkspaceStream(req *provisionerpb.Provisi
 		case err := <-errorChan:
 			if err != nil {
 				if err := stream.Send(&provisionerpb.ProvisionEvent{
-					Type:       "status",
+					Type:       string(models.WorkspaceStreamEventTypeStatus),
 					Timestamp:  time.Now().Format("2006-01-02 15:04:05"),
 					ObjectName: workspace.Name,
 					Status:     "Error",
