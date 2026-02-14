@@ -3,6 +3,8 @@
 # Namespace for the k8shell workspace
 targetNamespace: ${TARGET_NAMESPACE}
 
+clusterDomain: cluster.local
+
 defaultRegistry:
   host: ${WORKSPACE_REGISTRY}
   # certCA: !file ${SECRET_FILES}/private_ca.pem

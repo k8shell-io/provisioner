@@ -182,6 +182,7 @@ func GetWorkspaces(ctx context.Context, v1 typedcorev1.CoreV1Interface, namespac
 			AppVersion:   appVersion,
 			CPU:          cpu,
 			Memory:       memory,
+			Fqdn:         podFQDN(p, config.ClusterDomain),
 		})
 	}
 
@@ -793,4 +794,20 @@ func formatLastFailMessage(reason, msg string) string {
 		return reason
 	}
 	return msg
+}
+
+// podFQDN returns the Pod DNS name if hostname+subdomain are set, otherwise "".
+func podFQDN(pod *corev1.Pod, clusterDomain string) string {
+	if pod == nil {
+		return ""
+	}
+	hn := strings.TrimSpace(pod.Spec.Hostname)
+	sd := strings.TrimSpace(pod.Spec.Subdomain)
+	if hn == "" || sd == "" {
+		return ""
+	}
+	if clusterDomain == "" {
+		clusterDomain = "cluster.local"
+	}
+	return fmt.Sprintf("%s.%s.%s.svc.%s", hn, sd, pod.Namespace, clusterDomain)
 }

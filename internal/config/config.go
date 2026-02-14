@@ -11,6 +11,7 @@ import (
 // Config represents the server configuration
 type Config struct {
 	TargetNamespace     string               `yaml:"targetNamespace"`
+	ClusterDomain       string               `yaml:"clusterDomain"`
 	DefaultRegistry     DefaultRegistry      `yaml:"defaultRegistry"`
 	K8shellCapabilities K8shellCapabilities  `yaml:"k8shellCapabilities"`
 	CertManager         CertManagerConfig    `yaml:"certManager"`
@@ -45,6 +46,10 @@ type DefaultRegistry struct {
 	Username string `yaml:"username"`
 	Password string `yaml:"password"`
 }
+
+// Default cluster domain is "cluster.local", but it can be overridden by configuration.
+// This is needed for constructing the FQDN of workspace pods
+var ClusterDomain string = "cluster.local"
 
 func (r DefaultRegistry) ToValues() map[string]interface{} {
 	values := make(map[string]interface{})
@@ -87,6 +92,11 @@ func NewConfig(configFile string) (*Config, error) {
 			cfg.CertManager.RenewBefore = "12h"
 		}
 	}
+
+	if cfg.ClusterDomain != ClusterDomain {
+		cfg.ClusterDomain = ClusterDomain
+	}
+	ClusterDomain = cfg.ClusterDomain
 
 	cfg.BaseDir = filepath.Dir(configFile)
 	return &cfg, nil
