@@ -16,6 +16,7 @@ import (
 	"github.com/rs/zerolog"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
@@ -90,19 +91,9 @@ func (p *ProvisionerService) CanUpgradeWorkspace(ctx context.Context,
 		return nil, status.Errorf(codes.Internal, "Failed to get workspace pod: %v", err)
 	}
 
-	userstrb64 := pod.Labels["k8shell.io/userstr"]
-	if userstrb64 == "" {
-		return nil, status.Errorf(codes.Internal, "Workspace pod is missing userstr label")
-	}
-
-	userstr, err := models.NewCanonicalUserStrFromBase64(userstrb64)
+	workspace, err := p.prepareWorkspaceWithPod(ctx, pod)
 	if err != nil {
-		return nil, status.Errorf(codes.InvalidArgument, "Invalid userstr format: %v", err)
-	}
-
-	workspace, err := p.prepareWorkspace(ctx, userstr)
-	if err != nil {
-		return nil, status.Errorf(codes.Internal, "Failed to prepare workspace for upgrade check: %v", err)
+		return nil, err
 	}
 
 	canUpgrade, err := workspace.CanUpgrade(ctx, pod)
@@ -112,7 +103,7 @@ func (p *ProvisionerService) CanUpgradeWorkspace(ctx context.Context,
 
 	message := "Workspace can be upgraded"
 	if !canUpgrade {
-		message = "Workspace cannot be upgraded. It may already be up to date or in a state that does not allow upgrading."
+		message = "Workspace is up to date."
 	}
 
 	return &provisionerpb.CanUpgradeWorkspaceResponse{
@@ -137,7 +128,7 @@ func (p *ProvisionerService) ProvisionWorkspaceStream(req *provisionerpb.Provisi
 		return status.Errorf(codes.InvalidArgument, "Failed to canonicalize userstr: %v", err)
 	}
 
-	workspace, err := p.prepareWorkspace(ctx, canUserStr)
+	workspace, err := p.prepareWorkspaceWithUserStr(ctx, canUserStr)
 	if err != nil {
 		return err
 	}
@@ -250,9 +241,30 @@ func (p *ProvisionerService) ProvisionWorkspaceStream(req *provisionerpb.Provisi
 	}
 }
 
+// prepareWorkspaceName prepares the workspace object for provisioning/upgrade based on the workspace name
+func (p *ProvisionerService) prepareWorkspaceWithPod(ctx context.Context, pod *corev1.Pod) (*ws.Workspace, error) {
+
+	userstrb64 := pod.Labels["k8shell.io/userstr"]
+	if userstrb64 == "" {
+		return nil, status.Errorf(codes.Internal, "Workspace pod is missing userstr label")
+	}
+
+	userstr, err := models.NewCanonicalUserStrFromBase64(userstrb64)
+	if err != nil {
+		return nil, status.Errorf(codes.InvalidArgument, "Invalid userstr format: %v", err)
+	}
+
+	workspace, err := p.prepareWorkspaceWithUserStr(ctx, userstr)
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "Failed to prepare workspace for upgrade check: %v", err)
+	}
+
+	return workspace, nil
+}
+
 // prepareWorkspace prepares the workspace object for provisioning/upgrade
 // based on the user string and blueprint information
-func (p *ProvisionerService) prepareWorkspace(ctx context.Context,
+func (p *ProvisionerService) prepareWorkspaceWithUserStr(ctx context.Context,
 	userStr *models.CanonicalUserStr) (*ws.Workspace, error) {
 
 	userpb, err := p.server.Identity.FindUser(ctx, &identitypb.FindUserRequest{Username: userStr.Identity.Username})
