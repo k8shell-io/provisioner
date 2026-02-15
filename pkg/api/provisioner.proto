@@ -10,7 +10,7 @@ import "common/pkg/gapi/common.proto";
 
 service ProvisionerService {
   rpc GetWorkspaces (GetWorkspacesRequest) returns (GetWorkspacesResponse);
-  rpc FindWorkspace (FindWorkspaceRequest) returns (common.WorkspaceStatus);
+  rpc FindWorkspace (FindWorkspaceRequest) returns (common.WorkspaceDetails);
   rpc ProvisionWorkspaceStream (ProvisionWorkspaceRequest) returns (stream ProvisionEvent);
   rpc UpgradeWorkspace (UpgradeWorkspaceRequest) returns (UpgradeWorkspaceResponse);
   rpc UpgradeWorkspaceResources (UpgradeWorkspaceResourcesRequest) returns (UpgradeWorkspaceResponse);
@@ -26,22 +26,18 @@ message GetWorkspacesRequest {
   string username = 2;
   string organization = 3;
   string blueprint = 4;
-  string repo_name = 5;
+  string repo_name = 5; 
   string repo_owner = 6;
   string repo_ref = 7;
 }
 
 message GetWorkspacesResponse {
-  repeated common.WorkspaceStatus workspaces = 1;
+  repeated common.WorkspaceDetails workspaces = 1;
 }
 
 message ListWorkspacesRequest {
   string username = 1;
   string blueprint = 2;
-}
-
-message ListWorkspacesResponse {
-  repeated common.WorkspaceInfo workspaces = 1;
 }
 
 message ProvisionWorkspaceRequest {

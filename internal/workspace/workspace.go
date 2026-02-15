@@ -58,9 +58,8 @@ type GetWorkspacesOptions struct {
 // GetWorkspacesResult defines the result structure for GetWorkspaces function,
 // including the list of workspaces and pagination token
 type GetWorkspacesResult struct {
-	Workspaces []*models.WorkspaceStatus // list of workspaces matching the filters and pagination
-	Pods       []corev1.Pod              // corresponding pods for the workspaces, used for internal processing
-	Continue   string                    // token for next page; empty when no more pages
+	Workspaces []*models.WorkspaceDetails // list of workspaces matching the filters and pagination
+	Pods       []corev1.Pod               // corresponding pods for the workspaces, used for internal processing
 }
 
 // WorkspaceLabels holds parsed workspace metadata stored in k8shell labels.
@@ -116,7 +115,7 @@ func ParseWorkspaceLabels(labels map[string]string) (*WorkspaceLabels, error) {
 }
 
 // FindWorkspace finds a workspace by name and returns its status
-func FindWorkspace(ctx context.Context, helmClient *helm.Client, workspace string) (*models.WorkspaceStatus,
+func FindWorkspace(ctx context.Context, helmClient *helm.Client, workspace string) (*models.WorkspaceDetails,
 	*corev1.Pod, error) {
 
 	ws, err := GetWorkspaces(ctx, helmClient, GetWorkspacesOptions{
@@ -178,69 +177,19 @@ func GetWorkspaces(ctx context.Context, helmClient *helm.Client,
 		return nil, fmt.Errorf("failed to list workspace pods: %w", err)
 	}
 
-	out := make([]*models.WorkspaceStatus, 0, len(podList.Items))
+	out := make([]*models.WorkspaceDetails, 0, len(podList.Items))
 	for i := range podList.Items {
 		p := &podList.Items[i]
-
-		if len(p.Spec.Containers) == 0 {
+		d := workspaceDetailsFromPod(p)
+		if d == nil {
 			continue
 		}
-
-		var splash string
-		if splashAnnotation, exists := p.Annotations["workspace.k8shell.io/splash"]; exists {
-			if decoded, derr := base64.StdEncoding.DecodeString(splashAnnotation); derr == nil {
-				splash = string(decoded)
-			}
-		}
-
-		appVersion, exists := p.Labels["app.kubernetes.io/version"]
-		if !exists {
-			appVersion = "1.0.0"
-		}
-
-		host := p.Name + "." + p.Namespace
-		port := getPodContainerPort(p, models.WORKSPACE_PORT)
-		tlsEnabled := podMountsSecret(p, p.Name+"-tls")
-
-		nameLabel := p.Labels["k8shell.io/workspace"]
-		if nameLabel == "" {
-			nameLabel = p.Name
-		}
-
-		cpu := p.Spec.Containers[0].Resources.Limits.Cpu().String()
-		memory := p.Spec.Containers[0].Resources.Limits.Memory().String()
-
-		out = append(out, &models.WorkspaceStatus{
-			PodStatus: models.PodStatus{
-				Created:         p.CreationTimestamp.Time,
-				Status:          workspacePodStatus(p),
-				Message:         workspacePodMessage(p),
-				Restarts:        podRestartCount(p),
-				LastFailMessage: podLastFailure(p),
-			},
-			Name:         nameLabel,
-			Username:     p.Labels["k8shell.io/username"],
-			RepoOwner:    p.Labels["k8shell.io/repo-owner"],
-			RepoName:     p.Labels["k8shell.io/repo-name"],
-			RepoRef:      p.Labels["k8shell.io/repo-ref"],
-			Blueprint:    p.Labels["k8shell.io/blueprint"],
-			Organization: p.Labels["k8shell.io/organization"],
-			Host:         host,
-			PodIP:        p.Status.PodIP,
-			Port:         port,
-			TLSEnabled:   tlsEnabled,
-			Splash:       splash,
-			AppVersion:   appVersion,
-			CPU:          cpu,
-			Memory:       memory,
-			Fqdn:         podFQDN(p, config.ClusterDomain),
-		})
+		out = append(out, d)
 	}
 
 	return &GetWorkspacesResult{
 		Workspaces: out,
 		Pods:       podList.Items,
-		Continue:   podList.Continue,
 	}, nil
 }
 
@@ -478,4 +427,67 @@ func (w *Workspace) Uninstall(ctx context.Context, timeout time.Duration, wait b
 		return fmt.Errorf("failed to uninstall workspace: %w", err)
 	}
 	return nil
+}
+
+// workspacePodStatus extracts the workspace details from pod
+func workspaceDetailsFromPod(pod *corev1.Pod) *models.WorkspaceDetails {
+	if pod == nil {
+		return nil
+	}
+
+	if len(pod.Spec.Containers) == 0 {
+		return nil
+	}
+
+	var splash string
+	if splashAnnotation, exists := pod.Annotations["workspace.k8shell.io/splash"]; exists {
+		if decoded, derr := base64.StdEncoding.DecodeString(splashAnnotation); derr == nil {
+			splash = string(decoded)
+		}
+	}
+
+	appVersion, exists := pod.Labels["app.kubernetes.io/version"]
+	if !exists {
+		appVersion = "1.0.0"
+	}
+
+	host := pod.Name + "." + pod.Namespace
+	port := getPodContainerPort(pod, models.WORKSPACE_PORT)
+	tlsEnabled := podMountsSecret(pod, pod.Name+"-tls")
+
+	nameLabel := pod.Labels["k8shell.io/workspace"]
+	if nameLabel == "" {
+		nameLabel = pod.Name
+	}
+
+	cpu := pod.Spec.Containers[0].Resources.Limits.Cpu().String()
+	memory := pod.Spec.Containers[0].Resources.Limits.Memory().String()
+
+	wsDetails := &models.WorkspaceDetails{
+		PodStatus: models.PodStatus{
+			Created:         pod.CreationTimestamp.Time,
+			Status:          workspacePodStatus(pod),
+			Message:         workspacePodMessage(pod),
+			Restarts:        podRestartCount(pod),
+			LastFailMessage: podLastFailure(pod),
+		},
+		Name:         nameLabel,
+		Username:     pod.Labels["k8shell.io/username"],
+		RepoOwner:    pod.Labels["k8shell.io/repo-owner"],
+		RepoName:     pod.Labels["k8shell.io/repo-name"],
+		RepoRef:      pod.Labels["k8shell.io/repo-ref"],
+		Blueprint:    pod.Labels["k8shell.io/blueprint"],
+		Organization: pod.Labels["k8shell.io/organization"],
+		Host:         host,
+		PodIP:        pod.Status.PodIP,
+		Port:         port,
+		TLSEnabled:   tlsEnabled,
+		Splash:       splash,
+		AppVersion:   appVersion,
+		CPU:          cpu,
+		Memory:       memory,
+		Fqdn:         podFQDN(pod, config.ClusterDomain),
+	}
+
+	return wsDetails
 }

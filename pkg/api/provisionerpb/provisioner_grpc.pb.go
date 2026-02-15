@@ -33,7 +33,7 @@ const (
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
 type ProvisionerServiceClient interface {
 	GetWorkspaces(ctx context.Context, in *GetWorkspacesRequest, opts ...grpc.CallOption) (*GetWorkspacesResponse, error)
-	FindWorkspace(ctx context.Context, in *FindWorkspaceRequest, opts ...grpc.CallOption) (*commonpb.WorkspaceStatus, error)
+	FindWorkspace(ctx context.Context, in *FindWorkspaceRequest, opts ...grpc.CallOption) (*commonpb.WorkspaceDetails, error)
 	ProvisionWorkspaceStream(ctx context.Context, in *ProvisionWorkspaceRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[ProvisionEvent], error)
 	UpgradeWorkspace(ctx context.Context, in *UpgradeWorkspaceRequest, opts ...grpc.CallOption) (*UpgradeWorkspaceResponse, error)
 	UpgradeWorkspaceResources(ctx context.Context, in *UpgradeWorkspaceResourcesRequest, opts ...grpc.CallOption) (*UpgradeWorkspaceResponse, error)
@@ -58,9 +58,9 @@ func (c *provisionerServiceClient) GetWorkspaces(ctx context.Context, in *GetWor
 	return out, nil
 }
 
-func (c *provisionerServiceClient) FindWorkspace(ctx context.Context, in *FindWorkspaceRequest, opts ...grpc.CallOption) (*commonpb.WorkspaceStatus, error) {
+func (c *provisionerServiceClient) FindWorkspace(ctx context.Context, in *FindWorkspaceRequest, opts ...grpc.CallOption) (*commonpb.WorkspaceDetails, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(commonpb.WorkspaceStatus)
+	out := new(commonpb.WorkspaceDetails)
 	err := c.cc.Invoke(ctx, ProvisionerService_FindWorkspace_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
@@ -122,7 +122,7 @@ func (c *provisionerServiceClient) DeleteWorkspace(ctx context.Context, in *Dele
 // for forward compatibility.
 type ProvisionerServiceServer interface {
 	GetWorkspaces(context.Context, *GetWorkspacesRequest) (*GetWorkspacesResponse, error)
-	FindWorkspace(context.Context, *FindWorkspaceRequest) (*commonpb.WorkspaceStatus, error)
+	FindWorkspace(context.Context, *FindWorkspaceRequest) (*commonpb.WorkspaceDetails, error)
 	ProvisionWorkspaceStream(*ProvisionWorkspaceRequest, grpc.ServerStreamingServer[ProvisionEvent]) error
 	UpgradeWorkspace(context.Context, *UpgradeWorkspaceRequest) (*UpgradeWorkspaceResponse, error)
 	UpgradeWorkspaceResources(context.Context, *UpgradeWorkspaceResourcesRequest) (*UpgradeWorkspaceResponse, error)
@@ -140,7 +140,7 @@ type UnimplementedProvisionerServiceServer struct{}
 func (UnimplementedProvisionerServiceServer) GetWorkspaces(context.Context, *GetWorkspacesRequest) (*GetWorkspacesResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method GetWorkspaces not implemented")
 }
-func (UnimplementedProvisionerServiceServer) FindWorkspace(context.Context, *FindWorkspaceRequest) (*commonpb.WorkspaceStatus, error) {
+func (UnimplementedProvisionerServiceServer) FindWorkspace(context.Context, *FindWorkspaceRequest) (*commonpb.WorkspaceDetails, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method FindWorkspace not implemented")
 }
 func (UnimplementedProvisionerServiceServer) ProvisionWorkspaceStream(*ProvisionWorkspaceRequest, grpc.ServerStreamingServer[ProvisionEvent]) error {

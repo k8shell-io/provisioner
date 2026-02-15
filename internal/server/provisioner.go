@@ -37,15 +37,15 @@ func NewProvisionerService(server *Server) *ProvisionerService {
 
 // FindWorkspace retrieves the details of a specific workspace
 func (p *ProvisionerService) FindWorkspace(ctx context.Context,
-	req *provisionerpb.FindWorkspaceRequest) (*commonpb.WorkspaceStatus, error) {
+	req *provisionerpb.FindWorkspaceRequest) (*commonpb.WorkspaceDetails, error) {
 	s, _, err := ws.FindWorkspace(ctx, p.server.helm, req.Workspace)
 	if err != nil {
 		if errors.Is(err, models.ErrWorkspaceNotFound) {
 			return nil, status.Errorf(codes.NotFound, "Workspace %s not found", req.Workspace)
 		}
-		return nil, status.Errorf(codes.Internal, "Failed to get workspace status: %v", err)
+		return nil, status.Errorf(codes.Internal, "Failed to get workspace details: %v", err)
 	}
-	return gapi.WorkspaceStatusToProto(s), nil
+	return gapi.WorkspaceDetailsToProto(s), nil
 }
 
 // ListWorkspaces lists all workspaces, optionally filtered by user and/or blueprint
@@ -66,9 +66,9 @@ func (p *ProvisionerService) GetWorkspaces(ctx context.Context,
 		return nil, status.Errorf(codes.Internal, "Failed to list workspaces: %v", err)
 	}
 
-	var protoWorkspaces []*commonpb.WorkspaceStatus
+	var protoWorkspaces []*commonpb.WorkspaceDetails
 	for _, w := range workspaces.Workspaces {
-		protoWorkspaces = append(protoWorkspaces, gapi.WorkspaceStatusToProto(w))
+		protoWorkspaces = append(protoWorkspaces, gapi.WorkspaceDetailsToProto(w))
 	}
 
 	return &provisionerpb.GetWorkspacesResponse{
