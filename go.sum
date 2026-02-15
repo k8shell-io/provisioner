@@ -200,6 +200,8 @@ github.com/json-iterator/go v1.1.12 h1:PV8peI4a0ysnczrg+LtxykD8LfKY9ML6u2jnxaEnr
 github.com/json-iterator/go v1.1.12/go.mod h1:e30LSqwooZae/UwlEbR2852Gd8hjQvJoHmT4TnhNGBo=
 github.com/k8shell-io/common v0.12.139 h1:HfD4uC8xNcCvS7hfpdmrEOFY5WHIhMaqdCN/atVHIOw=
 github.com/k8shell-io/common v0.12.139/go.mod h1:2M6NGERtuyaWAD7Q0qCob5+6sMTHBMy1pJ0/zLK6cLQ=
+github.com/k8shell-io/common v0.12.140 h1:YuifWfXm9fn99dZZzNFZ/DbpHoVjjzQG1iIHP8rHW1E=
+github.com/k8shell-io/common v0.12.140/go.mod h1:2M6NGERtuyaWAD7Q0qCob5+6sMTHBMy1pJ0/zLK6cLQ=
 github.com/k8shell-io/identity/pkg/api v0.1.11 h1:19FgSAZIvwCH03UPO1xKK7ezJrqvVsddgSnJpeCTCWw=
 github.com/k8shell-io/identity/pkg/api v0.1.11/go.mod h1:7MBXrvnAz8KA1kAjfDFlnqCZ+X4yjG0gUaNLoQ3CAFg=
 github.com/k8shell-io/yaml-cel v0.2.6 h1:Te7o2b1Y/9Gm6Z3j29zGKzOnGn3NoDu1tpq4ib3mua0=

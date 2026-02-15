@@ -451,7 +451,7 @@ func workspaceDetailsFromPod(pod *corev1.Pod) *models.WorkspaceDetails {
 		appVersion = "1.0.0"
 	}
 
-	host := pod.Name + "." + pod.Namespace
+	serverName := pod.Name + "." + pod.Namespace
 	port := getPodContainerPort(pod, models.WORKSPACE_PORT)
 	tlsEnabled := podMountsSecret(pod, pod.Name+"-tls")
 
@@ -478,7 +478,7 @@ func workspaceDetailsFromPod(pod *corev1.Pod) *models.WorkspaceDetails {
 		RepoRef:      pod.Labels["k8shell.io/repo-ref"],
 		Blueprint:    pod.Labels["k8shell.io/blueprint"],
 		Organization: pod.Labels["k8shell.io/organization"],
-		Host:         host,
+		ServerName:   serverName,
 		PodIP:        pod.Status.PodIP,
 		Port:         port,
 		TLSEnabled:   tlsEnabled,
@@ -486,7 +486,7 @@ func workspaceDetailsFromPod(pod *corev1.Pod) *models.WorkspaceDetails {
 		AppVersion:   appVersion,
 		CPU:          cpu,
 		Memory:       memory,
-		Fqdn:         podFQDN(pod, config.ClusterDomain),
+		Hostname:     podHostname(pod),
 	}
 
 	return wsDetails

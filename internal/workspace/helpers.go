@@ -296,8 +296,8 @@ func formatLastFailMessage(reason, msg string) string {
 	return msg
 }
 
-// podFQDN returns the Pod DNS name if hostname+subdomain are set, otherwise "".
-func podFQDN(pod *corev1.Pod, clusterDomain string) string {
+// podHostname returns the Pod hostname if hostname+subdomain are set, otherwise "".
+func podHostname(pod *corev1.Pod) string {
 	if pod == nil {
 		return ""
 	}
@@ -306,10 +306,7 @@ func podFQDN(pod *corev1.Pod, clusterDomain string) string {
 	if hn == "" || sd == "" {
 		return ""
 	}
-	if clusterDomain == "" {
-		clusterDomain = "cluster.local"
-	}
-	return fmt.Sprintf("%s.%s.%s.svc.%s", hn, sd, pod.Namespace, clusterDomain)
+	return fmt.Sprintf("%s.%s.%s", hn, sd, pod.Namespace)
 }
 
 // ToMap converts any struct to a map[string]interface{} representation
