@@ -10,12 +10,29 @@ import (
 
 	"github.com/k8shell-io/common/pkg/models"
 	"github.com/k8shell-io/provisioner/internal/helm"
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 )
 
 var ErrInvalidValue = errors.New("invalid value")
+
+// Upgrade upgrades an existing workspace release (or installs it if missing).
+// It uses a distributed lock to avoid concurrent upgrades for the same workspace.
+func (w *Workspace) CanUpgrade(ctx context.Context, pod *corev1.Pod) (bool, error) {
+	podHash := pod.Annotations["k8shell.io/manifest-hash"]
+	if podHash == "" {
+		return false, fmt.Errorf("pod is missing manifest hash annotation")
+	}
+
+	hash, err := w.TemplateHash(ctx)
+	if err != nil {
+		return false, err
+	}
+
+	return podHash != hash, nil
+}
 
 // Upgrade upgrades an existing workspace release (or installs it if missing).
 // It uses a distributed lock to avoid concurrent upgrades for the same workspace.

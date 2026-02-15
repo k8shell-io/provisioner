@@ -29,12 +29,6 @@ k8shell.io/subdomain: {{ .Values.subdomain }}
 {{- end }}
 {{- end -}}
 
-{{/* Stable hash of the rendered workspace labels */}}
-{{- define "workspace.workspaceLabelsHash" -}}
-{{- include "workspace.workspaceLabels" . | sha256sum -}}
-{{- end -}}
-
-
 {{/* default networkpolicy ingress rules */}}
 {{- define "default.ingress" -}}
 - from:

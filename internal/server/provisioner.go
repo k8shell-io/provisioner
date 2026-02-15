@@ -16,6 +16,7 @@ import (
 	"github.com/rs/zerolog"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 const TOTAL_PROVISION_EVENTS = 12
@@ -76,6 +77,50 @@ func (p *ProvisionerService) GetWorkspaces(ctx context.Context,
 	}, nil
 }
 
+func (p *ProvisionerService) CanUpgradeWorkspace(ctx context.Context,
+	req *provisionerpb.CanUpgradeWorkspaceRequest) (*provisionerpb.CanUpgradeWorkspaceResponse, error) {
+	name := req.Workspace
+	if name == "" {
+		return nil, status.Errorf(codes.InvalidArgument, "workspace name is required")
+	}
+
+	pod, err := p.server.helm.KubeClient().CoreV1().Pods(
+		p.server.helm.TargetNamespace()).Get(ctx, name, metav1.GetOptions{})
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "Failed to get workspace pod: %v", err)
+	}
+
+	userstrb64 := pod.Labels["k8shell.io/userstr"]
+	if userstrb64 == "" {
+		return nil, status.Errorf(codes.Internal, "Workspace pod is missing userstr label")
+	}
+
+	userstr, err := models.NewCanonicalUserStrFromBase64(userstrb64)
+	if err != nil {
+		return nil, status.Errorf(codes.InvalidArgument, "Invalid userstr format: %v", err)
+	}
+
+	workspace, err := p.prepareWorkspace(ctx, userstr)
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "Failed to prepare workspace for upgrade check: %v", err)
+	}
+
+	canUpgrade, err := workspace.CanUpgrade(ctx, pod)
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "Failed to check if workspace can be upgraded: %v", err)
+	}
+
+	message := "Workspace can be upgraded"
+	if !canUpgrade {
+		message = "Workspace cannot be upgraded. It may already be up to date or in a state that does not allow upgrading."
+	}
+
+	return &provisionerpb.CanUpgradeWorkspaceResponse{
+		CanUpgrade: canUpgrade,
+		Message:    message,
+	}, nil
+}
+
 // ProvisionWorkspaceStream provisions a new workspace with streaming updates
 func (p *ProvisionerService) ProvisionWorkspaceStream(req *provisionerpb.ProvisionWorkspaceRequest,
 	stream provisionerpb.ProvisionerService_ProvisionWorkspaceStreamServer) error {
@@ -92,7 +137,7 @@ func (p *ProvisionerService) ProvisionWorkspaceStream(req *provisionerpb.Provisi
 		return status.Errorf(codes.InvalidArgument, "Failed to canonicalize userstr: %v", err)
 	}
 
-	workspace, err := p.prepareWorkspaceProvisioning(ctx, canUserStr)
+	workspace, err := p.prepareWorkspace(ctx, canUserStr)
 	if err != nil {
 		return err
 	}
@@ -205,8 +250,9 @@ func (p *ProvisionerService) ProvisionWorkspaceStream(req *provisionerpb.Provisi
 	}
 }
 
-// prepareWorkspaceProvisioning handles the common setup logic for workspace provisioning
-func (p *ProvisionerService) prepareWorkspaceProvisioning(ctx context.Context,
+// prepareWorkspace prepares the workspace object for provisioning/upgrade
+// based on the user string and blueprint information
+func (p *ProvisionerService) prepareWorkspace(ctx context.Context,
 	userStr *models.CanonicalUserStr) (*ws.Workspace, error) {
 
 	userpb, err := p.server.Identity.FindUser(ctx, &identitypb.FindUserRequest{Username: userStr.Identity.Username})

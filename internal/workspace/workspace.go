@@ -180,7 +180,7 @@ func GetWorkspaces(ctx context.Context, helmClient *helm.Client,
 	out := make([]*models.WorkspaceDetails, 0, len(podList.Items))
 	for i := range podList.Items {
 		p := &podList.Items[i]
-		d := workspaceDetailsFromPod(p)
+		d := WorkspaceDetailsFromPod(p)
 		if d == nil {
 			continue
 		}
@@ -430,7 +430,7 @@ func (w *Workspace) Uninstall(ctx context.Context, timeout time.Duration, wait b
 }
 
 // workspacePodStatus extracts the workspace details from pod
-func workspaceDetailsFromPod(pod *corev1.Pod) *models.WorkspaceDetails {
+func WorkspaceDetailsFromPod(pod *corev1.Pod) *models.WorkspaceDetails {
 	if pod == nil {
 		return nil
 	}
