@@ -5,7 +5,6 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"fmt"
-	"os"
 	"strings"
 	"time"
 
@@ -22,7 +21,6 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	k8sErrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	typedcorev1 "k8s.io/client-go/kubernetes/typed/core/v1"
 )
 
 // Default page size for GetWorkspaces pagination when limit is not specified or invalid
@@ -30,15 +28,15 @@ const WORKSPACE_DEFAULT_PAGE_SIZE = 20
 
 // Workspace represents a workspace with Helm client
 type Workspace struct {
+	config   *config.Config
+	client   *helm.Client
+	identify *identity.Client
+
 	Name          string
 	log           *zerolog.Logger
-	client        *helm.Client
-	identify      *identity.Client
 	blueprint     *models.Blueprint
 	user          *models.User
 	userStr       *models.CanonicalUserStr
-	certManager   *config.CertManagerConfig
-	caps          *config.K8shellCapabilities
 	workspaceLock *WorkspaceLock
 }
 
@@ -64,399 +62,6 @@ type GetWorkspacesResult struct {
 	Pods       []corev1.Pod              // corresponding pods for the workspaces, used for internal processing
 	Continue   string                    // token for next page; empty when no more pages
 }
-
-// FindWorkspace finds a workspace by name and returns its status
-func FindWorkspace(ctx context.Context, v1 typedcorev1.CoreV1Interface, namespace string,
-	workspace string) (*models.WorkspaceStatus, *corev1.Pod, error) {
-	ws, err := GetWorkspaces(ctx, v1, namespace, GetWorkspacesOptions{
-		Workspace: workspace,
-	})
-	if err != nil {
-		return nil, nil, err
-	}
-	if len(ws.Workspaces) == 0 {
-		return nil, nil, fmt.Errorf("%w: %s", models.ErrWorkspaceNotFound, workspace)
-	}
-	if len(ws.Workspaces) > 1 {
-		return nil, nil, fmt.Errorf("multiple workspaces found with name %s", workspace)
-	}
-	return ws.Workspaces[0], &ws.Pods[0], nil
-}
-
-// GetWorkspaces lists workspace pods matching optional filters and returns status details
-// similar to GetWorkspaceStatus, without fetching Service/Secret per workspace.
-func GetWorkspaces(ctx context.Context, v1 typedcorev1.CoreV1Interface, namespace string,
-	opts GetWorkspacesOptions) (*GetWorkspacesResult, error) {
-
-	labels := map[string]string{}
-	labels["k8shell.io/app"] = "k8shell-workspace"
-
-	if opts.Username != "" {
-		labels["k8shell.io/username"] = opts.Username
-	}
-	if opts.Workspace != "" {
-		labels["k8shell.io/workspace"] = opts.Workspace
-	}
-	if opts.Organization != "" {
-		labels["k8shell.io/organization"] = opts.Organization
-	}
-	if opts.Blueprint != "" {
-		labels["k8shell.io/blueprint"] = opts.Blueprint
-	}
-	if opts.RepoName != "" {
-		labels["k8shell.io/repo-name"] = opts.RepoName
-	}
-	if opts.RepoOwner != "" {
-		labels["k8shell.io/repo-owner"] = opts.RepoOwner
-	}
-	if opts.RepoRef != "" {
-		labels["k8shell.io/repo-ref"] = opts.RepoRef
-	}
-
-	selector := GetSelector(labels)
-
-	podList, err := v1.Pods(namespace).List(ctx, metav1.ListOptions{
-		LabelSelector: selector,
-	})
-	if err != nil {
-		if strings.Contains(err.Error(), "unable to parse") {
-			return nil, fmt.Errorf("%w: %s", models.ErrInvalidParameters, selector)
-		}
-		return nil, fmt.Errorf("failed to list workspace pods: %w", err)
-	}
-
-	out := make([]*models.WorkspaceStatus, 0, len(podList.Items))
-	for i := range podList.Items {
-		p := &podList.Items[i]
-
-		if len(p.Spec.Containers) == 0 {
-			continue
-		}
-
-		var splash string
-		if splashAnnotation, exists := p.Annotations["workspace.k8shell.io/splash"]; exists {
-			if decoded, derr := base64.StdEncoding.DecodeString(splashAnnotation); derr == nil {
-				splash = string(decoded)
-			}
-		}
-
-		appVersion, exists := p.Labels["app.kubernetes.io/version"]
-		if !exists {
-			appVersion = "1.0.0"
-		}
-
-		host := p.Name + "." + p.Namespace
-		port := getPodContainerPort(p, models.WORKSPACE_PORT)
-		tlsEnabled := podMountsSecret(p, p.Name+"-tls")
-
-		nameLabel := p.Labels["k8shell.io/workspace"]
-		if nameLabel == "" {
-			nameLabel = p.Name
-		}
-
-		cpu := p.Spec.Containers[0].Resources.Limits.Cpu().String()
-		memory := p.Spec.Containers[0].Resources.Limits.Memory().String()
-		restarts := podRestartCount(p)
-		lastFailMsg := podLastFailure(p)
-
-		out = append(out, &models.WorkspaceStatus{
-			PodStatus: models.PodStatus{
-				Created:         p.CreationTimestamp.Time,
-				Status:          workspacePodStatus(p),
-				Message:         workspacePodMessage(p),
-				Restarts:        restarts,
-				LastFailMessage: lastFailMsg,
-			},
-			Name:         nameLabel,
-			Username:     p.Labels["k8shell.io/username"],
-			RepoOwner:    p.Labels["k8shell.io/repo-owner"],
-			RepoName:     p.Labels["k8shell.io/repo-name"],
-			RepoRef:      p.Labels["k8shell.io/repo-ref"],
-			Blueprint:    p.Labels["k8shell.io/blueprint"],
-			Organization: p.Labels["k8shell.io/organization"],
-			Host:         host,
-			PodIP:        p.Status.PodIP,
-			Port:         port,
-			TLSEnabled:   tlsEnabled,
-			Splash:       splash,
-			AppVersion:   appVersion,
-			CPU:          cpu,
-			Memory:       memory,
-			Fqdn:         podFQDN(p, config.ClusterDomain),
-		})
-	}
-
-	return &GetWorkspacesResult{
-		Workspaces: out,
-		Pods:       podList.Items,
-		Continue:   podList.Continue,
-	}, nil
-}
-
-// GetSelector returns a label selector string from the given labels map
-func GetSelector(labels map[string]string) string {
-	if len(labels) == 0 {
-		return ""
-	}
-
-	var selectors []string
-	for key, value := range labels {
-		selectors = append(selectors, fmt.Sprintf("%s=%s", key, value))
-	}
-
-	return strings.Join(selectors, ",")
-}
-
-// FindworkspaceByName finds a workspace by its name using Helm client and returns the corresponding release
-func FindworkspaceByName(ctx context.Context, helmClient *helm.Client, name string) (*release.Release, error) {
-	labels := map[string]string{
-		"app.kubernetes.io/name":     helm.WORKSPACE_CHART_NAME,
-		"app.kubernetes.io/instance": name,
-	}
-
-	selector := GetSelector(labels)
-	releases, err := helmClient.ListWithSelector(helmClient.TargetNamespace(), selector)
-	if err != nil {
-		if strings.Contains(err.Error(), "unable to parse") {
-			return nil, fmt.Errorf("failed to list releases: %w", models.ErrInvalidParameters)
-		}
-		return nil, fmt.Errorf("failed to list releases: %w", err)
-	}
-
-	if len(releases) == 0 {
-		return nil, fmt.Errorf("%w: %s", models.ErrWorkspaceNotFound, name)
-	}
-	if len(releases) > 1 {
-		return nil, fmt.Errorf("multiple releases found for workspace %s", name)
-	}
-
-	return releases[0], nil
-}
-
-// *** Workspace methods
-
-// NewWorkspace creates a new workspace with the specified Helm chart
-func NewWorkspace(
-	workspaceName string,
-	blueprint *models.Blueprint,
-	user *models.User,
-	userStr *models.CanonicalUserStr,
-	helmClient *helm.Client,
-	identityClient *identity.Client,
-	certManager *config.CertManagerConfig,
-	caps *config.K8shellCapabilities,
-) (*Workspace, error) {
-
-	return &Workspace{
-		Name:        workspaceName,
-		log:         log.NewLogger("workspace"),
-		client:      helmClient,
-		identify:    identityClient,
-		blueprint:   blueprint,
-		certManager: certManager,
-		caps:        caps,
-		user:        user,
-		userStr:     userStr,
-	}, nil
-}
-
-// NewWorkspaceFromHelmRelease creates a workspace instance from an existing Helm release
-func NewWorkspaceFromHelmRelease(ctx context.Context, name string, helmClient *helm.Client,
-	identityClient *identity.Client, certManager *config.CertManagerConfig,
-	caps *config.K8shellCapabilities) (*Workspace, error) {
-
-	release, err := FindworkspaceByName(ctx, helmClient, name)
-	if err != nil {
-		return nil, err
-	}
-	username := release.Labels["k8shell.io/username"]
-	blueprintName := release.Labels["k8shell.io/blueprint"]
-
-	userpb, err := identityClient.FindUser(ctx, &identitypb.FindUserRequest{Username: username})
-	if err != nil {
-		return nil, fmt.Errorf("failed to get user %s: %w", username, err)
-	}
-	user := gapi.ProtoToUser(userpb)
-
-	values := release.Config
-	blueprint := &models.Blueprint{}
-	yamlBytes, err := yaml.Marshal(values)
-	if err != nil {
-		return nil, fmt.Errorf("failed to marshal blueprint values: %w", err)
-	}
-	if err := yaml.Unmarshal(yamlBytes, blueprint); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal blueprint values: %w", err)
-	}
-	blueprint.Name = blueprintName
-
-	ws := &Workspace{
-		Name:        name,
-		log:         log.NewLogger("workspace"),
-		client:      helmClient,
-		identify:    identityClient,
-		blueprint:   blueprint,
-		user:        user,
-		certManager: certManager,
-		caps:        caps,
-	}
-
-	return ws, nil
-}
-
-func (w *Workspace) CreateLock() *WorkspaceLock {
-	return NewWorkspaceLock(
-		w.client.KubeClient(),
-		w.client.TargetNamespace(),
-		w.Name,
-	)
-}
-
-func (w *Workspace) getK8shelldVersion() string {
-	if w.blueprint.K8shelld.Image != "" {
-		parts := strings.Split(w.blueprint.K8shelld.Image, ":")
-		if len(parts) >= 2 {
-			tag := parts[len(parts)-1]
-			return strings.TrimPrefix(tag, "v")
-		}
-	}
-	return "1.0.0"
-}
-
-// Selector returns the label selector for the workspace used to identify the workspace in Kubernetes
-// It uses the app.kubernetes.io/instance label to match the workspace name
-func (w *Workspace) Selector() string {
-	return fmt.Sprintf("app.kubernetes.io/instance=%s", w.Name)
-}
-
-func (w *Workspace) Values() (map[string]interface{}, error) {
-	values, err := toMap(w.blueprint)
-	if err != nil {
-		return nil, fmt.Errorf("failed to convert blueprint to map: %w", err)
-	}
-
-	userValues, err := toMap(w.user)
-	if err != nil {
-		return nil, fmt.Errorf("failed to convert user to map: %w", err)
-	}
-
-	cmValues, err := toMap(w.certManager)
-	if err != nil {
-		return nil, fmt.Errorf("failed to convert cert manager config to map: %w", err)
-	}
-
-	userstrB64 := ""
-	if w.userStr != nil {
-		userstrB64 = w.userStr.Base64()
-	}
-
-	values["__user__"] = userValues
-	values["__username__"] = w.user.Username
-	values["__repoowner__"] = w.userStr.Identity.RepoOwner
-	values["__reponame__"] = w.userStr.Identity.RepoName
-	values["__reporef__"] = w.userStr.Identity.RepoRef
-	values["__workspace__"] = w.Name
-	values["__blueprint__"] = w.blueprint.Name
-	values["__organization__"] = w.user.Organization
-	values["__registry__"] = w.client.Registry.ToValues()
-	values["__namespace__"] = getNamespace()
-	values["__certmanager__"] = cmValues
-	values["__appversion__"] = w.getK8shelldVersion()
-	values["__identity__"] = w.user.Source
-	values["__userstr__"] = userstrB64
-	values["__apiserver__"] = map[string]interface{}{
-		"enabled": w.caps.APIServerEnabled,
-	}
-	return values, nil
-}
-
-func (w *Workspace) Template(ctx context.Context) (string, error) {
-	values, err := w.Values()
-	if err != nil {
-		return "", err
-	}
-	out, err := w.client.Template(ctx, helm.WORKSPACE_CHART_NAME, helm.InstallOptions{
-		ReleaseName: w.blueprint.Name,
-		Values:      values,
-	})
-	if err != nil {
-		return "", err
-	}
-	return out, nil
-}
-
-func (w *Workspace) TemplateHash(ctx context.Context) (string, error) {
-	template, err := w.Template(ctx)
-	if err != nil {
-		return "", err
-	}
-
-	h := sha256.New()
-	h.Write([]byte(template))
-	return fmt.Sprintf("%x", h.Sum(nil)), nil
-}
-
-func (w *Workspace) GetPodStatus(ctx context.Context) (*models.PodStatus, error) {
-	v1 := w.client.KubeClient().CoreV1()
-	pod, err := v1.Pods(w.client.TargetNamespace()).Get(ctx, w.Name, metav1.GetOptions{})
-	if err != nil {
-		if k8sErrors.IsNotFound(err) {
-			return nil, fmt.Errorf("%w: %s", models.ErrWorkspaceNotFound, w.Name)
-		}
-		return nil, fmt.Errorf("failed to get workspace pod status %s: %w", w.Name, err)
-	}
-	return &models.PodStatus{
-		Created: pod.CreationTimestamp.Time,
-		Status:  workspacePodStatus(pod),
-		Message: workspacePodMessage(pod),
-	}, nil
-}
-
-func (w *Workspace) IsInstalled(ctx context.Context) (bool, error) {
-	_, err := w.client.GetRelease(w.Name)
-	if err != nil {
-		if strings.Contains(err.Error(), "not found") || strings.Contains(err.Error(), "release: not found") {
-			return false, nil
-		}
-		return false, err
-	}
-	return true, nil
-}
-
-func (w *Workspace) Uninstall(ctx context.Context, timeout time.Duration, wait bool, lock bool) error {
-	if lock {
-		err := w.lock(timeout)
-		if err != nil {
-			return fmt.Errorf("failed to acquire lock: %w", err)
-		}
-		defer func() {
-			if releaseErr := w.unlock(); releaseErr != nil {
-				w.log.Error().Err(releaseErr).Msgf("Failed to release lock for workspace %s", w.Name)
-			}
-		}()
-	}
-
-	if err := w.client.Uninstall(w.Name, int(timeout.Seconds()), wait); err != nil {
-		return fmt.Errorf("failed to uninstall workspace: %w", err)
-	}
-	return nil
-}
-
-// ToMap converts any struct to a map[string]interface{} representation
-func toMap(b any) (map[string]interface{}, error) {
-	yamlBytes, err := yaml.Marshal(b)
-	if err != nil {
-		return nil, fmt.Errorf("failed to marshal struct to YAML: %w", err)
-	}
-
-	var values map[string]interface{}
-	if err := yaml.Unmarshal(yamlBytes, &values); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal YAML to map: %w", err)
-	}
-
-	return values, nil
-}
-
-// *** helpers
 
 // WorkspaceLabels holds parsed workspace metadata stored in k8shell labels.
 type WorkspaceLabels struct {
@@ -510,304 +115,367 @@ func ParseWorkspaceLabels(labels map[string]string) (*WorkspaceLabels, error) {
 	}, nil
 }
 
-func getNamespace() string {
-	data, err := os.ReadFile("/var/run/secrets/kubernetes.io/serviceaccount/namespace")
+// FindWorkspace finds a workspace by name and returns its status
+func FindWorkspace(ctx context.Context, helmClient *helm.Client, workspace string) (*models.WorkspaceStatus,
+	*corev1.Pod, error) {
+
+	ws, err := GetWorkspaces(ctx, helmClient, GetWorkspacesOptions{
+		Workspace: workspace,
+	})
 	if err != nil {
-		return ""
+		return nil, nil, err
 	}
-	return string(data)
-	// return "k8shell-test"
+	if len(ws.Workspaces) == 0 {
+		return nil, nil, fmt.Errorf("%w: %s", models.ErrWorkspaceNotFound, workspace)
+	}
+	if len(ws.Workspaces) > 1 {
+		return nil, nil, fmt.Errorf("multiple workspaces found with name %s", workspace)
+	}
+	return ws.Workspaces[0], &ws.Pods[0], nil
 }
 
-func getPodContainerPort(pod *corev1.Pod, defaultPort int) int {
-	preferredNames := map[string]struct{}{
-		"grpc":  {},
-		"https": {},
-		"http":  {},
+// GetWorkspaces lists workspace pods matching optional filters and returns status details
+// similar to GetWorkspaceStatus, without fetching Service/Secret per workspace.
+func GetWorkspaces(ctx context.Context, helmClient *helm.Client,
+	opts GetWorkspacesOptions) (*GetWorkspacesResult, error) {
+
+	labels := map[string]string{}
+	labels["k8shell.io/app"] = "k8shell-workspace"
+
+	if opts.Username != "" {
+		labels["k8shell.io/username"] = opts.Username
+	}
+	if opts.Workspace != "" {
+		labels["k8shell.io/workspace"] = opts.Workspace
+	}
+	if opts.Organization != "" {
+		labels["k8shell.io/organization"] = opts.Organization
+	}
+	if opts.Blueprint != "" {
+		labels["k8shell.io/blueprint"] = opts.Blueprint
+	}
+	if opts.RepoName != "" {
+		labels["k8shell.io/repo-name"] = opts.RepoName
+	}
+	if opts.RepoOwner != "" {
+		labels["k8shell.io/repo-owner"] = opts.RepoOwner
+	}
+	if opts.RepoRef != "" {
+		labels["k8shell.io/repo-ref"] = opts.RepoRef
 	}
 
-	for _, c := range pod.Spec.Containers {
-		for _, p := range c.Ports {
-			if p.ContainerPort <= 0 {
-				continue
-			}
-			if _, ok := preferredNames[strings.ToLower(p.Name)]; ok {
-				return int(p.ContainerPort)
-			}
+	selector := getSelector(labels)
+	v1 := helmClient.KubeClient().CoreV1()
+	namespace := helmClient.TargetNamespace()
+
+	podList, err := v1.Pods(namespace).List(ctx, metav1.ListOptions{
+		LabelSelector: selector,
+	})
+	if err != nil {
+		if strings.Contains(err.Error(), "unable to parse") {
+			return nil, fmt.Errorf("%w: %s", models.ErrInvalidParameters, selector)
 		}
+		return nil, fmt.Errorf("failed to list workspace pods: %w", err)
 	}
 
-	for _, c := range pod.Spec.Containers {
-		for _, p := range c.Ports {
-			if p.ContainerPort > 0 {
-				return int(p.ContainerPort)
-			}
+	out := make([]*models.WorkspaceStatus, 0, len(podList.Items))
+	for i := range podList.Items {
+		p := &podList.Items[i]
+
+		if len(p.Spec.Containers) == 0 {
+			continue
 		}
-	}
 
-	return defaultPort
-}
-
-func podMountsSecret(pod *corev1.Pod, secretName string) bool {
-	if secretName == "" {
-		return false
-	}
-	for _, v := range pod.Spec.Volumes {
-		if v.Secret != nil && v.Secret.SecretName == secretName {
-			return true
-		}
-	}
-	return false
-}
-
-// workspacePodStatus returns a small set of UI-friendly statuses.
-// Keep this stable for UI/API consumers.
-func workspacePodStatus(pod *corev1.Pod) models.WorkspacePodStatus {
-	if pod == nil {
-		return models.WorkspaceStatusUnknown
-	}
-
-	// If there's a concrete reason from init/containers, map it.
-	reason, _ := podTopReason(pod)
-	if reason != "" {
-		switch {
-		case isFailingReason(reason):
-			return models.WorkspaceStatusFailing
-		case isProvisioningReason(reason):
-			return models.WorkspaceStatusProvisioning
-		}
-	}
-
-	// Otherwise decide by phase + readiness.
-	switch pod.Status.Phase {
-	case corev1.PodPending:
-		return models.WorkspaceStatusProvisioning
-	case corev1.PodRunning:
-		if podAllContainersReady(pod) {
-			return models.WorkspaceStatusRunning
-		}
-		return models.WorkspaceStatusProvisioning
-	case corev1.PodSucceeded:
-		return models.WorkspaceStatusStopped
-	case corev1.PodFailed:
-		return models.WorkspaceStatusFailing
-	default:
-		return models.WorkspaceStatusUnknown
-	}
-}
-
-// workspacePodMessage returns a single message consistent with workspacePodStatus.
-func workspacePodMessage(pod *corev1.Pod) string {
-	if pod == nil {
-		return ""
-	}
-
-	// Prefer the most actionable reason/message from init/containers.
-	reason, msg := podTopReason(pod)
-	if reason != "" {
-		if msg != "" {
-			return fmt.Sprintf("%s: %s", reason, msg)
-		}
-		return reason
-	}
-
-	// Otherwise provide a short message based on phase/readiness.
-	switch pod.Status.Phase {
-	case corev1.PodPending:
-		// Surface scheduling reason/message if present.
-		if pod.Status.Reason != "" && pod.Status.Message != "" {
-			return fmt.Sprintf("%s: %s", pod.Status.Reason, pod.Status.Message)
-		}
-		if pod.Status.Reason != "" {
-			return pod.Status.Reason
-		}
-		return "Pending"
-	case corev1.PodRunning:
-		if podAllContainersReady(pod) {
-			return "Workspace is ready"
-		}
-		return "Starting"
-	case corev1.PodSucceeded:
-		return "Completed"
-	case corev1.PodFailed:
-		if pod.Status.Reason != "" && pod.Status.Message != "" {
-			return fmt.Sprintf("%s: %s", pod.Status.Reason, pod.Status.Message)
-		}
-		if pod.Status.Message != "" {
-			return pod.Status.Message
-		}
-		return "Failed"
-	default:
-		if pod.Status.Reason != "" {
-			return pod.Status.Reason
-		}
-		return string(pod.Status.Phase)
-	}
-}
-
-// podTopReason returns the "best" actionable reason/message from init containers first,
-// then regular containers. This is what catches CrashLoopBackOff while phase is Running.
-func podTopReason(pod *corev1.Pod) (reason string, message string) {
-	for _, cs := range pod.Status.InitContainerStatuses {
-		if cs.State.Waiting != nil && cs.State.Waiting.Reason != "" {
-			return cs.State.Waiting.Reason, cs.State.Waiting.Message
-		}
-		if cs.State.Terminated != nil && cs.State.Terminated.ExitCode != 0 {
-			if cs.State.Terminated.Reason != "" {
-				return cs.State.Terminated.Reason, cs.State.Terminated.Message
-			}
-			return "InitContainerError", cs.State.Terminated.Message
-		}
-	}
-
-	for _, cs := range pod.Status.ContainerStatuses {
-		if cs.State.Waiting != nil && cs.State.Waiting.Reason != "" {
-			return cs.State.Waiting.Reason, cs.State.Waiting.Message
-		}
-		if cs.State.Terminated != nil && cs.State.Terminated.ExitCode != 0 {
-			if cs.State.Terminated.Reason != "" {
-				return cs.State.Terminated.Reason, cs.State.Terminated.Message
-			}
-			return "ContainerError", cs.State.Terminated.Message
-		}
-	}
-
-	return "", ""
-}
-
-func podAllContainersReady(pod *corev1.Pod) bool {
-	if pod == nil {
-		return false
-	}
-	if len(pod.Status.ContainerStatuses) == 0 {
-		return false
-	}
-	for _, cs := range pod.Status.ContainerStatuses {
-		if !cs.Ready {
-			return false
-		}
-	}
-	return true
-}
-
-func isFailingReason(reason string) bool {
-	switch reason {
-	case "CrashLoopBackOff",
-		"ImagePullBackOff",
-		"ErrImagePull",
-		"CreateContainerConfigError",
-		"CreateContainerError",
-		"RunContainerError",
-		"ContainerError",
-		"OOMKilled":
-		return true
-	default:
-		return false
-	}
-}
-
-func isProvisioningReason(reason string) bool {
-	switch reason {
-	case "ContainerCreating", "PodInitializing":
-		return true
-	default:
-		return false
-	}
-}
-
-// podRestartCount returns total restarts across init + regular containers.
-func podRestartCount(pod *corev1.Pod) int32 {
-	if pod == nil {
-		return 0
-	}
-
-	var total int32
-	for _, cs := range pod.Status.InitContainerStatuses {
-		total += cs.RestartCount
-	}
-	for _, cs := range pod.Status.ContainerStatuses {
-		total += cs.RestartCount
-	}
-	return total
-}
-
-// podLastFailure returns the most recent non-zero exit termination reason/message.
-// It prefers the latest FinishedAt among init/regular containers.
-// If no termination is found, it falls back to a failing waiting reason (e.g. CrashLoopBackOff).
-func podLastFailure(pod *corev1.Pod) string {
-	if pod == nil {
-		return ""
-	}
-
-	var bestReason, bestMsg string
-	var bestAt time.Time
-	found := false
-
-	considerTerminated := func(t *corev1.ContainerStateTerminated) {
-		if t == nil || t.ExitCode == 0 {
-			return
-		}
-		at := t.FinishedAt.Time
-		if !found || at.After(bestAt) {
-			found = true
-			bestAt = at
-			bestReason = t.Reason
-			bestMsg = t.Message
-			if bestReason == "" {
-				bestReason = "ContainerTerminated"
+		var splash string
+		if splashAnnotation, exists := p.Annotations["workspace.k8shell.io/splash"]; exists {
+			if decoded, derr := base64.StdEncoding.DecodeString(splashAnnotation); derr == nil {
+				splash = string(decoded)
 			}
 		}
+
+		appVersion, exists := p.Labels["app.kubernetes.io/version"]
+		if !exists {
+			appVersion = "1.0.0"
+		}
+
+		host := p.Name + "." + p.Namespace
+		port := getPodContainerPort(p, models.WORKSPACE_PORT)
+		tlsEnabled := podMountsSecret(p, p.Name+"-tls")
+
+		nameLabel := p.Labels["k8shell.io/workspace"]
+		if nameLabel == "" {
+			nameLabel = p.Name
+		}
+
+		cpu := p.Spec.Containers[0].Resources.Limits.Cpu().String()
+		memory := p.Spec.Containers[0].Resources.Limits.Memory().String()
+
+		out = append(out, &models.WorkspaceStatus{
+			PodStatus: models.PodStatus{
+				Created:         p.CreationTimestamp.Time,
+				Status:          workspacePodStatus(p),
+				Message:         workspacePodMessage(p),
+				Restarts:        podRestartCount(p),
+				LastFailMessage: podLastFailure(p),
+			},
+			Name:         nameLabel,
+			Username:     p.Labels["k8shell.io/username"],
+			RepoOwner:    p.Labels["k8shell.io/repo-owner"],
+			RepoName:     p.Labels["k8shell.io/repo-name"],
+			RepoRef:      p.Labels["k8shell.io/repo-ref"],
+			Blueprint:    p.Labels["k8shell.io/blueprint"],
+			Organization: p.Labels["k8shell.io/organization"],
+			Host:         host,
+			PodIP:        p.Status.PodIP,
+			Port:         port,
+			TLSEnabled:   tlsEnabled,
+			Splash:       splash,
+			AppVersion:   appVersion,
+			CPU:          cpu,
+			Memory:       memory,
+			Fqdn:         podFQDN(p, config.ClusterDomain),
+		})
 	}
 
-	for _, cs := range pod.Status.InitContainerStatuses {
-		considerTerminated(cs.State.Terminated)
-		considerTerminated(cs.LastTerminationState.Terminated)
-	}
-	for _, cs := range pod.Status.ContainerStatuses {
-		considerTerminated(cs.State.Terminated)
-		considerTerminated(cs.LastTerminationState.Terminated)
-	}
-
-	if found {
-		return formatLastFailMessage(bestReason, bestMsg)
-	}
-
-	r, m := podTopReason(pod)
-	if r != "" && isFailingReason(r) {
-		return formatLastFailMessage(r, m)
-	}
-
-	return ""
+	return &GetWorkspacesResult{
+		Workspaces: out,
+		Pods:       podList.Items,
+		Continue:   podList.Continue,
+	}, nil
 }
 
-func formatLastFailMessage(reason, msg string) string {
-	reason = strings.TrimSpace(reason)
-	msg = strings.TrimSpace(msg)
+// FindworkspaceByName finds a workspace by its name using Helm client and returns the corresponding release
+func FindWorkspaceHelmRelease(_ context.Context, helmClient *helm.Client, name string) (*release.Release, error) {
+	labels := map[string]string{
+		"app.kubernetes.io/name":     helm.WORKSPACE_CHART_NAME,
+		"app.kubernetes.io/instance": name,
+	}
 
-	if reason == "" && msg == "" {
-		return ""
+	selector := getSelector(labels)
+	releases, err := helmClient.ListWithSelector(helmClient.TargetNamespace(), selector)
+	if err != nil {
+		if strings.Contains(err.Error(), "unable to parse") {
+			return nil, fmt.Errorf("failed to list releases: %w", models.ErrInvalidParameters)
+		}
+		return nil, fmt.Errorf("failed to list releases: %w", err)
 	}
-	if reason != "" && msg != "" {
-		return reason + ": " + msg
+
+	if len(releases) == 0 {
+		return nil, fmt.Errorf("%w: %s", models.ErrWorkspaceNotFound, name)
 	}
-	if reason != "" {
-		return reason
+	if len(releases) > 1 {
+		return nil, fmt.Errorf("multiple releases found for workspace %s", name)
 	}
-	return msg
+
+	return releases[0], nil
 }
 
-// podFQDN returns the Pod DNS name if hostname+subdomain are set, otherwise "".
-func podFQDN(pod *corev1.Pod, clusterDomain string) string {
-	if pod == nil {
-		return ""
+// *** Workspace methods
+
+// NewWorkspace creates a new workspace with the specified Helm chart
+func NewWorkspace(
+	workspaceName string,
+	blueprint *models.Blueprint,
+	user *models.User,
+	userStr *models.CanonicalUserStr,
+	helmClient *helm.Client,
+	identityClient *identity.Client,
+	config *config.Config,
+) (*Workspace, error) {
+
+	return &Workspace{
+		Name:      workspaceName,
+		log:       log.NewLogger("workspace"),
+		client:    helmClient,
+		identify:  identityClient,
+		blueprint: blueprint,
+		config:    config,
+		user:      user,
+		userStr:   userStr,
+	}, nil
+}
+
+// NewWorkspaceFromHelmRelease creates a workspace instance from an existing Helm release
+func NewWorkspaceFromHelmRelease(ctx context.Context, name string, helmClient *helm.Client,
+	identityClient *identity.Client, config *config.Config) (*Workspace, error) {
+
+	release, err := FindWorkspaceHelmRelease(ctx, helmClient, name)
+	if err != nil {
+		return nil, err
 	}
-	hn := strings.TrimSpace(pod.Spec.Hostname)
-	sd := strings.TrimSpace(pod.Spec.Subdomain)
-	if hn == "" || sd == "" {
-		return ""
+	username := release.Labels["k8shell.io/username"]
+	blueprintName := release.Labels["k8shell.io/blueprint"]
+
+	userpb, err := identityClient.FindUser(ctx, &identitypb.FindUserRequest{Username: username})
+	if err != nil {
+		return nil, fmt.Errorf("failed to get user %s: %w", username, err)
 	}
-	if clusterDomain == "" {
-		clusterDomain = "cluster.local"
+	user := gapi.ProtoToUser(userpb)
+
+	values := release.Config
+	blueprint := &models.Blueprint{}
+	yamlBytes, err := yaml.Marshal(values)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal blueprint values: %w", err)
 	}
-	return fmt.Sprintf("%s.%s.%s.svc.%s", hn, sd, pod.Namespace, clusterDomain)
+	if err := yaml.Unmarshal(yamlBytes, blueprint); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal blueprint values: %w", err)
+	}
+	blueprint.Name = blueprintName
+
+	ws := &Workspace{
+		Name:      name,
+		log:       log.NewLogger("workspace"),
+		client:    helmClient,
+		identify:  identityClient,
+		blueprint: blueprint,
+		user:      user,
+		config:    config,
+	}
+
+	return ws, nil
+}
+
+func (w *Workspace) CreateLock() *WorkspaceLock {
+	return NewWorkspaceLock(
+		w.client.KubeClient(),
+		w.client.TargetNamespace(),
+		w.Name,
+	)
+}
+
+func (w *Workspace) appVersion() string {
+	if w.blueprint.K8shelld.Image != "" {
+		parts := strings.Split(w.blueprint.K8shelld.Image, ":")
+		if len(parts) >= 2 {
+			tag := parts[len(parts)-1]
+			return strings.TrimPrefix(tag, "v")
+		}
+	}
+	return "1.0.0"
+}
+
+// Selector returns the label selector for the workspace used to identify the workspace in Kubernetes
+// It uses the app.kubernetes.io/instance label to match the workspace name
+func (w *Workspace) Selector() string {
+	return fmt.Sprintf("app.kubernetes.io/instance=%s", w.Name)
+}
+
+func (w *Workspace) Values() (map[string]interface{}, error) {
+	if w.blueprint == nil {
+		return nil, fmt.Errorf("blueprint is nil for workspace %s", w.Name)
+	}
+
+	values, err := toMap(w.blueprint)
+	if err != nil {
+		return nil, fmt.Errorf("failed to convert blueprint to map: %w", err)
+	}
+
+	userValues, err := toMap(w.user)
+	if err != nil {
+		return nil, fmt.Errorf("failed to convert user to map: %w", err)
+	}
+
+	cmValues, err := toMap(w.config.CertManager)
+	if err != nil {
+		return nil, fmt.Errorf("failed to convert cert manager config to map: %w", err)
+	}
+
+	userstrB64 := ""
+	if w.userStr != nil {
+		userstrB64 = w.userStr.Base64()
+	}
+
+	values["__user__"] = userValues
+	values["__username__"] = w.user.Username
+	values["__repoowner__"] = w.userStr.Identity.RepoOwner
+	values["__reponame__"] = w.userStr.Identity.RepoName
+	values["__reporef__"] = w.userStr.Identity.RepoRef
+	values["__workspace__"] = w.Name
+	values["__blueprint__"] = w.blueprint.Name
+	values["__organization__"] = w.user.Organization
+	values["__registry__"] = w.client.Registry.ToValues()
+	values["__namespace__"] = getNamespace()
+	values["__certmanager__"] = cmValues
+	values["__appversion__"] = w.appVersion()
+	values["__identity__"] = w.user.Source
+	values["__userstr__"] = userstrB64
+	values["__apiserver__"] = map[string]interface{}{
+		"enabled": w.config.K8shellCapabilities.APIServerEnabled,
+	}
+	return values, nil
+}
+
+func (w *Workspace) Template(ctx context.Context) (string, error) {
+	values, err := w.Values()
+	if err != nil {
+		return "", err
+	}
+	out, err := w.client.Template(ctx, helm.WORKSPACE_CHART_NAME, helm.InstallOptions{
+		ReleaseName: w.blueprint.Name,
+		Values:      values,
+	})
+	if err != nil {
+		return "", err
+	}
+	return out, nil
+}
+
+func (w *Workspace) TemplateHash(ctx context.Context) (string, error) {
+	template, err := w.Template(ctx)
+	if err != nil {
+		return "", err
+	}
+
+	h := sha256.New()
+	h.Write([]byte(template))
+	return fmt.Sprintf("%x", h.Sum(nil)), nil
+}
+
+func (w *Workspace) GetPodStatus(ctx context.Context) (*models.PodStatus, error) {
+	v1 := w.client.KubeClient().CoreV1()
+	pod, err := v1.Pods(w.client.TargetNamespace()).Get(ctx, w.Name, metav1.GetOptions{})
+	if err != nil {
+		if k8sErrors.IsNotFound(err) {
+			return nil, fmt.Errorf("%w: %s", models.ErrWorkspaceNotFound, w.Name)
+		}
+		return nil, fmt.Errorf("failed to get workspace pod status %s: %w", w.Name, err)
+	}
+	return &models.PodStatus{
+		Created:         pod.CreationTimestamp.Time,
+		Status:          workspacePodStatus(pod),
+		Message:         workspacePodMessage(pod),
+		Restarts:        podRestartCount(pod),
+		LastFailMessage: podLastFailure(pod),
+	}, nil
+}
+
+func (w *Workspace) IsInstalled(ctx context.Context) (bool, error) {
+	_, err := w.client.GetRelease(w.Name)
+	if err != nil {
+		if strings.Contains(err.Error(), "not found") || strings.Contains(err.Error(), "release: not found") {
+			return false, nil
+		}
+		return false, err
+	}
+	return true, nil
+}
+
+func (w *Workspace) Uninstall(ctx context.Context, timeout time.Duration, wait bool, lock bool) error {
+	if lock {
+		err := w.lock(timeout)
+		if err != nil {
+			return fmt.Errorf("failed to acquire lock: %w", err)
+		}
+		defer func() {
+			if releaseErr := w.unlock(); releaseErr != nil {
+				w.log.Error().Err(releaseErr).Msgf("Failed to release lock for workspace %s", w.Name)
+			}
+		}()
+	}
+
+	if err := w.client.Uninstall(w.Name, int(timeout.Seconds()), wait); err != nil {
+		return fmt.Errorf("failed to uninstall workspace: %w", err)
+	}
+	return nil
 }

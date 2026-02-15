@@ -38,8 +38,7 @@ func NewProvisionerService(server *Server) *ProvisionerService {
 // FindWorkspace retrieves the details of a specific workspace
 func (p *ProvisionerService) FindWorkspace(ctx context.Context,
 	req *provisionerpb.FindWorkspaceRequest) (*commonpb.WorkspaceStatus, error) {
-	s, _, err := ws.FindWorkspace(ctx, p.server.helm.KubeClient().CoreV1(),
-		p.server.helm.TargetNamespace(), req.Workspace)
+	s, _, err := ws.FindWorkspace(ctx, p.server.helm, req.Workspace)
 	if err != nil {
 		if errors.Is(err, models.ErrWorkspaceNotFound) {
 			return nil, status.Errorf(codes.NotFound, "Workspace %s not found", req.Workspace)
@@ -53,8 +52,8 @@ func (p *ProvisionerService) FindWorkspace(ctx context.Context,
 func (p *ProvisionerService) GetWorkspaces(ctx context.Context,
 	req *provisionerpb.GetWorkspacesRequest) (*provisionerpb.GetWorkspacesResponse, error) {
 
-	workspaces, err := ws.GetWorkspaces(ctx, p.server.helm.KubeClient().CoreV1(),
-		p.server.helm.TargetNamespace(), ws.GetWorkspacesOptions{
+	workspaces, err := ws.GetWorkspaces(ctx, p.server.helm,
+		ws.GetWorkspacesOptions{
 			Username:     req.Username,
 			Blueprint:    req.Blueprint,
 			Organization: req.Organization,
@@ -284,7 +283,7 @@ func (p *ProvisionerService) prepareWorkspaceProvisioning(ctx context.Context,
 	}
 
 	workspace, err := ws.NewWorkspace(userStr.WorkspaceName, blueprintObj, user, userStr,
-		p.server.helm, p.server.Identity, &p.server.config.CertManager, &p.server.config.K8shellCapabilities)
+		p.server.helm, p.server.Identity, p.server.config)
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "Failed to create workspace: %v", err)
 	}
@@ -316,8 +315,7 @@ func (p *ProvisionerService) UpgradeWorkspaceResources(ctx context.Context,
 		return nil, status.Errorf(codes.InvalidArgument, "at least one of cpu or memory must be specified")
 	}
 
-	_, pod, err := ws.FindWorkspace(ctx, p.server.helm.KubeClient().CoreV1(),
-		p.server.helm.TargetNamespace(), name)
+	_, pod, err := ws.FindWorkspace(ctx, p.server.helm, name)
 	if err != nil {
 		if errors.Is(err, models.ErrWorkspaceNotFound) {
 			return nil, status.Errorf(codes.NotFound, "Workspace %s not found", name)
@@ -336,8 +334,7 @@ func (p *ProvisionerService) UpgradeWorkspaceResources(ctx context.Context,
 	}
 	user := gapi.ProtoToUser(userpb)
 
-	w, err := ws.NewWorkspace(name, nil, user, wl.UserStr, p.server.helm, p.server.Identity,
-		&p.server.config.CertManager, &p.server.config.K8shellCapabilities)
+	w, err := ws.NewWorkspace(name, nil, user, wl.UserStr, p.server.helm, p.server.Identity, p.server.config)
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "Failed to create workspace for upgrade: %v", err)
 	}
@@ -370,8 +367,7 @@ func (p *ProvisionerService) DeleteWorkspace(ctx context.Context,
 		return nil, status.Errorf(codes.InvalidArgument, "delay seconds cannot be greater than 60 seconds")
 	}
 
-	w, err := ws.NewWorkspaceFromHelmRelease(ctx, name, p.server.helm, p.server.Identity,
-		&p.server.config.CertManager, &p.server.config.K8shellCapabilities)
+	w, err := ws.NewWorkspaceFromHelmRelease(ctx, name, p.server.helm, p.server.Identity, p.server.config)
 	if err != nil {
 		return nil, p.convertToGRPCError(err)
 	}

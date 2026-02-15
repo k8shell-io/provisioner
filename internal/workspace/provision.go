@@ -161,7 +161,7 @@ func (w *Workspace) doInstallation(ctx context.Context, opts *ProvisionOptions) 
 	labels := map[string]string{
 		"app.kubernetes.io/name":       helm.WORKSPACE_CHART_NAME,
 		"app.kubernetes.io/instance":   w.Name,
-		"app.kubernetes.io/version":    w.getK8shelldVersion(),
+		"app.kubernetes.io/version":    w.appVersion(),
 		"app.kubernetes.io/managed-by": "k8shell-provisioner",
 		"k8shell.io/app":               helm.WORKSPACE_CHART_NAME,
 		"k8shell.io/workspace":         w.Name,
@@ -178,7 +178,7 @@ func (w *Workspace) doInstallation(ctx context.Context, opts *ProvisionOptions) 
 		Wait:            false,
 		Timeout:         opts.Timeout,
 		Labels:          labels,
-		AppVersion:      w.getK8shelldVersion(),
+		AppVersion:      w.appVersion(),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to install workspace: %w", err)
@@ -396,74 +396,4 @@ func (w *Workspace) isCriticalError(message string) error {
 		}
 	}
 	return nil
-}
-
-// Upgrade upgrades an existing workspace release (or installs it if missing).
-// It uses a distributed lock to avoid concurrent upgrades for the same workspace.
-func (w *Workspace) Upgrade(ctx context.Context, opts *ProvisionOptions) (*models.PodStatus, error) {
-	if opts == nil {
-		opts = &ProvisionOptions{
-			Timeout:     20,
-			Messages:    nil,
-			LockTimeout: 30,
-		}
-	}
-	if opts.LockTimeout == 0 {
-		opts.LockTimeout = 30
-	}
-
-	return w.upgradeWithLock(ctx, opts)
-}
-
-func (w *Workspace) upgradeWithLock(ctx context.Context, opts *ProvisionOptions) (*models.PodStatus, error) {
-	if err := w.lock(time.Duration(opts.LockTimeout) * time.Second); err != nil {
-		return nil, err
-	}
-	defer func() {
-		if releaseErr := w.unlock(); releaseErr != nil {
-			w.log.Error().Err(releaseErr).Msgf("Failed to release lock for workspace %s", w.Name)
-		}
-	}()
-
-	values, err := w.Values()
-	if err != nil {
-		return nil, err
-	}
-
-	labels := map[string]string{
-		"app.kubernetes.io/name":       helm.WORKSPACE_CHART_NAME,
-		"app.kubernetes.io/instance":   w.Name,
-		"app.kubernetes.io/version":    w.getK8shelldVersion(),
-		"app.kubernetes.io/managed-by": "k8shell-provisioner",
-		"k8shell.io/app":               helm.WORKSPACE_CHART_NAME,
-		"k8shell.io/workspace":         w.Name,
-		"k8shell.io/username":          w.user.Username,
-		"k8shell.io/blueprint":         w.blueprint.Name,
-		"k8shell.io/organization":      w.user.Organization,
-	}
-
-	startTime := time.Now()
-	if err := w.client.Upgrade(ctx, helm.InstallOptions{
-		ReleaseName: w.Name,
-		ChartName:   helm.WORKSPACE_CHART_NAME,
-		Values:      values,
-		Wait:        false,
-		Timeout:     opts.Timeout,
-		Labels:      labels,
-		AppVersion:  w.getK8shelldVersion(),
-	}); err != nil {
-		return nil, fmt.Errorf("failed to upgrade workspace %s: %w", w.Name, err)
-	}
-
-	status, err := w.waitForPodRunning(ctx, startTime, opts)
-	if err != nil {
-		return nil, err
-	}
-
-	if status.Status == "Running" {
-		upgradeTime := time.Since(startTime)
-		w.log.Info().Msgf("Workspace %s upgrade completed in %s", w.Name, upgradeTime)
-	}
-
-	return status, nil
 }
