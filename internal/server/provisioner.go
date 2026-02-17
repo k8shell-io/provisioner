@@ -133,6 +133,14 @@ func (p *ProvisionerService) ProvisionWorkspaceStream(req *provisionerpb.Provisi
 		return err
 	}
 
+	canProvision, err := workspace.CanProvision(ctx)
+	if err != nil {
+		return status.Errorf(codes.Internal, "Failed to check if workspace can be provisioned: %v", err)
+	}
+	if !canProvision {
+		return status.Errorf(codes.FailedPrecondition, "Workspace %s already exists and is running", workspace.Name)
+	}
+
 	if err := stream.Send(&provisionerpb.ProvisionEvent{
 		Type:       string(models.WorkspaceStreamEventTypeStatus),
 		Timestamp:  time.Now().Format("2006-01-02 15:04:05"),

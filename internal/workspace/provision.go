@@ -22,6 +22,30 @@ type ProvisionOptions struct {
 	LockTimeout int
 }
 
+func (w *Workspace) CanProvision(ctx context.Context) (bool, error) {
+	exists, err := w.IsInstalled(ctx)
+	if err != nil {
+		return false, fmt.Errorf("failed to check if workspace exists: %w", err)
+	}
+
+	if exists {
+		status, err := w.GetPodStatus(ctx)
+		if err != nil {
+			if errors.Is(err, models.ErrWorkspaceNotFound) {
+				w.log.Warn().Msgf("Workspace is installed but workspace pod %s not found.", w.Name)
+			} else {
+				return false, fmt.Errorf("failed to get workspace pod status: %w", err)
+			}
+		} else {
+			if status.Status == "Running" {
+				return false, nil
+			}
+		}
+	}
+
+	return true, nil
+}
+
 // Provision provisions the workspace
 func (w *Workspace) Provision(ctx context.Context, opts *ProvisionOptions) (*models.PodStatus, error) {
 	if opts == nil {
@@ -36,32 +60,41 @@ func (w *Workspace) Provision(ctx context.Context, opts *ProvisionOptions) (*mod
 		opts.LockTimeout = 30
 	}
 
+	if err := w.lock(time.Duration(opts.LockTimeout) * time.Second); err != nil {
+		return nil, err
+	}
+	defer func() {
+		if releaseErr := w.unlock(); releaseErr != nil {
+			w.log.Error().Err(releaseErr).Msgf("Failed to release lock for workspace %s", w.Name)
+		}
+	}()
+
+	w.log.Debug().Msgf("Acquired lock for workspace %s", w.Name)
+
 	exists, err := w.IsInstalled(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("failed to check if workspace exists: %w", err)
+		return nil, fmt.Errorf("failed to recheck if workspace exists: %w", err)
 	}
 
 	if exists {
 		status, err := w.GetPodStatus(ctx)
 		if err != nil {
-			if errors.Is(err, models.ErrWorkspaceNotFound) {
-				w.log.Info().Msgf("Pod %s not found, proceeding with provisioning", w.Name)
-			} else {
-				return nil, fmt.Errorf("failed to get workspace pod status: %w", err)
+			if !errors.Is(err, models.ErrWorkspaceNotFound) {
+				return nil, fmt.Errorf("failed to recheck workspace status: %w", err)
 			}
 		} else {
 			if status.Status == "Running" {
-				w.log.Info().Msgf("Workspace %s is already running", w.Name)
 				return status, nil
 			}
 		}
 
-		w.log.Info().Msgf("Workspace %s exists but it is not running, need to provision", w.Name)
-	} else {
-		w.log.Info().Msgf("Workspace %s does not exist, need to provision", w.Name)
+		w.log.Debug().Msgf("Workspace %s still not running after acquiring lock, proceeding with reinstall", w.Name)
+		if err := w.client.Uninstall(w.Name, int(opts.Timeout), true); err != nil {
+			return nil, fmt.Errorf("failed to delete workspace: %w", err)
+		}
 	}
 
-	return w.provisionWithLock(ctx, opts)
+	return w.doInstallation(ctx, opts)
 }
 
 // Lock acquires a distributed lock for the workspace
@@ -99,47 +132,6 @@ func (w *Workspace) unlock() error {
 	}
 	w.workspaceLock = nil
 	return nil
-}
-
-// provisionWithLock provisions the workspace with a distributed lock
-func (w *Workspace) provisionWithLock(ctx context.Context, opts *ProvisionOptions) (*models.PodStatus, error) {
-	if err := w.lock(time.Duration(opts.LockTimeout) * time.Second); err != nil {
-		return nil, err
-	}
-	defer func() {
-		if releaseErr := w.unlock(); releaseErr != nil {
-			w.log.Error().Err(releaseErr).Msgf("Failed to release lock for workspace %s", w.Name)
-		}
-	}()
-
-	w.log.Debug().Msgf("Acquired lock for workspace %s", w.Name)
-	exists, err := w.IsInstalled(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("failed to recheck if workspace exists: %w", err)
-	}
-
-	if exists {
-		status, err := w.GetPodStatus(ctx)
-		if err != nil {
-			if errors.Is(err, models.ErrWorkspaceNotFound) {
-				w.log.Debug().Msgf("Pod %s not found, proceeding with provisioning", w.Name)
-			} else {
-				return nil, fmt.Errorf("failed to recheck workspace status: %w", err)
-			}
-		} else {
-			if status.Status == "Running" {
-				w.log.Debug().Msgf("Workspace %s is now running (completed by another instance while waiting for lock)", w.Name)
-				return status, nil
-			}
-		}
-
-		w.log.Debug().Msgf("Workspace %s still not running after acquiring lock, proceeding with reinstall", w.Name)
-		if err := w.client.Uninstall(w.Name, int(opts.Timeout), true); err != nil {
-			return nil, fmt.Errorf("failed to delete workspace: %w", err)
-		}
-	}
-
-	return w.doInstallation(ctx, opts)
 }
 
 // doInstallation performs the actual installation of the workspace
