@@ -13,6 +13,7 @@ import (
 )
 
 var ErrWorkspaceExists = errors.New("workspace already exists")
+var ErrInvalidArgument = errors.New("invalid argument")
 
 type Client struct {
 	provisionerpb.ProvisionerServiceClient
@@ -59,6 +60,9 @@ func (c *Client) Handshake(ctx context.Context, userstr models.UserStr) (workspa
 		code, desc := extractErrorCodeAndDesc(hs.GetError())
 		if code == "AlreadyExists" || code == "PreconditionFailed" {
 			return "", "", nil, fmt.Errorf("%w: handshake failed: %s", ErrWorkspaceExists, desc)
+		}
+		if code == "InvalidArgument" {
+			return "", "", nil, fmt.Errorf("%w: handshake failed: %s", ErrInvalidArgument, desc)
 		}
 		return "", "", nil, fmt.Errorf("handshake failed: %s", desc)
 	}
