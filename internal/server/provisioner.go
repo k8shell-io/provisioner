@@ -116,29 +116,41 @@ func (p *ProvisionerService) CanUpgradeWorkspace(ctx context.Context,
 func (p *ProvisionerService) ProvisionWorkspaceStream(req *provisionerpb.ProvisionWorkspaceRequest,
 	stream provisionerpb.ProvisionerService_ProvisionWorkspaceStreamServer) error {
 
+	sendErr := func(workspaceName string, err error) error {
+		return stream.Send(&provisionerpb.ProvisionEvent{
+			Type:       string(models.WorkspaceStreamEventTypeStatus),
+			Timestamp:  time.Now().Format("2006-01-02 15:04:05"),
+			ObjectName: workspaceName,
+			Status:     string(models.WorkspaceStatusError),
+			Message:    err.Error(),
+		})
+	}
+
 	ctx := stream.Context()
 
 	userstr, err := models.NewUserStr(req.Userstr, false)
 	if err != nil {
-		return status.Errorf(codes.InvalidArgument, "Invalid userstr format: %v", err)
+		return sendErr("", status.Errorf(codes.InvalidArgument, "Invalid userstr format: %v", err))
 	}
 
 	canUserStr, err := userstr.Canonicalize()
 	if err != nil {
-		return status.Errorf(codes.InvalidArgument, "Failed to canonicalize userstr: %v", err)
+		return sendErr("", status.Errorf(codes.InvalidArgument, "Failed to canonicalize userstr: %v", err))
 	}
 
 	workspace, err := p.prepareWorkspaceWithUserStr(ctx, canUserStr)
 	if err != nil {
-		return err
+		return sendErr("", err)
 	}
 
 	canProvision, err := workspace.CanProvision(ctx)
 	if err != nil {
-		return status.Errorf(codes.Internal, "Failed to check if workspace can be provisioned: %v", err)
+		return sendErr(workspace.Name, status.Errorf(codes.Internal,
+			"Failed to check if workspace can be provisioned: %v", err))
 	}
 	if !canProvision {
-		return status.Errorf(codes.FailedPrecondition, "Workspace %s already exists and is running", workspace.Name)
+		return sendErr(workspace.Name, status.Errorf(codes.FailedPrecondition,
+			"Workspace %s already exists and is running", workspace.Name))
 	}
 
 	if err := stream.Send(&provisionerpb.ProvisionEvent{
@@ -238,7 +250,7 @@ func (p *ProvisionerService) ProvisionWorkspaceStream(req *provisionerpb.Provisi
 					Type:       string(models.WorkspaceStreamEventTypeStatus),
 					Timestamp:  time.Now().Format("2006-01-02 15:04:05"),
 					ObjectName: workspace.Name,
-					Status:     "Error",
+					Status:     string(models.WorkspaceStatusError),
 					Message:    err.Error(),
 				}); err != nil {
 					return err
