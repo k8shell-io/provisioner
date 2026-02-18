@@ -7,7 +7,6 @@ import (
 	"os/signal"
 	"path/filepath"
 	"syscall"
-	"time"
 
 	"github.com/k8shell-io/common/pkg/gapi"
 	log "github.com/k8shell-io/common/pkg/logger"
@@ -73,7 +72,7 @@ func NewServer(configFile string) (*Server, error) {
 
 		server.provisionJobsKV, err = server.nats.NewKV(natsc.BucketOptions{
 			Bucket:    natsc.WORKSPACE_PROVISION_JOBS_BUCKET,
-			BucketTTL: time.Duration(server.config.Nats.KV.ProvisionJobsTimeout) * time.Hour,
+			BucketTTL: server.config.Nats.KV.ProvisionBucketTTL,
 		})
 		if err != nil {
 			return nil, fmt.Errorf("create provision jobs kv: %w", err)

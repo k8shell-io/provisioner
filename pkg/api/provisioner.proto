@@ -11,7 +11,7 @@ import "common/pkg/gapi/common.proto";
 service ProvisionerService {
   rpc GetWorkspaces (GetWorkspacesRequest) returns (GetWorkspacesResponse);
   rpc FindWorkspace (FindWorkspaceRequest) returns (common.WorkspaceDetails);
-  rpc ProvisionWorkspaceStream (ProvisionWorkspaceRequest) returns (stream ProvisionEvent);
+  rpc ProvisionWorkspaceStream (ProvisionWorkspaceRequest) returns (stream ProvisionWorkspaceResponse);
   rpc UpgradeWorkspace (UpgradeWorkspaceRequest) returns (UpgradeWorkspaceResponse);
   rpc CanUpgradeWorkspace (CanUpgradeWorkspaceRequest) returns (CanUpgradeWorkspaceResponse);
   rpc UpgradeWorkspaceResources (UpgradeWorkspaceResourcesRequest) returns (UpgradeWorkspaceResponse);
@@ -49,8 +49,16 @@ message ProvisionWorkspaceRequest {
 }
 
 message ProvisionWorkspaceResponse {
-  string status = 1;
-  string message = 2;
+  oneof data {
+    HandshakeResponse handshake = 1;
+    ProvisionEvent event = 2;
+  }
+}
+
+message HandshakeResponse {
+  string workspace = 1;
+  string jobid = 2;
+  string error = 3;
 }
 
 message UpgradeWorkspaceRequest {

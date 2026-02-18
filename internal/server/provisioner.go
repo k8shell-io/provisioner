@@ -25,10 +25,10 @@ import (
 const TOTAL_PROVISION_EVENTS = 12
 
 type ProvisionJobServer struct {
-	models.ProvisionJob
-	NextEventId int64              `json:"-"`
-	kv          *natsc.JetStreamKV `json:"-"`
-	log         *zerolog.Logger    `json:"-"`
+	models.ProvisionJob `json:",inline"`
+	NextEventId         int64              `json:"-"`
+	kv                  *natsc.JetStreamKV `json:"-"`
+	log                 *zerolog.Logger    `json:"-"`
 }
 
 // NewProvisionJob creates a new ProvisionJob instance with the given username and monitor URL.
@@ -38,7 +38,7 @@ func NewProvisionJob(WorkspaceName string, kv *natsc.JetStreamKV, log *zerolog.L
 		ProvisionJob: models.ProvisionJob{
 			ID:            uuid.NewString(),
 			WorkspaceName: WorkspaceName,
-			Status:        models.ProvisionJobAccepted,
+			Status:        models.ProvisionJobRunning,
 			CreatedAt:     now,
 			UpdatedAt:     now,
 			Events:        []models.WorkspaceStreamEvent{},
@@ -60,6 +60,11 @@ func (j *ProvisionJobServer) AddEvent(ev *provisionerpb.ProvisionEvent) {
 	}
 	j.Events = append(j.Events, event)
 	j.NextEventId++
+	j.update()
+}
+
+func (j *ProvisionJobServer) SetStatus(status models.ProvisionJobStatus) {
+	j.Status = status
 	j.update()
 }
 
@@ -173,7 +178,11 @@ func (p *ProvisionerService) ProvisionWorkspaceStream(req *provisionerpb.Provisi
 	var job *ProvisionJobServer
 
 	sendEvent := func(event *provisionerpb.ProvisionEvent) error {
-		err := stream.Send(event)
+		err := stream.Send(&provisionerpb.ProvisionWorkspaceResponse{
+			Data: &provisionerpb.ProvisionWorkspaceResponse_Event{
+				Event: event,
+			},
+		})
 		if err != nil {
 			p.log.Error().Err(err).Msg("Failed to send provision event")
 		}
@@ -183,58 +192,64 @@ func (p *ProvisionerService) ProvisionWorkspaceStream(req *provisionerpb.Provisi
 		return err
 	}
 
-	sendErr := func(workspaceName string, err error) error {
-		return sendEvent(&provisionerpb.ProvisionEvent{
-			Type:       string(models.WorkspaceStreamEventTypeStatus),
-			Timestamp:  time.Now().Format("2006-01-02 15:04:05"),
-			ObjectName: workspaceName,
-			Status:     string(models.WorkspaceStatusError),
-			Message:    err.Error(),
+	sendHandshakeErr := func(workspaceName string, err error) error {
+		errx := stream.Send(&provisionerpb.ProvisionWorkspaceResponse{
+			Data: &provisionerpb.ProvisionWorkspaceResponse_Handshake{
+				Handshake: &provisionerpb.HandshakeResponse{
+					Workspace: workspaceName,
+					Error:     err.Error(),
+				},
+			},
 		})
+		if errx != nil {
+			p.log.Error().Err(errx).Msg("Failed to send handshake error response")
+		}
+		return errx
 	}
 
 	ctx := stream.Context()
 
 	userstr, err := models.NewUserStr(req.Userstr, false)
 	if err != nil {
-		return sendErr("", status.Errorf(codes.InvalidArgument, "Invalid userstr format: %v", err))
+		return sendHandshakeErr("", status.Errorf(codes.InvalidArgument, "Invalid userstr format: %v", err))
 	}
 
 	canUserStr, err := userstr.Canonicalize()
 	if err != nil {
-		return sendErr("", status.Errorf(codes.InvalidArgument, "Failed to canonicalize userstr: %v", err))
+		return sendHandshakeErr("", status.Errorf(codes.InvalidArgument, "Failed to canonicalize userstr: %v", err))
 	}
 
 	workspace, err := p.prepareWorkspaceWithUserStr(ctx, canUserStr)
 	if err != nil {
-		return sendErr("", err)
+		return sendHandshakeErr("", err)
 	}
 
 	exists, err := workspace.ExistsRunning(ctx)
 	if err != nil {
-		return sendErr(workspace.Name, status.Errorf(codes.Internal,
+		return sendHandshakeErr(workspace.Name, status.Errorf(codes.Internal,
 			"Failed to check if workspace can be provisioned: %v", err))
 	}
 	if exists {
-		return sendErr(workspace.Name, status.Errorf(codes.AlreadyExists,
+		return sendHandshakeErr(workspace.Name, status.Errorf(codes.AlreadyExists,
 			"Workspace %s already exists and is running", workspace.Name))
 	}
 
-	message := "Provisioning started"
 	if p.server.provisionJobsKV != nil {
 		job = NewProvisionJob(workspace.Name, p.server.provisionJobsKV, p.log)
 		workspace.SetJobId(job.ID)
-		message = fmt.Sprintf("%s, job=%s", message, job.ID)
+		job.SetStatus(models.ProvisionJobRunning)
 	}
 
-	if err := sendEvent(&provisionerpb.ProvisionEvent{
-		Type:       string(models.WorkspaceStreamEventTypeStatus),
-		Timestamp:  time.Now().Format("2006-01-02 15:04:05"),
-		ObjectName: workspace.Name,
-		Status:     string(models.WorkspaceStatusProvisioning),
-		Message:    message,
-	}); err != nil {
-		return err
+	err = stream.Send(&provisionerpb.ProvisionWorkspaceResponse{
+		Data: &provisionerpb.ProvisionWorkspaceResponse_Handshake{
+			Handshake: &provisionerpb.HandshakeResponse{
+				Workspace: workspace.Name,
+				Jobid:     workspace.JobId,
+			},
+		},
+	})
+	if err != nil {
+		return fmt.Errorf("failed to send handshake response: %w", err)
 	}
 
 	messages := make(chan models.WorkspaceStreamEvent, 100)
@@ -248,7 +263,6 @@ func (p *ProvisionerService) ProvisionWorkspaceStream(req *provisionerpb.Provisi
 		timeout = 20
 	}
 
-	// Provision the workspace
 	go func() {
 		defer close(done)
 		defer close(errorChan)
@@ -266,7 +280,6 @@ func (p *ProvisionerService) ProvisionWorkspaceStream(req *provisionerpb.Provisi
 		done <- status
 	}()
 
-	// Stream events
 	for {
 		select {
 		case <-ctx.Done():
@@ -283,7 +296,7 @@ func (p *ProvisionerService) ProvisionWorkspaceStream(req *provisionerpb.Provisi
 					ObjectName: msg.ObjectName,
 					Message:    msg.Message,
 				}); err != nil {
-					return err
+					p.log.Error().Err(err).Msg("Failed to send provision event message")
 				}
 			}
 
@@ -299,7 +312,7 @@ func (p *ProvisionerService) ProvisionWorkspaceStream(req *provisionerpb.Provisi
 						Status:     fmt.Sprintf("%d", percent),
 						Message:    fmt.Sprintf("%d%% complete", percent),
 					}); err != nil {
-						return err
+						p.log.Error().Err(err).Msg("Failed to send provision progress event")
 					}
 				}
 			}
@@ -313,8 +326,11 @@ func (p *ProvisionerService) ProvisionWorkspaceStream(req *provisionerpb.Provisi
 					Status:     string(status.Status),
 					Message:    status.Message,
 				}); err != nil {
-					return err
+					p.log.Error().Err(err).Msg("Failed to send provision status event")
 				}
+			}
+			if job != nil {
+				job.SetStatus(models.ProvisionJobCompleted)
 			}
 			return nil
 
@@ -327,8 +343,11 @@ func (p *ProvisionerService) ProvisionWorkspaceStream(req *provisionerpb.Provisi
 					Status:     string(models.WorkspaceStatusError),
 					Message:    err.Error(),
 				}); err != nil {
-					return err
+					p.log.Error().Err(err).Msg("Failed to send provision error event")
 				}
+			}
+			if job != nil {
+				job.SetStatus(models.ProvisionJobCompleted)
 			}
 			return nil
 		}

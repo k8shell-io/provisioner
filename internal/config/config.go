@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"path/filepath"
+	"time"
 
 	"github.com/k8shell-io/common/pkg/config"
 	"github.com/k8shell-io/common/pkg/gapi"
@@ -25,13 +26,14 @@ type Config struct {
 
 // ProvisionerNatsConfig represents the NATS configuration for the provisioner
 type ProvisionerNatsConfig struct {
-	natsc.NATSClientConfig
-	KV JobsKVConfig `yaml:"kv"`
+	natsc.NATSClientConfig `yaml:",inline" mapstructure:",squash"`
+	KV                     JobsKVConfig `yaml:"kv" mapstructure:"kv"`
 }
 
 // JobsKVConfig represents the configuration for the NATS Key-Value store used for provisioning jobs
 type JobsKVConfig struct {
-	ProvisionJobsTimeout uint32 `yaml:"provisionJobsTimeout"`
+	ProvisionBucketTTL    time.Duration `yaml:"-"`
+	ProvisionBucketTTLRaw string        `yaml:"provisionBucketTTL"`
 }
 
 // K8shellCapabilities represents the capabilities of the k8shell environment
@@ -88,6 +90,14 @@ func NewConfig(configFile string) (*Config, error) {
 	processor := config.NewDefaultProcessor()
 	if err := processor.LoadAndDecode(configFile, &cfg); err != nil {
 		return nil, fmt.Errorf("failed to load configuration from '%s': %w", configFile, err)
+	}
+
+	if cfg.Nats.KV.ProvisionBucketTTLRaw != "" {
+		d, err := time.ParseDuration(cfg.Nats.KV.ProvisionBucketTTLRaw)
+		if err != nil {
+			return nil, fmt.Errorf("invalid nats.kv.provisionBucketTTL %q: %w", cfg.Nats.KV.ProvisionBucketTTLRaw, err)
+		}
+		cfg.Nats.KV.ProvisionBucketTTL = d
 	}
 
 	if cfg.GrpcConfig.Port == 0 {

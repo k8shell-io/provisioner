@@ -43,11 +43,11 @@ grpc:
 nats:
   enabled: true
   url: nats://nats.k8shell-test:4222
-  username: provisioner
+  username: apiserver
   password: ${TOKEN_PROVISIONER}
-  KV:
-    # timeout for provision jobs stored in NATS KV store, after which they will be automatically deleted
-    provisionJobsTimeout: 48h
+  kv:
+    # TTL for provision jobs in the NATS KV store
+    provisionBucketTTL: 48h
 
 # Identity service configuration
 identity:
