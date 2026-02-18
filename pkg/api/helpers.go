@@ -2,13 +2,17 @@ package api
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/k8shell-io/common/pkg/gapi"
 	"github.com/k8shell-io/common/pkg/models"
 	"github.com/k8shell-io/provisioner/pkg/api/provisionerpb"
 	"google.golang.org/grpc"
 )
+
+var ErrWorkspaceExists = errors.New("workspace already exists")
 
 type Client struct {
 	provisionerpb.ProvisionerServiceClient
@@ -52,7 +56,11 @@ func (c *Client) Handshake(ctx context.Context, userstr models.UserStr) (workspa
 	}
 
 	if hs.GetError() != "" {
-		return "", "", nil, fmt.Errorf("handshake failed: %s", hs.GetError())
+		code, desc := extractErrorCodeAndDesc(hs.GetError())
+		if code == "AlreadyExists" || code == "PreconditionFailed" {
+			return "", "", nil, fmt.Errorf("%w: handshake failed: %s", ErrWorkspaceExists, desc)
+		}
+		return "", "", nil, fmt.Errorf("handshake failed: %s", desc)
 	}
 
 	workspaceName = hs.GetWorkspace()
@@ -62,4 +70,27 @@ func (c *Client) Handshake(ctx context.Context, userstr models.UserStr) (workspa
 	}
 
 	return workspaceName, jobID, stream, nil
+}
+
+func extractErrorCodeAndDesc(s string) (code string, desc string) {
+	s = strings.TrimSpace(s)
+
+	const descKey = "desc = "
+	if i := strings.LastIndex(s, descKey); i >= 0 {
+		desc = strings.TrimSpace(s[i+len(descKey):])
+		desc = strings.Trim(desc, `"`)
+	}
+
+	const codeKey = "code = "
+	if i := strings.LastIndex(s, codeKey); i >= 0 {
+		rest := strings.TrimSpace(s[i+len(codeKey):])
+		if j := strings.IndexAny(rest, " \t\r\n"); j >= 0 {
+			code = strings.TrimSpace(rest[:j])
+		} else {
+			code = rest
+		}
+		code = strings.Trim(code, `"`)
+	}
+
+	return code, desc
 }
