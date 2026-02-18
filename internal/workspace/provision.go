@@ -22,7 +22,8 @@ type ProvisionOptions struct {
 	LockTimeout int
 }
 
-func (w *Workspace) CanProvision(ctx context.Context) (bool, error) {
+// ExistsRunning checks if the workspace already exists and is running
+func (w *Workspace) ExistsRunning(ctx context.Context) (bool, error) {
 	exists, err := w.IsInstalled(ctx)
 	if err != nil {
 		return false, fmt.Errorf("failed to check if workspace exists: %w", err)
@@ -38,12 +39,12 @@ func (w *Workspace) CanProvision(ctx context.Context) (bool, error) {
 			}
 		} else {
 			if status.Status == "Running" {
-				return false, nil
+				return true, nil
 			}
 		}
 	}
 
-	return true, nil
+	return false, nil
 }
 
 // Provision provisions the workspace

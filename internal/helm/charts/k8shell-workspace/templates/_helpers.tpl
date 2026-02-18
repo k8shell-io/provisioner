@@ -27,6 +27,9 @@ k8shell.io/network-policy: "{{ .Values.network.networkPolicy }}"
 {{- if and .Values.subdomain .Values.hostname }}
 k8shell.io/subdomain: {{ .Values.subdomain }}
 {{- end }}
+{{- if .Values.__jobid__ }}
+k8shell.io/job-id: "{{ .Values.__jobid__ }}"
+{{- end }}
 {{- end -}}
 
 {{/* default networkpolicy ingress rules */}}

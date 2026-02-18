@@ -7,10 +7,12 @@ import (
 	"os/signal"
 	"path/filepath"
 	"syscall"
+	"time"
 
 	"github.com/k8shell-io/common/pkg/gapi"
 	log "github.com/k8shell-io/common/pkg/logger"
 	"github.com/k8shell-io/common/pkg/models"
+	natsc "github.com/k8shell-io/common/pkg/nats"
 	identity "github.com/k8shell-io/identity/pkg/api"
 	"github.com/k8shell-io/provisioner/internal/blueprint"
 	"github.com/k8shell-io/provisioner/internal/config"
@@ -22,12 +24,14 @@ import (
 )
 
 type Server struct {
-	config    *config.Config
-	log       *zerolog.Logger
-	Identity  *identity.Client
-	grpc      *gapi.Server
-	bpManager *blueprint.BlueprintManager
-	helm      *helm.Client
+	config          *config.Config
+	log             *zerolog.Logger
+	nats            *natsc.NATSClient
+	Identity        *identity.Client
+	grpc            *gapi.Server
+	bpManager       *blueprint.BlueprintManager
+	helm            *helm.Client
+	provisionJobsKV *natsc.JetStreamKV
 }
 
 func NewServer(configFile string) (*Server, error) {
@@ -56,6 +60,24 @@ func NewServer(configFile string) (*Server, error) {
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to create blueprint manager: %w", err)
+	}
+
+	if server.config.Nats.Enabled {
+		server.nats, err = natsc.NewNATSClient(server.config.Nats.NATSClientConfig)
+		if err != nil {
+			return nil, fmt.Errorf("create nats client: %w", err)
+		}
+		if server.nats == nil {
+			return nil, fmt.Errorf("nats is required for api-server to store sessions")
+		}
+
+		server.provisionJobsKV, err = server.nats.NewKV(natsc.BucketOptions{
+			Bucket:    natsc.WORKSPACE_PROVISION_JOBS_BUCKET,
+			BucketTTL: time.Duration(server.config.Nats.KV.ProvisionJobsTimeout) * time.Hour,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("create provision jobs kv: %w", err)
+		}
 	}
 
 	server.Identity, err = identity.NewClient(server.config.Identity)

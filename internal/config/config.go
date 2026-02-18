@@ -6,21 +6,35 @@ import (
 
 	"github.com/k8shell-io/common/pkg/config"
 	"github.com/k8shell-io/common/pkg/gapi"
+	natsc "github.com/k8shell-io/common/pkg/nats"
 )
 
 // Config represents the server configuration
 type Config struct {
-	TargetNamespace     string               `yaml:"targetNamespace"`
-	ClusterDomain       string               `yaml:"clusterDomain"`
-	DefaultRegistry     DefaultRegistry      `yaml:"defaultRegistry"`
-	K8shellCapabilities K8shellCapabilities  `yaml:"k8shellCapabilities"`
-	CertManager         CertManagerConfig    `yaml:"certManager"`
-	GrpcConfig          gapi.ServerConfig    `yaml:"grpc"`
-	Identity            gapi.ClientConfig    `yaml:"identity"`
-	Blueprints          BlueprintsFileConfig `yaml:"blueprints"`
-	BaseDir             string               `yaml:"baseDir"`
+	TargetNamespace     string                `yaml:"targetNamespace"`
+	ClusterDomain       string                `yaml:"clusterDomain"`
+	DefaultRegistry     DefaultRegistry       `yaml:"defaultRegistry"`
+	K8shellCapabilities K8shellCapabilities   `yaml:"k8shellCapabilities"`
+	CertManager         CertManagerConfig     `yaml:"certManager"`
+	GrpcConfig          gapi.ServerConfig     `yaml:"grpc"`
+	Nats                ProvisionerNatsConfig `yaml:"nats"`
+	Identity            gapi.ClientConfig     `yaml:"identity"`
+	Blueprints          BlueprintsFileConfig  `yaml:"blueprints"`
+	BaseDir             string                `yaml:"baseDir"`
 }
 
+// ProvisionerNatsConfig represents the NATS configuration for the provisioner
+type ProvisionerNatsConfig struct {
+	natsc.NATSClientConfig
+	KV JobsKVConfig `yaml:"kv"`
+}
+
+// JobsKVConfig represents the configuration for the NATS Key-Value store used for provisioning jobs
+type JobsKVConfig struct {
+	ProvisionJobsTimeout uint32 `yaml:"provisionJobsTimeout"`
+}
+
+// K8shellCapabilities represents the capabilities of the k8shell environment
 type K8shellCapabilities struct {
 	APIServerEnabled bool `yaml:"apiServerEnabled"`
 }

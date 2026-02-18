@@ -7,9 +7,11 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/k8shell-io/common/pkg/gapi"
 	"github.com/k8shell-io/common/pkg/gapi/commonpb"
 	"github.com/k8shell-io/common/pkg/models"
+	natsc "github.com/k8shell-io/common/pkg/nats"
 	"github.com/k8shell-io/identity/pkg/api/identitypb"
 	ws "github.com/k8shell-io/provisioner/internal/workspace"
 	"github.com/k8shell-io/provisioner/pkg/api/provisionerpb"
@@ -21,6 +23,58 @@ import (
 )
 
 const TOTAL_PROVISION_EVENTS = 12
+
+type ProvisionJobServer struct {
+	models.ProvisionJob
+	NextEventId int64              `json:"-"`
+	kv          *natsc.JetStreamKV `json:"-"`
+	log         *zerolog.Logger    `json:"-"`
+}
+
+// NewProvisionJob creates a new ProvisionJob instance with the given username and monitor URL.
+func NewProvisionJob(WorkspaceName string, kv *natsc.JetStreamKV, log *zerolog.Logger) *ProvisionJobServer {
+	now := time.Now().UTC()
+	p := &ProvisionJobServer{
+		ProvisionJob: models.ProvisionJob{
+			ID:            uuid.NewString(),
+			WorkspaceName: WorkspaceName,
+			Status:        models.ProvisionJobAccepted,
+			CreatedAt:     now,
+			UpdatedAt:     now,
+			Events:        []models.WorkspaceStreamEvent{},
+		},
+		NextEventId: 1,
+		kv:          kv,
+		log:         log,
+	}
+	return p
+}
+
+func (j *ProvisionJobServer) AddEvent(ev *provisionerpb.ProvisionEvent) {
+	event := models.WorkspaceStreamEvent{
+		Id:        j.NextEventId,
+		Type:      models.WorkspaceStreamEventType(ev.Type),
+		Timestamp: ev.Timestamp,
+		Message:   ev.Message,
+		Status:    models.WorkspacePodStatus(ev.Status),
+	}
+	j.Events = append(j.Events, event)
+	j.NextEventId++
+	j.update()
+}
+
+func (j *ProvisionJobServer) update() {
+	j.UpdatedAt = time.Now().UTC()
+	b, err := json.Marshal(j)
+	if err != nil {
+		j.log.Error().Err(err).Msg("Failed to marshal provision job for KV store")
+		return
+	}
+	_, err = j.kv.Set(j.ID, b)
+	if err != nil {
+		j.log.Error().Err(err).Msg("Failed to update provision job in KV store")
+	}
+}
 
 // ProvisionerService implements the gRPC service for workspace provisioning
 type ProvisionerService struct {
@@ -116,8 +170,21 @@ func (p *ProvisionerService) CanUpgradeWorkspace(ctx context.Context,
 func (p *ProvisionerService) ProvisionWorkspaceStream(req *provisionerpb.ProvisionWorkspaceRequest,
 	stream provisionerpb.ProvisionerService_ProvisionWorkspaceStreamServer) error {
 
+	var job *ProvisionJobServer
+
+	sendEvent := func(event *provisionerpb.ProvisionEvent) error {
+		err := stream.Send(event)
+		if err != nil {
+			p.log.Error().Err(err).Msg("Failed to send provision event")
+		}
+		if job != nil {
+			job.AddEvent(event)
+		}
+		return err
+	}
+
 	sendErr := func(workspaceName string, err error) error {
-		return stream.Send(&provisionerpb.ProvisionEvent{
+		return sendEvent(&provisionerpb.ProvisionEvent{
 			Type:       string(models.WorkspaceStreamEventTypeStatus),
 			Timestamp:  time.Now().Format("2006-01-02 15:04:05"),
 			ObjectName: workspaceName,
@@ -143,22 +210,29 @@ func (p *ProvisionerService) ProvisionWorkspaceStream(req *provisionerpb.Provisi
 		return sendErr("", err)
 	}
 
-	canProvision, err := workspace.CanProvision(ctx)
+	exists, err := workspace.ExistsRunning(ctx)
 	if err != nil {
 		return sendErr(workspace.Name, status.Errorf(codes.Internal,
 			"Failed to check if workspace can be provisioned: %v", err))
 	}
-	if !canProvision {
-		return sendErr(workspace.Name, status.Errorf(codes.FailedPrecondition,
+	if exists {
+		return sendErr(workspace.Name, status.Errorf(codes.AlreadyExists,
 			"Workspace %s already exists and is running", workspace.Name))
 	}
 
-	if err := stream.Send(&provisionerpb.ProvisionEvent{
+	message := "Provisioning started"
+	if p.server.provisionJobsKV != nil {
+		job = NewProvisionJob(workspace.Name, p.server.provisionJobsKV, p.log)
+		workspace.SetJobId(job.ID)
+		message = fmt.Sprintf("%s, job=%s", message, job.ID)
+	}
+
+	if err := sendEvent(&provisionerpb.ProvisionEvent{
 		Type:       string(models.WorkspaceStreamEventTypeStatus),
 		Timestamp:  time.Now().Format("2006-01-02 15:04:05"),
 		ObjectName: workspace.Name,
 		Status:     string(models.WorkspaceStatusProvisioning),
-		Message:    "Provisioning started",
+		Message:    message,
 	}); err != nil {
 		return err
 	}
@@ -203,7 +277,7 @@ func (p *ProvisionerService) ProvisionWorkspaceStream(req *provisionerpb.Provisi
 				continue
 			}
 			if req.SendEvents {
-				if err := stream.Send(&provisionerpb.ProvisionEvent{
+				if err := sendEvent(&provisionerpb.ProvisionEvent{
 					Type:       string(models.WorkspaceStreamEventTypeEvent),
 					Timestamp:  msg.Timestamp,
 					ObjectName: msg.ObjectName,
@@ -218,7 +292,7 @@ func (p *ProvisionerService) ProvisionWorkspaceStream(req *provisionerpb.Provisi
 				newPerc := min((progress*100)/TOTAL_PROVISION_EVENTS, 100)
 				if newPerc > percent {
 					percent = newPerc
-					if err := stream.Send(&provisionerpb.ProvisionEvent{
+					if err := sendEvent(&provisionerpb.ProvisionEvent{
 						Type:       string(models.WorkspaceStreamEventTypeProgress),
 						Timestamp:  time.Now().Format("2006-01-02 15:04:05"),
 						ObjectName: workspace.Name,
@@ -232,7 +306,7 @@ func (p *ProvisionerService) ProvisionWorkspaceStream(req *provisionerpb.Provisi
 
 		case status := <-done:
 			if status != nil {
-				if err := stream.Send(&provisionerpb.ProvisionEvent{
+				if err := sendEvent(&provisionerpb.ProvisionEvent{
 					Type:       string(models.WorkspaceStreamEventTypeStatus),
 					Timestamp:  time.Now().Format("2006-01-02 15:04:05"),
 					ObjectName: workspace.Name,
@@ -246,7 +320,7 @@ func (p *ProvisionerService) ProvisionWorkspaceStream(req *provisionerpb.Provisi
 
 		case err := <-errorChan:
 			if err != nil {
-				if err := stream.Send(&provisionerpb.ProvisionEvent{
+				if err := sendEvent(&provisionerpb.ProvisionEvent{
 					Type:       string(models.WorkspaceStreamEventTypeStatus),
 					Timestamp:  time.Now().Format("2006-01-02 15:04:05"),
 					ObjectName: workspace.Name,

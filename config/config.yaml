@@ -39,6 +39,15 @@ grpc:
     - namespace: k8shell-test
       serviceAccount: api-server
     
+# NATS configuration for event streaming
+nats:
+  enabled: true
+  url: nats://nats.k8shell-test:4222
+  username: provisioner
+  password: ${TOKEN_PROVISIONER}
+  KV:
+    # timeout for provision jobs stored in NATS KV store, after which they will be automatically deleted
+    provisionJobsTimeout: 48h
 
 # Identity service configuration
 identity:

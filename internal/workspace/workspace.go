@@ -33,6 +33,7 @@ type Workspace struct {
 	identify *identity.Client
 
 	Name          string
+	JobId         string
 	log           *zerolog.Logger
 	blueprint     *models.Blueprint
 	user          *models.User
@@ -73,6 +74,7 @@ type WorkspaceLabels struct {
 	RepoRef      string
 	AppVersion   string
 	UserStr      *models.CanonicalUserStr
+	JobId        string
 }
 
 // ParseWorkspaceLabels parses the label set attached to a workspace pod
@@ -110,6 +112,7 @@ func ParseWorkspaceLabels(labels map[string]string) (*WorkspaceLabels, error) {
 		RepoName:     labels["k8shell.io/repo-name"],
 		RepoRef:      labels["k8shell.io/repo-ref"],
 		AppVersion:   labels["app.kubernetes.io/version"],
+		JobId:        labels["k8shell.io/job-id"],
 		UserStr:      canUser,
 	}, nil
 }
@@ -285,6 +288,10 @@ func NewWorkspaceFromHelmRelease(ctx context.Context, name string, helmClient *h
 	return ws, nil
 }
 
+func (w *Workspace) SetJobId(jobId string) {
+	w.JobId = jobId
+}
+
 func (w *Workspace) CreateLock() *WorkspaceLock {
 	return NewWorkspaceLock(
 		w.client.KubeClient(),
@@ -349,6 +356,7 @@ func (w *Workspace) Values() (map[string]interface{}, error) {
 	values["__appversion__"] = w.appVersion()
 	values["__identity__"] = w.user.Source
 	values["__userstr__"] = userstrB64
+	values["__jobid__"] = w.JobId
 	values["__apiserver__"] = map[string]interface{}{
 		"enabled": w.config.K8shellCapabilities.APIServerEnabled,
 	}
@@ -478,6 +486,7 @@ func WorkspaceDetailsFromPod(pod *corev1.Pod) *models.WorkspaceDetails {
 		RepoRef:      pod.Labels["k8shell.io/repo-ref"],
 		Blueprint:    pod.Labels["k8shell.io/blueprint"],
 		Organization: pod.Labels["k8shell.io/organization"],
+		JobId:        pod.Labels["k8shell.io/job-id"],
 		ServerName:   serverName,
 		PodIP:        pod.Status.PodIP,
 		Port:         port,
