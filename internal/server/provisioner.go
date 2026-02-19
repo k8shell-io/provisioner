@@ -32,12 +32,13 @@ type ProvisionJobServer struct {
 }
 
 // NewProvisionJob creates a new ProvisionJob instance with the given username and monitor URL.
-func NewProvisionJob(WorkspaceName string, kv *natsc.JetStreamKV, log *zerolog.Logger) *ProvisionJobServer {
+func NewProvisionJob(WorkspaceName string, username string, kv *natsc.JetStreamKV, log *zerolog.Logger) *ProvisionJobServer {
 	now := time.Now().UTC()
 	p := &ProvisionJobServer{
 		ProvisionJob: models.ProvisionJob{
 			ID:            uuid.NewString(),
 			WorkspaceName: WorkspaceName,
+			Username:      username,
 			Status:        models.ProvisionJobRunning,
 			CreatedAt:     now,
 			UpdatedAt:     now,
@@ -64,7 +65,12 @@ func (j *ProvisionJobServer) AddEvent(ev *provisionerpb.ProvisionEvent) {
 }
 
 func (j *ProvisionJobServer) SetStatus(status models.ProvisionJobStatus) {
+	now := time.Now().UTC()
 	j.Status = status
+	if status == models.ProvisionJobCompleted {
+		j.FinishedAt = now
+	}
+	j.UpdatedAt = now
 	j.update()
 }
 
@@ -235,7 +241,7 @@ func (p *ProvisionerService) ProvisionWorkspaceStream(req *provisionerpb.Provisi
 	}
 
 	if p.server.provisionJobsKV != nil {
-		job = NewProvisionJob(workspace.Name, p.server.provisionJobsKV, p.log)
+		job = NewProvisionJob(workspace.Name, canUserStr.Identity.Username, p.server.provisionJobsKV, p.log)
 		workspace.SetJobId(job.ID)
 		job.SetStatus(models.ProvisionJobRunning)
 	}

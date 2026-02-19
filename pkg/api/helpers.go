@@ -35,7 +35,7 @@ func (c *Client) Close() error {
 	return c.client.Close()
 }
 
-// HandshakeInfo reads the FIRST stream event that needs to be handshake.
+// Handshake reads the FIRST stream event that needs to be handshake.
 func (c *Client) Handshake(ctx context.Context, userstr models.UserStr) (workspaceName string, jobID string, stream grpc.ServerStreamingClient[provisionerpb.ProvisionWorkspaceResponse], err error) {
 	stream, err = c.ProvisionWorkspaceStream(ctx, &provisionerpb.ProvisionWorkspaceRequest{
 		Userstr:      userstr.Raw,
