@@ -605,7 +605,7 @@ func (p *ProvisionerService) UpgradeWorkspaceStream(
 			"Failed to delete workspace %s for upgrade: %v", name, err))
 	}
 
-	time.Sleep(time.Duration(2) * time.Second)
+	//time.Sleep(time.Duration(2) * time.Second)
 
 	return p.ProvisionWorkspaceStream(&provisionerpb.ProvisionWorkspaceRequest{
 		Userstr:      wl.UserStr.CanonicalUserStr,
