@@ -202,28 +202,27 @@ func (x *GetWorkspacesResponse) GetWorkspaces() []*commonpb.WorkspaceDetails {
 	return nil
 }
 
-type ListWorkspacesRequest struct {
+type GetUserBlueprintsRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Username      string                 `protobuf:"bytes,1,opt,name=username,proto3" json:"username,omitempty"`
-	Blueprint     string                 `protobuf:"bytes,2,opt,name=blueprint,proto3" json:"blueprint,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
-func (x *ListWorkspacesRequest) Reset() {
-	*x = ListWorkspacesRequest{}
+func (x *GetUserBlueprintsRequest) Reset() {
+	*x = GetUserBlueprintsRequest{}
 	mi := &file_pkg_api_provisioner_proto_msgTypes[3]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *ListWorkspacesRequest) String() string {
+func (x *GetUserBlueprintsRequest) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*ListWorkspacesRequest) ProtoMessage() {}
+func (*GetUserBlueprintsRequest) ProtoMessage() {}
 
-func (x *ListWorkspacesRequest) ProtoReflect() protoreflect.Message {
+func (x *GetUserBlueprintsRequest) ProtoReflect() protoreflect.Message {
 	mi := &file_pkg_api_provisioner_proto_msgTypes[3]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
@@ -235,23 +234,112 @@ func (x *ListWorkspacesRequest) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use ListWorkspacesRequest.ProtoReflect.Descriptor instead.
-func (*ListWorkspacesRequest) Descriptor() ([]byte, []int) {
+// Deprecated: Use GetUserBlueprintsRequest.ProtoReflect.Descriptor instead.
+func (*GetUserBlueprintsRequest) Descriptor() ([]byte, []int) {
 	return file_pkg_api_provisioner_proto_rawDescGZIP(), []int{3}
 }
 
-func (x *ListWorkspacesRequest) GetUsername() string {
+func (x *GetUserBlueprintsRequest) GetUsername() string {
 	if x != nil {
 		return x.Username
 	}
 	return ""
 }
 
-func (x *ListWorkspacesRequest) GetBlueprint() string {
+type BlueprintSummary struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Name          string                 `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
+	Description   string                 `protobuf:"bytes,2,opt,name=description,proto3" json:"description,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *BlueprintSummary) Reset() {
+	*x = BlueprintSummary{}
+	mi := &file_pkg_api_provisioner_proto_msgTypes[4]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *BlueprintSummary) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*BlueprintSummary) ProtoMessage() {}
+
+func (x *BlueprintSummary) ProtoReflect() protoreflect.Message {
+	mi := &file_pkg_api_provisioner_proto_msgTypes[4]
 	if x != nil {
-		return x.Blueprint
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use BlueprintSummary.ProtoReflect.Descriptor instead.
+func (*BlueprintSummary) Descriptor() ([]byte, []int) {
+	return file_pkg_api_provisioner_proto_rawDescGZIP(), []int{4}
+}
+
+func (x *BlueprintSummary) GetName() string {
+	if x != nil {
+		return x.Name
 	}
 	return ""
+}
+
+func (x *BlueprintSummary) GetDescription() string {
+	if x != nil {
+		return x.Description
+	}
+	return ""
+}
+
+type GetUserBlueprintsResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Blueprints    []*BlueprintSummary    `protobuf:"bytes,1,rep,name=blueprints,proto3" json:"blueprints,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GetUserBlueprintsResponse) Reset() {
+	*x = GetUserBlueprintsResponse{}
+	mi := &file_pkg_api_provisioner_proto_msgTypes[5]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetUserBlueprintsResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetUserBlueprintsResponse) ProtoMessage() {}
+
+func (x *GetUserBlueprintsResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_pkg_api_provisioner_proto_msgTypes[5]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetUserBlueprintsResponse.ProtoReflect.Descriptor instead.
+func (*GetUserBlueprintsResponse) Descriptor() ([]byte, []int) {
+	return file_pkg_api_provisioner_proto_rawDescGZIP(), []int{5}
+}
+
+func (x *GetUserBlueprintsResponse) GetBlueprints() []*BlueprintSummary {
+	if x != nil {
+		return x.Blueprints
+	}
+	return nil
 }
 
 type ProvisionWorkspaceRequest struct {
@@ -266,7 +354,7 @@ type ProvisionWorkspaceRequest struct {
 
 func (x *ProvisionWorkspaceRequest) Reset() {
 	*x = ProvisionWorkspaceRequest{}
-	mi := &file_pkg_api_provisioner_proto_msgTypes[4]
+	mi := &file_pkg_api_provisioner_proto_msgTypes[6]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -278,7 +366,7 @@ func (x *ProvisionWorkspaceRequest) String() string {
 func (*ProvisionWorkspaceRequest) ProtoMessage() {}
 
 func (x *ProvisionWorkspaceRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_provisioner_proto_msgTypes[4]
+	mi := &file_pkg_api_provisioner_proto_msgTypes[6]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -291,7 +379,7 @@ func (x *ProvisionWorkspaceRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ProvisionWorkspaceRequest.ProtoReflect.Descriptor instead.
 func (*ProvisionWorkspaceRequest) Descriptor() ([]byte, []int) {
-	return file_pkg_api_provisioner_proto_rawDescGZIP(), []int{4}
+	return file_pkg_api_provisioner_proto_rawDescGZIP(), []int{6}
 }
 
 func (x *ProvisionWorkspaceRequest) GetUserstr() string {
@@ -335,7 +423,7 @@ type ProvisionWorkspaceResponse struct {
 
 func (x *ProvisionWorkspaceResponse) Reset() {
 	*x = ProvisionWorkspaceResponse{}
-	mi := &file_pkg_api_provisioner_proto_msgTypes[5]
+	mi := &file_pkg_api_provisioner_proto_msgTypes[7]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -347,7 +435,7 @@ func (x *ProvisionWorkspaceResponse) String() string {
 func (*ProvisionWorkspaceResponse) ProtoMessage() {}
 
 func (x *ProvisionWorkspaceResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_provisioner_proto_msgTypes[5]
+	mi := &file_pkg_api_provisioner_proto_msgTypes[7]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -360,7 +448,7 @@ func (x *ProvisionWorkspaceResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ProvisionWorkspaceResponse.ProtoReflect.Descriptor instead.
 func (*ProvisionWorkspaceResponse) Descriptor() ([]byte, []int) {
-	return file_pkg_api_provisioner_proto_rawDescGZIP(), []int{5}
+	return file_pkg_api_provisioner_proto_rawDescGZIP(), []int{7}
 }
 
 func (x *ProvisionWorkspaceResponse) GetData() isProvisionWorkspaceResponse_Data {
@@ -415,7 +503,7 @@ type HandshakeResponse struct {
 
 func (x *HandshakeResponse) Reset() {
 	*x = HandshakeResponse{}
-	mi := &file_pkg_api_provisioner_proto_msgTypes[6]
+	mi := &file_pkg_api_provisioner_proto_msgTypes[8]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -427,7 +515,7 @@ func (x *HandshakeResponse) String() string {
 func (*HandshakeResponse) ProtoMessage() {}
 
 func (x *HandshakeResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_provisioner_proto_msgTypes[6]
+	mi := &file_pkg_api_provisioner_proto_msgTypes[8]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -440,7 +528,7 @@ func (x *HandshakeResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use HandshakeResponse.ProtoReflect.Descriptor instead.
 func (*HandshakeResponse) Descriptor() ([]byte, []int) {
-	return file_pkg_api_provisioner_proto_rawDescGZIP(), []int{6}
+	return file_pkg_api_provisioner_proto_rawDescGZIP(), []int{8}
 }
 
 func (x *HandshakeResponse) GetWorkspace() string {
@@ -467,6 +555,9 @@ func (x *HandshakeResponse) GetError() string {
 type UpgradeWorkspaceRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Workspace     string                 `protobuf:"bytes,1,opt,name=workspace,proto3" json:"workspace,omitempty"`
+	Timeout       int32                  `protobuf:"varint,2,opt,name=timeout,proto3" json:"timeout,omitempty"`
+	SendProgress  bool                   `protobuf:"varint,3,opt,name=sendProgress,proto3" json:"sendProgress,omitempty"`
+	SendEvents    bool                   `protobuf:"varint,4,opt,name=sendEvents,proto3" json:"sendEvents,omitempty"`
 	Force         bool                   `protobuf:"varint,5,opt,name=force,proto3" json:"force,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -474,7 +565,7 @@ type UpgradeWorkspaceRequest struct {
 
 func (x *UpgradeWorkspaceRequest) Reset() {
 	*x = UpgradeWorkspaceRequest{}
-	mi := &file_pkg_api_provisioner_proto_msgTypes[7]
+	mi := &file_pkg_api_provisioner_proto_msgTypes[9]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -486,7 +577,7 @@ func (x *UpgradeWorkspaceRequest) String() string {
 func (*UpgradeWorkspaceRequest) ProtoMessage() {}
 
 func (x *UpgradeWorkspaceRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_provisioner_proto_msgTypes[7]
+	mi := &file_pkg_api_provisioner_proto_msgTypes[9]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -499,7 +590,7 @@ func (x *UpgradeWorkspaceRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use UpgradeWorkspaceRequest.ProtoReflect.Descriptor instead.
 func (*UpgradeWorkspaceRequest) Descriptor() ([]byte, []int) {
-	return file_pkg_api_provisioner_proto_rawDescGZIP(), []int{7}
+	return file_pkg_api_provisioner_proto_rawDescGZIP(), []int{9}
 }
 
 func (x *UpgradeWorkspaceRequest) GetWorkspace() string {
@@ -507,6 +598,27 @@ func (x *UpgradeWorkspaceRequest) GetWorkspace() string {
 		return x.Workspace
 	}
 	return ""
+}
+
+func (x *UpgradeWorkspaceRequest) GetTimeout() int32 {
+	if x != nil {
+		return x.Timeout
+	}
+	return 0
+}
+
+func (x *UpgradeWorkspaceRequest) GetSendProgress() bool {
+	if x != nil {
+		return x.SendProgress
+	}
+	return false
+}
+
+func (x *UpgradeWorkspaceRequest) GetSendEvents() bool {
+	if x != nil {
+		return x.SendEvents
+	}
+	return false
 }
 
 func (x *UpgradeWorkspaceRequest) GetForce() bool {
@@ -527,7 +639,7 @@ type UpgradeWorkspaceResourcesRequest struct {
 
 func (x *UpgradeWorkspaceResourcesRequest) Reset() {
 	*x = UpgradeWorkspaceResourcesRequest{}
-	mi := &file_pkg_api_provisioner_proto_msgTypes[8]
+	mi := &file_pkg_api_provisioner_proto_msgTypes[10]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -539,7 +651,7 @@ func (x *UpgradeWorkspaceResourcesRequest) String() string {
 func (*UpgradeWorkspaceResourcesRequest) ProtoMessage() {}
 
 func (x *UpgradeWorkspaceResourcesRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_provisioner_proto_msgTypes[8]
+	mi := &file_pkg_api_provisioner_proto_msgTypes[10]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -552,7 +664,7 @@ func (x *UpgradeWorkspaceResourcesRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use UpgradeWorkspaceResourcesRequest.ProtoReflect.Descriptor instead.
 func (*UpgradeWorkspaceResourcesRequest) Descriptor() ([]byte, []int) {
-	return file_pkg_api_provisioner_proto_rawDescGZIP(), []int{8}
+	return file_pkg_api_provisioner_proto_rawDescGZIP(), []int{10}
 }
 
 func (x *UpgradeWorkspaceResourcesRequest) GetWorkspace() string {
@@ -576,7 +688,7 @@ func (x *UpgradeWorkspaceResourcesRequest) GetMemory() string {
 	return ""
 }
 
-type UpgradeWorkspaceResponse struct {
+type UpgradeWorkspaceResourcesResponse struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Status        string                 `protobuf:"bytes,1,opt,name=status,proto3" json:"status,omitempty"`
 	Message       string                 `protobuf:"bytes,2,opt,name=message,proto3" json:"message,omitempty"`
@@ -584,21 +696,21 @@ type UpgradeWorkspaceResponse struct {
 	sizeCache     protoimpl.SizeCache
 }
 
-func (x *UpgradeWorkspaceResponse) Reset() {
-	*x = UpgradeWorkspaceResponse{}
-	mi := &file_pkg_api_provisioner_proto_msgTypes[9]
+func (x *UpgradeWorkspaceResourcesResponse) Reset() {
+	*x = UpgradeWorkspaceResourcesResponse{}
+	mi := &file_pkg_api_provisioner_proto_msgTypes[11]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *UpgradeWorkspaceResponse) String() string {
+func (x *UpgradeWorkspaceResourcesResponse) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*UpgradeWorkspaceResponse) ProtoMessage() {}
+func (*UpgradeWorkspaceResourcesResponse) ProtoMessage() {}
 
-func (x *UpgradeWorkspaceResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_provisioner_proto_msgTypes[9]
+func (x *UpgradeWorkspaceResourcesResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_pkg_api_provisioner_proto_msgTypes[11]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -609,19 +721,19 @@ func (x *UpgradeWorkspaceResponse) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use UpgradeWorkspaceResponse.ProtoReflect.Descriptor instead.
-func (*UpgradeWorkspaceResponse) Descriptor() ([]byte, []int) {
-	return file_pkg_api_provisioner_proto_rawDescGZIP(), []int{9}
+// Deprecated: Use UpgradeWorkspaceResourcesResponse.ProtoReflect.Descriptor instead.
+func (*UpgradeWorkspaceResourcesResponse) Descriptor() ([]byte, []int) {
+	return file_pkg_api_provisioner_proto_rawDescGZIP(), []int{11}
 }
 
-func (x *UpgradeWorkspaceResponse) GetStatus() string {
+func (x *UpgradeWorkspaceResourcesResponse) GetStatus() string {
 	if x != nil {
 		return x.Status
 	}
 	return ""
 }
 
-func (x *UpgradeWorkspaceResponse) GetMessage() string {
+func (x *UpgradeWorkspaceResourcesResponse) GetMessage() string {
 	if x != nil {
 		return x.Message
 	}
@@ -641,7 +753,7 @@ type ProvisionEvent struct {
 
 func (x *ProvisionEvent) Reset() {
 	*x = ProvisionEvent{}
-	mi := &file_pkg_api_provisioner_proto_msgTypes[10]
+	mi := &file_pkg_api_provisioner_proto_msgTypes[12]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -653,7 +765,7 @@ func (x *ProvisionEvent) String() string {
 func (*ProvisionEvent) ProtoMessage() {}
 
 func (x *ProvisionEvent) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_provisioner_proto_msgTypes[10]
+	mi := &file_pkg_api_provisioner_proto_msgTypes[12]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -666,7 +778,7 @@ func (x *ProvisionEvent) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ProvisionEvent.ProtoReflect.Descriptor instead.
 func (*ProvisionEvent) Descriptor() ([]byte, []int) {
-	return file_pkg_api_provisioner_proto_rawDescGZIP(), []int{10}
+	return file_pkg_api_provisioner_proto_rawDescGZIP(), []int{12}
 }
 
 func (x *ProvisionEvent) GetType() string {
@@ -714,7 +826,7 @@ type DeleteWorkspaceRequest struct {
 
 func (x *DeleteWorkspaceRequest) Reset() {
 	*x = DeleteWorkspaceRequest{}
-	mi := &file_pkg_api_provisioner_proto_msgTypes[11]
+	mi := &file_pkg_api_provisioner_proto_msgTypes[13]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -726,7 +838,7 @@ func (x *DeleteWorkspaceRequest) String() string {
 func (*DeleteWorkspaceRequest) ProtoMessage() {}
 
 func (x *DeleteWorkspaceRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_provisioner_proto_msgTypes[11]
+	mi := &file_pkg_api_provisioner_proto_msgTypes[13]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -739,7 +851,7 @@ func (x *DeleteWorkspaceRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DeleteWorkspaceRequest.ProtoReflect.Descriptor instead.
 func (*DeleteWorkspaceRequest) Descriptor() ([]byte, []int) {
-	return file_pkg_api_provisioner_proto_rawDescGZIP(), []int{11}
+	return file_pkg_api_provisioner_proto_rawDescGZIP(), []int{13}
 }
 
 func (x *DeleteWorkspaceRequest) GetWorkspace() string {
@@ -765,7 +877,7 @@ type DeleteWorkspaceResponse struct {
 
 func (x *DeleteWorkspaceResponse) Reset() {
 	*x = DeleteWorkspaceResponse{}
-	mi := &file_pkg_api_provisioner_proto_msgTypes[12]
+	mi := &file_pkg_api_provisioner_proto_msgTypes[14]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -777,7 +889,7 @@ func (x *DeleteWorkspaceResponse) String() string {
 func (*DeleteWorkspaceResponse) ProtoMessage() {}
 
 func (x *DeleteWorkspaceResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_provisioner_proto_msgTypes[12]
+	mi := &file_pkg_api_provisioner_proto_msgTypes[14]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -790,7 +902,7 @@ func (x *DeleteWorkspaceResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DeleteWorkspaceResponse.ProtoReflect.Descriptor instead.
 func (*DeleteWorkspaceResponse) Descriptor() ([]byte, []int) {
-	return file_pkg_api_provisioner_proto_rawDescGZIP(), []int{12}
+	return file_pkg_api_provisioner_proto_rawDescGZIP(), []int{14}
 }
 
 func (x *DeleteWorkspaceResponse) GetMessage() string {
@@ -809,7 +921,7 @@ type CanUpgradeWorkspaceRequest struct {
 
 func (x *CanUpgradeWorkspaceRequest) Reset() {
 	*x = CanUpgradeWorkspaceRequest{}
-	mi := &file_pkg_api_provisioner_proto_msgTypes[13]
+	mi := &file_pkg_api_provisioner_proto_msgTypes[15]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -821,7 +933,7 @@ func (x *CanUpgradeWorkspaceRequest) String() string {
 func (*CanUpgradeWorkspaceRequest) ProtoMessage() {}
 
 func (x *CanUpgradeWorkspaceRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_provisioner_proto_msgTypes[13]
+	mi := &file_pkg_api_provisioner_proto_msgTypes[15]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -834,7 +946,7 @@ func (x *CanUpgradeWorkspaceRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CanUpgradeWorkspaceRequest.ProtoReflect.Descriptor instead.
 func (*CanUpgradeWorkspaceRequest) Descriptor() ([]byte, []int) {
-	return file_pkg_api_provisioner_proto_rawDescGZIP(), []int{13}
+	return file_pkg_api_provisioner_proto_rawDescGZIP(), []int{15}
 }
 
 func (x *CanUpgradeWorkspaceRequest) GetWorkspace() string {
@@ -854,7 +966,7 @@ type CanUpgradeWorkspaceResponse struct {
 
 func (x *CanUpgradeWorkspaceResponse) Reset() {
 	*x = CanUpgradeWorkspaceResponse{}
-	mi := &file_pkg_api_provisioner_proto_msgTypes[14]
+	mi := &file_pkg_api_provisioner_proto_msgTypes[16]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -866,7 +978,7 @@ func (x *CanUpgradeWorkspaceResponse) String() string {
 func (*CanUpgradeWorkspaceResponse) ProtoMessage() {}
 
 func (x *CanUpgradeWorkspaceResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_provisioner_proto_msgTypes[14]
+	mi := &file_pkg_api_provisioner_proto_msgTypes[16]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -879,7 +991,7 @@ func (x *CanUpgradeWorkspaceResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CanUpgradeWorkspaceResponse.ProtoReflect.Descriptor instead.
 func (*CanUpgradeWorkspaceResponse) Descriptor() ([]byte, []int) {
-	return file_pkg_api_provisioner_proto_rawDescGZIP(), []int{14}
+	return file_pkg_api_provisioner_proto_rawDescGZIP(), []int{16}
 }
 
 func (x *CanUpgradeWorkspaceResponse) GetCanUpgrade() bool {
@@ -915,10 +1027,16 @@ const file_pkg_api_provisioner_proto_rawDesc = "" +
 	"\x15GetWorkspacesResponse\x128\n" +
 	"\n" +
 	"workspaces\x18\x01 \x03(\v2\x18.common.WorkspaceDetailsR\n" +
-	"workspaces\"Q\n" +
-	"\x15ListWorkspacesRequest\x12\x1a\n" +
-	"\busername\x18\x01 \x01(\tR\busername\x12\x1c\n" +
-	"\tblueprint\x18\x02 \x01(\tR\tblueprint\"\x93\x01\n" +
+	"workspaces\"6\n" +
+	"\x18GetUserBlueprintsRequest\x12\x1a\n" +
+	"\busername\x18\x01 \x01(\tR\busername\"H\n" +
+	"\x10BlueprintSummary\x12\x12\n" +
+	"\x04name\x18\x01 \x01(\tR\x04name\x12 \n" +
+	"\vdescription\x18\x02 \x01(\tR\vdescription\"Z\n" +
+	"\x19GetUserBlueprintsResponse\x12=\n" +
+	"\n" +
+	"blueprints\x18\x01 \x03(\v2\x1d.provisioner.BlueprintSummaryR\n" +
+	"blueprints\"\x93\x01\n" +
 	"\x19ProvisionWorkspaceRequest\x12\x18\n" +
 	"\auserstr\x18\x01 \x01(\tR\auserstr\x12\x18\n" +
 	"\atimeout\x18\x02 \x01(\x05R\atimeout\x12\"\n" +
@@ -933,15 +1051,20 @@ const file_pkg_api_provisioner_proto_rawDesc = "" +
 	"\x11HandshakeResponse\x12\x1c\n" +
 	"\tworkspace\x18\x01 \x01(\tR\tworkspace\x12\x14\n" +
 	"\x05jobid\x18\x02 \x01(\tR\x05jobid\x12\x14\n" +
-	"\x05error\x18\x03 \x01(\tR\x05error\"M\n" +
+	"\x05error\x18\x03 \x01(\tR\x05error\"\xab\x01\n" +
 	"\x17UpgradeWorkspaceRequest\x12\x1c\n" +
-	"\tworkspace\x18\x01 \x01(\tR\tworkspace\x12\x14\n" +
+	"\tworkspace\x18\x01 \x01(\tR\tworkspace\x12\x18\n" +
+	"\atimeout\x18\x02 \x01(\x05R\atimeout\x12\"\n" +
+	"\fsendProgress\x18\x03 \x01(\bR\fsendProgress\x12\x1e\n" +
+	"\n" +
+	"sendEvents\x18\x04 \x01(\bR\n" +
+	"sendEvents\x12\x14\n" +
 	"\x05force\x18\x05 \x01(\bR\x05force\"j\n" +
 	" UpgradeWorkspaceResourcesRequest\x12\x1c\n" +
 	"\tworkspace\x18\x01 \x01(\tR\tworkspace\x12\x10\n" +
 	"\x03cpu\x18\x02 \x01(\tR\x03cpu\x12\x16\n" +
-	"\x06memory\x18\x03 \x01(\tR\x06memory\"L\n" +
-	"\x18UpgradeWorkspaceResponse\x12\x16\n" +
+	"\x06memory\x18\x03 \x01(\tR\x06memory\"U\n" +
+	"!UpgradeWorkspaceResourcesResponse\x12\x16\n" +
 	"\x06status\x18\x01 \x01(\tR\x06status\x12\x18\n" +
 	"\amessage\x18\x02 \x01(\tR\amessage\"\x95\x01\n" +
 	"\x0eProvisionEvent\x12\x12\n" +
@@ -961,14 +1084,15 @@ const file_pkg_api_provisioner_proto_rawDesc = "" +
 	"\x1bCanUpgradeWorkspaceResponse\x12\x1f\n" +
 	"\vcan_upgrade\x18\x01 \x01(\bR\n" +
 	"canUpgrade\x12\x18\n" +
-	"\amessage\x18\x02 \x01(\tR\amessage2\xc5\x05\n" +
+	"\amessage\x18\x02 \x01(\tR\amessage2\xb6\x06\n" +
 	"\x12ProvisionerService\x12V\n" +
 	"\rGetWorkspaces\x12!.provisioner.GetWorkspacesRequest\x1a\".provisioner.GetWorkspacesResponse\x12L\n" +
-	"\rFindWorkspace\x12!.provisioner.FindWorkspaceRequest\x1a\x18.common.WorkspaceDetails\x12m\n" +
-	"\x18ProvisionWorkspaceStream\x12&.provisioner.ProvisionWorkspaceRequest\x1a'.provisioner.ProvisionWorkspaceResponse0\x01\x12_\n" +
-	"\x10UpgradeWorkspace\x12$.provisioner.UpgradeWorkspaceRequest\x1a%.provisioner.UpgradeWorkspaceResponse\x12h\n" +
-	"\x13CanUpgradeWorkspace\x12'.provisioner.CanUpgradeWorkspaceRequest\x1a(.provisioner.CanUpgradeWorkspaceResponse\x12q\n" +
-	"\x19UpgradeWorkspaceResources\x12-.provisioner.UpgradeWorkspaceResourcesRequest\x1a%.provisioner.UpgradeWorkspaceResponse\x12\\\n" +
+	"\rFindWorkspace\x12!.provisioner.FindWorkspaceRequest\x1a\x18.common.WorkspaceDetails\x12b\n" +
+	"\x11GetUserBlueprints\x12%.provisioner.GetUserBlueprintsRequest\x1a&.provisioner.GetUserBlueprintsResponse\x12m\n" +
+	"\x18ProvisionWorkspaceStream\x12&.provisioner.ProvisionWorkspaceRequest\x1a'.provisioner.ProvisionWorkspaceResponse0\x01\x12h\n" +
+	"\x13CanUpgradeWorkspace\x12'.provisioner.CanUpgradeWorkspaceRequest\x1a(.provisioner.CanUpgradeWorkspaceResponse\x12z\n" +
+	"\x19UpgradeWorkspaceResources\x12-.provisioner.UpgradeWorkspaceResourcesRequest\x1a..provisioner.UpgradeWorkspaceResourcesResponse\x12c\n" +
+	"\x10UpgradeWorkspace\x12$.provisioner.UpgradeWorkspaceRequest\x1a'.provisioner.ProvisionWorkspaceResponse0\x01\x12\\\n" +
 	"\x0fDeleteWorkspace\x12#.provisioner.DeleteWorkspaceRequest\x1a$.provisioner.DeleteWorkspaceResponseBGZEgithub.com/k8shell-io/provisioner/pkg/api/provisionerpb;provisionerpbb\x06proto3"
 
 var (
@@ -983,48 +1107,53 @@ func file_pkg_api_provisioner_proto_rawDescGZIP() []byte {
 	return file_pkg_api_provisioner_proto_rawDescData
 }
 
-var file_pkg_api_provisioner_proto_msgTypes = make([]protoimpl.MessageInfo, 15)
+var file_pkg_api_provisioner_proto_msgTypes = make([]protoimpl.MessageInfo, 17)
 var file_pkg_api_provisioner_proto_goTypes = []any{
-	(*FindWorkspaceRequest)(nil),             // 0: provisioner.FindWorkspaceRequest
-	(*GetWorkspacesRequest)(nil),             // 1: provisioner.GetWorkspacesRequest
-	(*GetWorkspacesResponse)(nil),            // 2: provisioner.GetWorkspacesResponse
-	(*ListWorkspacesRequest)(nil),            // 3: provisioner.ListWorkspacesRequest
-	(*ProvisionWorkspaceRequest)(nil),        // 4: provisioner.ProvisionWorkspaceRequest
-	(*ProvisionWorkspaceResponse)(nil),       // 5: provisioner.ProvisionWorkspaceResponse
-	(*HandshakeResponse)(nil),                // 6: provisioner.HandshakeResponse
-	(*UpgradeWorkspaceRequest)(nil),          // 7: provisioner.UpgradeWorkspaceRequest
-	(*UpgradeWorkspaceResourcesRequest)(nil), // 8: provisioner.UpgradeWorkspaceResourcesRequest
-	(*UpgradeWorkspaceResponse)(nil),         // 9: provisioner.UpgradeWorkspaceResponse
-	(*ProvisionEvent)(nil),                   // 10: provisioner.ProvisionEvent
-	(*DeleteWorkspaceRequest)(nil),           // 11: provisioner.DeleteWorkspaceRequest
-	(*DeleteWorkspaceResponse)(nil),          // 12: provisioner.DeleteWorkspaceResponse
-	(*CanUpgradeWorkspaceRequest)(nil),       // 13: provisioner.CanUpgradeWorkspaceRequest
-	(*CanUpgradeWorkspaceResponse)(nil),      // 14: provisioner.CanUpgradeWorkspaceResponse
-	(*commonpb.WorkspaceDetails)(nil),        // 15: common.WorkspaceDetails
+	(*FindWorkspaceRequest)(nil),              // 0: provisioner.FindWorkspaceRequest
+	(*GetWorkspacesRequest)(nil),              // 1: provisioner.GetWorkspacesRequest
+	(*GetWorkspacesResponse)(nil),             // 2: provisioner.GetWorkspacesResponse
+	(*GetUserBlueprintsRequest)(nil),          // 3: provisioner.GetUserBlueprintsRequest
+	(*BlueprintSummary)(nil),                  // 4: provisioner.BlueprintSummary
+	(*GetUserBlueprintsResponse)(nil),         // 5: provisioner.GetUserBlueprintsResponse
+	(*ProvisionWorkspaceRequest)(nil),         // 6: provisioner.ProvisionWorkspaceRequest
+	(*ProvisionWorkspaceResponse)(nil),        // 7: provisioner.ProvisionWorkspaceResponse
+	(*HandshakeResponse)(nil),                 // 8: provisioner.HandshakeResponse
+	(*UpgradeWorkspaceRequest)(nil),           // 9: provisioner.UpgradeWorkspaceRequest
+	(*UpgradeWorkspaceResourcesRequest)(nil),  // 10: provisioner.UpgradeWorkspaceResourcesRequest
+	(*UpgradeWorkspaceResourcesResponse)(nil), // 11: provisioner.UpgradeWorkspaceResourcesResponse
+	(*ProvisionEvent)(nil),                    // 12: provisioner.ProvisionEvent
+	(*DeleteWorkspaceRequest)(nil),            // 13: provisioner.DeleteWorkspaceRequest
+	(*DeleteWorkspaceResponse)(nil),           // 14: provisioner.DeleteWorkspaceResponse
+	(*CanUpgradeWorkspaceRequest)(nil),        // 15: provisioner.CanUpgradeWorkspaceRequest
+	(*CanUpgradeWorkspaceResponse)(nil),       // 16: provisioner.CanUpgradeWorkspaceResponse
+	(*commonpb.WorkspaceDetails)(nil),         // 17: common.WorkspaceDetails
 }
 var file_pkg_api_provisioner_proto_depIdxs = []int32{
-	15, // 0: provisioner.GetWorkspacesResponse.workspaces:type_name -> common.WorkspaceDetails
-	6,  // 1: provisioner.ProvisionWorkspaceResponse.handshake:type_name -> provisioner.HandshakeResponse
-	10, // 2: provisioner.ProvisionWorkspaceResponse.event:type_name -> provisioner.ProvisionEvent
-	1,  // 3: provisioner.ProvisionerService.GetWorkspaces:input_type -> provisioner.GetWorkspacesRequest
-	0,  // 4: provisioner.ProvisionerService.FindWorkspace:input_type -> provisioner.FindWorkspaceRequest
-	4,  // 5: provisioner.ProvisionerService.ProvisionWorkspaceStream:input_type -> provisioner.ProvisionWorkspaceRequest
-	7,  // 6: provisioner.ProvisionerService.UpgradeWorkspace:input_type -> provisioner.UpgradeWorkspaceRequest
-	13, // 7: provisioner.ProvisionerService.CanUpgradeWorkspace:input_type -> provisioner.CanUpgradeWorkspaceRequest
-	8,  // 8: provisioner.ProvisionerService.UpgradeWorkspaceResources:input_type -> provisioner.UpgradeWorkspaceResourcesRequest
-	11, // 9: provisioner.ProvisionerService.DeleteWorkspace:input_type -> provisioner.DeleteWorkspaceRequest
-	2,  // 10: provisioner.ProvisionerService.GetWorkspaces:output_type -> provisioner.GetWorkspacesResponse
-	15, // 11: provisioner.ProvisionerService.FindWorkspace:output_type -> common.WorkspaceDetails
-	5,  // 12: provisioner.ProvisionerService.ProvisionWorkspaceStream:output_type -> provisioner.ProvisionWorkspaceResponse
-	9,  // 13: provisioner.ProvisionerService.UpgradeWorkspace:output_type -> provisioner.UpgradeWorkspaceResponse
-	14, // 14: provisioner.ProvisionerService.CanUpgradeWorkspace:output_type -> provisioner.CanUpgradeWorkspaceResponse
-	9,  // 15: provisioner.ProvisionerService.UpgradeWorkspaceResources:output_type -> provisioner.UpgradeWorkspaceResponse
-	12, // 16: provisioner.ProvisionerService.DeleteWorkspace:output_type -> provisioner.DeleteWorkspaceResponse
-	10, // [10:17] is the sub-list for method output_type
-	3,  // [3:10] is the sub-list for method input_type
-	3,  // [3:3] is the sub-list for extension type_name
-	3,  // [3:3] is the sub-list for extension extendee
-	0,  // [0:3] is the sub-list for field type_name
+	17, // 0: provisioner.GetWorkspacesResponse.workspaces:type_name -> common.WorkspaceDetails
+	4,  // 1: provisioner.GetUserBlueprintsResponse.blueprints:type_name -> provisioner.BlueprintSummary
+	8,  // 2: provisioner.ProvisionWorkspaceResponse.handshake:type_name -> provisioner.HandshakeResponse
+	12, // 3: provisioner.ProvisionWorkspaceResponse.event:type_name -> provisioner.ProvisionEvent
+	1,  // 4: provisioner.ProvisionerService.GetWorkspaces:input_type -> provisioner.GetWorkspacesRequest
+	0,  // 5: provisioner.ProvisionerService.FindWorkspace:input_type -> provisioner.FindWorkspaceRequest
+	3,  // 6: provisioner.ProvisionerService.GetUserBlueprints:input_type -> provisioner.GetUserBlueprintsRequest
+	6,  // 7: provisioner.ProvisionerService.ProvisionWorkspaceStream:input_type -> provisioner.ProvisionWorkspaceRequest
+	15, // 8: provisioner.ProvisionerService.CanUpgradeWorkspace:input_type -> provisioner.CanUpgradeWorkspaceRequest
+	10, // 9: provisioner.ProvisionerService.UpgradeWorkspaceResources:input_type -> provisioner.UpgradeWorkspaceResourcesRequest
+	9,  // 10: provisioner.ProvisionerService.UpgradeWorkspace:input_type -> provisioner.UpgradeWorkspaceRequest
+	13, // 11: provisioner.ProvisionerService.DeleteWorkspace:input_type -> provisioner.DeleteWorkspaceRequest
+	2,  // 12: provisioner.ProvisionerService.GetWorkspaces:output_type -> provisioner.GetWorkspacesResponse
+	17, // 13: provisioner.ProvisionerService.FindWorkspace:output_type -> common.WorkspaceDetails
+	5,  // 14: provisioner.ProvisionerService.GetUserBlueprints:output_type -> provisioner.GetUserBlueprintsResponse
+	7,  // 15: provisioner.ProvisionerService.ProvisionWorkspaceStream:output_type -> provisioner.ProvisionWorkspaceResponse
+	16, // 16: provisioner.ProvisionerService.CanUpgradeWorkspace:output_type -> provisioner.CanUpgradeWorkspaceResponse
+	11, // 17: provisioner.ProvisionerService.UpgradeWorkspaceResources:output_type -> provisioner.UpgradeWorkspaceResourcesResponse
+	7,  // 18: provisioner.ProvisionerService.UpgradeWorkspace:output_type -> provisioner.ProvisionWorkspaceResponse
+	14, // 19: provisioner.ProvisionerService.DeleteWorkspace:output_type -> provisioner.DeleteWorkspaceResponse
+	12, // [12:20] is the sub-list for method output_type
+	4,  // [4:12] is the sub-list for method input_type
+	4,  // [4:4] is the sub-list for extension type_name
+	4,  // [4:4] is the sub-list for extension extendee
+	0,  // [0:4] is the sub-list for field type_name
 }
 
 func init() { file_pkg_api_provisioner_proto_init() }
@@ -1032,7 +1161,7 @@ func file_pkg_api_provisioner_proto_init() {
 	if File_pkg_api_provisioner_proto != nil {
 		return
 	}
-	file_pkg_api_provisioner_proto_msgTypes[5].OneofWrappers = []any{
+	file_pkg_api_provisioner_proto_msgTypes[7].OneofWrappers = []any{
 		(*ProvisionWorkspaceResponse_Handshake)(nil),
 		(*ProvisionWorkspaceResponse_Event)(nil),
 	}
@@ -1042,7 +1171,7 @@ func file_pkg_api_provisioner_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_pkg_api_provisioner_proto_rawDesc), len(file_pkg_api_provisioner_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   15,
+			NumMessages:   17,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

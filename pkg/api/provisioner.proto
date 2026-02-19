@@ -11,10 +11,11 @@ import "common/pkg/gapi/common.proto";
 service ProvisionerService {
   rpc GetWorkspaces (GetWorkspacesRequest) returns (GetWorkspacesResponse);
   rpc FindWorkspace (FindWorkspaceRequest) returns (common.WorkspaceDetails);
+  rpc GetUserBlueprints (GetUserBlueprintsRequest) returns (GetUserBlueprintsResponse);
   rpc ProvisionWorkspaceStream (ProvisionWorkspaceRequest) returns (stream ProvisionWorkspaceResponse);
-  rpc UpgradeWorkspace (UpgradeWorkspaceRequest) returns (UpgradeWorkspaceResponse);
   rpc CanUpgradeWorkspace (CanUpgradeWorkspaceRequest) returns (CanUpgradeWorkspaceResponse);
-  rpc UpgradeWorkspaceResources (UpgradeWorkspaceResourcesRequest) returns (UpgradeWorkspaceResponse);
+  rpc UpgradeWorkspaceResources (UpgradeWorkspaceResourcesRequest) returns (UpgradeWorkspaceResourcesResponse);
+  rpc UpgradeWorkspace (UpgradeWorkspaceRequest) returns (stream ProvisionWorkspaceResponse);
   rpc DeleteWorkspace (DeleteWorkspaceRequest) returns (DeleteWorkspaceResponse);
 }
 
@@ -36,9 +37,17 @@ message GetWorkspacesResponse {
   repeated common.WorkspaceDetails workspaces = 1;
 }
 
-message ListWorkspacesRequest {
+message GetUserBlueprintsRequest {
   string username = 1;
-  string blueprint = 2;
+}
+
+message BlueprintSummary {
+  string name = 1;
+  string description = 2;
+}
+
+message GetUserBlueprintsResponse {
+  repeated BlueprintSummary blueprints = 1;
 }
 
 message ProvisionWorkspaceRequest {
@@ -63,6 +72,9 @@ message HandshakeResponse {
 
 message UpgradeWorkspaceRequest {
   string workspace = 1;
+  int32 timeout = 2; 
+  bool sendProgress = 3;
+  bool sendEvents = 4;
   bool force = 5;
 }
 
@@ -72,7 +84,7 @@ message UpgradeWorkspaceResourcesRequest {
   string memory = 3;
 }
 
-message UpgradeWorkspaceResponse {
+message UpgradeWorkspaceResourcesResponse {
   string status = 1;
   string message = 2;
 }
