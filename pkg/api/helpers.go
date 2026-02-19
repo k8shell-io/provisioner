@@ -36,11 +36,12 @@ func (c *Client) Close() error {
 }
 
 // ProvisionHandshake reads the first stream event that needs to be handshake.
-func (c *Client) ProvisionHandshake(ctx context.Context, userstr models.UserStr) (workspaceName string, jobID string, stream grpc.ServerStreamingClient[provisionerpb.ProvisionWorkspaceResponse], err error) {
+func (c *Client) ProvisionHandshake(ctx context.Context, userstr models.UserStr, timeout int32) (workspaceName string, jobID string, stream grpc.ServerStreamingClient[provisionerpb.ProvisionWorkspaceResponse], err error) {
 	stream, err = c.ProvisionWorkspaceStream(ctx, &provisionerpb.ProvisionWorkspaceRequest{
 		Userstr:      userstr.Raw,
 		SendProgress: true,
 		SendEvents:   true,
+		Timeout:      timeout,
 	})
 	if err != nil {
 		return "", "", nil, fmt.Errorf("failed to start provisioning stream: %w", err)
@@ -49,12 +50,13 @@ func (c *Client) ProvisionHandshake(ctx context.Context, userstr models.UserStr)
 }
 
 // UpgradeHandshake reads the first stream event that needs to be handshake.
-func (c *Client) UpgradeHandshake(ctx context.Context, workspace string, forceUpgrade bool) (workspaceName string, jobID string, stream grpc.ServerStreamingClient[provisionerpb.ProvisionWorkspaceResponse], err error) {
+func (c *Client) UpgradeHandshake(ctx context.Context, workspace string, forceUpgrade bool, timeout int32) (workspaceName string, jobID string, stream grpc.ServerStreamingClient[provisionerpb.ProvisionWorkspaceResponse], err error) {
 	stream, err = c.UpgradeWorkspaceStream(ctx, &provisionerpb.UpgradeWorkspaceRequest{
 		Workspace:    workspace,
 		SendProgress: true,
 		SendEvents:   true,
 		Force:        forceUpgrade,
+		Timeout:      timeout,
 	})
 	if err != nil {
 		return "", "", nil, fmt.Errorf("failed to start upgrade stream: %w", err)

@@ -274,15 +274,9 @@ func (w *Workspace) waitForPodRunning(ctx context.Context, startTime time.Time,
 			case models.WorkspaceStatusRunning:
 				return status, nil
 
-			case models.WorkspaceStatusFailing:
+			case models.WorkspaceStatusFailing, models.WorkspaceStatusStopped:
 				return status, fmt.Errorf("workspace %s is in final state: %s - %s",
 					podName, status.Status, status.Message)
-
-			case models.WorkspaceStatusStopped:
-				if time.Since(startTime) > time.Duration(5)*time.Second {
-					return status, fmt.Errorf("workspace %s has been in stopped state for too long: %s",
-						podName, status.Message)
-				}
 
 			case models.WorkspaceStatusProvisioning:
 				if time.Since(startTime) > time.Duration(opts.Timeout)*time.Second {
