@@ -494,6 +494,57 @@ func (p *ProvisionerService) convertToGRPCError(err error) error {
 	return status.Errorf(codes.Internal, "%s", err.Error())
 }
 
+func (p *ProvisionerService) UpgradeWorkspaceResources(ctx context.Context,
+	req *provisionerpb.UpgradeWorkspaceResourcesRequest) (*provisionerpb.UpgradeWorkspaceResourcesResponse, error) {
+
+	name := req.Workspace
+	if name == "" {
+		return nil, status.Errorf(codes.InvalidArgument, "workspace name is required")
+	}
+
+	if req.Cpu == "" && req.Memory == "" {
+		return nil, status.Errorf(codes.InvalidArgument, "at least one of cpu or memory must be specified")
+	}
+
+	_, pod, err := ws.FindWorkspace(ctx, p.server.helm, name)
+	if err != nil {
+		if errors.Is(err, models.ErrWorkspaceNotFound) {
+			return nil, status.Errorf(codes.NotFound, "Workspace %s not found", name)
+		}
+		return nil, status.Errorf(codes.Internal, "Failed to find workspace: %v", err)
+	}
+
+	wl, err := ws.ParseWorkspaceLabels(pod.Labels)
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "Failed to parse workspace labels: %v", err)
+	}
+
+	userpb, err := p.server.Identity.FindUser(ctx, &identitypb.FindUserRequest{Username: wl.Username})
+	if err != nil {
+		return nil, fmt.Errorf("failed to get user %s: %w", wl.Username, err)
+	}
+	user := gapi.ProtoToUser(userpb)
+
+	w, err := ws.NewWorkspace(name, nil, user, wl.UserStr, p.server.helm, p.server.Identity, p.server.config)
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "Failed to create workspace for upgrade: %v", err)
+	}
+
+	err = w.ResizeResources(ctx, req.Cpu, req.Memory)
+	if err != nil {
+		if errors.Is(err, ws.ErrInvalidValue) {
+			return nil, status.Errorf(codes.InvalidArgument, "Failed to resize workspace resources: %v", err)
+		}
+		return nil, status.Errorf(codes.Internal, "Failed to resize workspace resources: %v", err)
+	}
+
+	return &provisionerpb.UpgradeWorkspaceResourcesResponse{
+		Status:  "Success",
+		Message: fmt.Sprintf("Workspace %s resources upgraded successfully", name),
+	}, nil
+
+}
+
 func (p *ProvisionerService) UpgradeWorkspaceStream(
 	req *provisionerpb.UpgradeWorkspaceRequest,
 	stream grpc.ServerStreamingServer[provisionerpb.ProvisionWorkspaceResponse],
@@ -553,6 +604,8 @@ func (p *ProvisionerService) UpgradeWorkspaceStream(
 		return p.sendProvisionHandshakeErr(stream, name, status.Errorf(codes.Internal,
 			"Failed to delete workspace %s for upgrade: %v", name, err))
 	}
+
+	time.Sleep(time.Duration(2) * time.Second)
 
 	return p.ProvisionWorkspaceStream(&provisionerpb.ProvisionWorkspaceRequest{
 		Userstr:      wl.UserStr.CanonicalUserStr,
