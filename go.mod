@@ -6,7 +6,8 @@ require github.com/rs/zerolog v1.34.0 // direct
 
 require (
 	github.com/fsnotify/fsnotify v1.9.0
-	github.com/k8shell-io/common v0.12.130
+	github.com/google/uuid v1.6.0
+	github.com/k8shell-io/common v0.12.147
 	github.com/k8shell-io/identity/pkg/api v0.1.11
 	github.com/k8shell-io/provisioner/pkg/api v0.0.0-00010101000000-000000000000
 	github.com/k8shell-io/yaml-cel v0.2.6
@@ -76,7 +77,6 @@ require (
 	github.com/google/cel-go v0.26.1 // indirect
 	github.com/google/gnostic-models v0.7.0 // indirect
 	github.com/google/go-cmp v0.7.0 // indirect
-	github.com/google/uuid v1.6.0 // indirect
 	github.com/gorilla/websocket v1.5.4-0.20250319132907-e064f32e3674 // indirect
 	github.com/gosuri/uitable v0.0.4 // indirect
 	github.com/gregjones/httpcache v0.0.0-20190611155906-901d90724c79 // indirect
@@ -105,6 +105,9 @@ require (
 	github.com/monochromegane/go-gitignore v0.0.0-20200626010858-205db1a8cc00 // indirect
 	github.com/munnerz/goautoneg v0.0.0-20191010083416-a7dc8b61c822 // indirect
 	github.com/mxk/go-flowrate v0.0.0-20140419014527-cca7078d478f // indirect
+	github.com/nats-io/nats.go v1.47.0 // indirect
+	github.com/nats-io/nkeys v0.4.11 // indirect
+	github.com/nats-io/nuid v1.0.1 // indirect
 	github.com/opencontainers/go-digest v1.0.0 // indirect
 	github.com/opencontainers/image-spec v1.1.1 // indirect
 	github.com/peterbourgon/diskv v2.0.1+incompatible // indirect

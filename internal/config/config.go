@@ -3,23 +3,40 @@ package config
 import (
 	"fmt"
 	"path/filepath"
+	"time"
 
 	"github.com/k8shell-io/common/pkg/config"
 	"github.com/k8shell-io/common/pkg/gapi"
+	natsc "github.com/k8shell-io/common/pkg/nats"
 )
 
 // Config represents the server configuration
 type Config struct {
-	TargetNamespace     string               `yaml:"targetNamespace"`
-	DefaultRegistry     DefaultRegistry      `yaml:"defaultRegistry"`
-	K8shellCapabilities K8shellCapabilities  `yaml:"k8shellCapabilities"`
-	CertManager         CertManagerConfig    `yaml:"certManager"`
-	GrpcConfig          gapi.ServerConfig    `yaml:"grpc"`
-	Identity            gapi.ClientConfig    `yaml:"identity"`
-	Blueprints          BlueprintsFileConfig `yaml:"blueprints"`
-	BaseDir             string               `yaml:"baseDir"`
+	TargetNamespace     string                `yaml:"targetNamespace"`
+	ClusterDomain       string                `yaml:"clusterDomain"`
+	DefaultRegistry     DefaultRegistry       `yaml:"defaultRegistry"`
+	K8shellCapabilities K8shellCapabilities   `yaml:"k8shellCapabilities"`
+	CertManager         CertManagerConfig     `yaml:"certManager"`
+	GrpcConfig          gapi.ServerConfig     `yaml:"grpc"`
+	Nats                ProvisionerNatsConfig `yaml:"nats"`
+	Identity            gapi.ClientConfig     `yaml:"identity"`
+	Blueprints          BlueprintsFileConfig  `yaml:"blueprints"`
+	BaseDir             string                `yaml:"baseDir"`
 }
 
+// ProvisionerNatsConfig represents the NATS configuration for the provisioner
+type ProvisionerNatsConfig struct {
+	natsc.NATSClientConfig `yaml:",inline" mapstructure:",squash"`
+	KV                     JobsKVConfig `yaml:"kv" mapstructure:"kv"`
+}
+
+// JobsKVConfig represents the configuration for the NATS Key-Value store used for provisioning jobs
+type JobsKVConfig struct {
+	ProvisionBucketTTL    time.Duration `yaml:"-"`
+	ProvisionBucketTTLRaw string        `yaml:"provisionBucketTTL"`
+}
+
+// K8shellCapabilities represents the capabilities of the k8shell environment
 type K8shellCapabilities struct {
 	APIServerEnabled bool `yaml:"apiServerEnabled"`
 }
@@ -46,6 +63,10 @@ type DefaultRegistry struct {
 	Password string `yaml:"password"`
 }
 
+// Default cluster domain is "cluster.local", but it can be overridden by configuration.
+// This is needed for constructing the FQDN of workspace pods
+var ClusterDomain string = "cluster.local"
+
 func (r DefaultRegistry) ToValues() map[string]interface{} {
 	values := make(map[string]interface{})
 	values["host"] = r.Host
@@ -71,6 +92,14 @@ func NewConfig(configFile string) (*Config, error) {
 		return nil, fmt.Errorf("failed to load configuration from '%s': %w", configFile, err)
 	}
 
+	if cfg.Nats.KV.ProvisionBucketTTLRaw != "" {
+		d, err := time.ParseDuration(cfg.Nats.KV.ProvisionBucketTTLRaw)
+		if err != nil {
+			return nil, fmt.Errorf("invalid nats.kv.provisionBucketTTL %q: %w", cfg.Nats.KV.ProvisionBucketTTLRaw, err)
+		}
+		cfg.Nats.KV.ProvisionBucketTTL = d
+	}
+
 	if cfg.GrpcConfig.Port == 0 {
 		return nil, fmt.Errorf("missing required configuration values: port must be set")
 	}
@@ -87,6 +116,11 @@ func NewConfig(configFile string) (*Config, error) {
 			cfg.CertManager.RenewBefore = "12h"
 		}
 	}
+
+	if cfg.ClusterDomain != ClusterDomain {
+		cfg.ClusterDomain = ClusterDomain
+	}
+	ClusterDomain = cfg.ClusterDomain
 
 	cfg.BaseDir = filepath.Dir(configFile)
 	return &cfg, nil

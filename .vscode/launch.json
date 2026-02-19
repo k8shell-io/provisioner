@@ -19,6 +19,7 @@
                 "TARGET_NAMESPACE": "workspaces-staging",
                 "IDENTITY_SERVICE_URL": "http://identity.k8shell-test:9090",
                 //"IDENTITY_SERVICE_URL": "http://10.42.3.57:9090",
+                "TOKEN_PROVISIONER": "3osh3FlS4sSqbxh3DIuG9lcQAV39evpZDbvQuhLAKHo5GuzYzm25lA7rnieSCEc9",
                 "HELM_DEBUG": "true",
                 "HELM_DEBUG_MANIFEST": "true",
             },

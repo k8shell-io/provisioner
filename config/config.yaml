@@ -3,6 +3,8 @@
 # Namespace for the k8shell workspace
 targetNamespace: ${TARGET_NAMESPACE}
 
+clusterDomain: cluster.local
+
 defaultRegistry:
   host: ${WORKSPACE_REGISTRY}
   # certCA: !file ${SECRET_FILES}/private_ca.pem
@@ -37,6 +39,15 @@ grpc:
     - namespace: k8shell-test
       serviceAccount: api-server
     
+# NATS configuration for event streaming
+nats:
+  enabled: true
+  url: nats://nats.k8shell-test:4222
+  username: apiserver
+  password: ${TOKEN_PROVISIONER}
+  kv:
+    # TTL for provision jobs in the NATS KV store
+    provisionBucketTTL: 48h
 
 # Identity service configuration
 identity:
