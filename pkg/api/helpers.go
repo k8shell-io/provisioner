@@ -50,7 +50,7 @@ func (c *Client) ProvisionHandshake(ctx context.Context, userstr models.UserStr)
 
 // UpgradeHandshake reads the first stream event that needs to be handshake.
 func (c *Client) UpgradeHandshake(ctx context.Context, workspace string) (workspaceName string, jobID string, stream grpc.ServerStreamingClient[provisionerpb.ProvisionWorkspaceResponse], err error) {
-	stream, err = c.UpgradeWorkspace(ctx, &provisionerpb.UpgradeWorkspaceRequest{
+	stream, err = c.UpgradeWorkspaceStream(ctx, &provisionerpb.UpgradeWorkspaceRequest{
 		Workspace:    workspace,
 		SendProgress: true,
 		SendEvents:   true,

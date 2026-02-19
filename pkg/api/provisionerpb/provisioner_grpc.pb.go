@@ -24,9 +24,9 @@ const (
 	ProvisionerService_FindWorkspace_FullMethodName             = "/provisioner.ProvisionerService/FindWorkspace"
 	ProvisionerService_GetUserBlueprints_FullMethodName         = "/provisioner.ProvisionerService/GetUserBlueprints"
 	ProvisionerService_ProvisionWorkspaceStream_FullMethodName  = "/provisioner.ProvisionerService/ProvisionWorkspaceStream"
+	ProvisionerService_UpgradeWorkspaceStream_FullMethodName    = "/provisioner.ProvisionerService/UpgradeWorkspaceStream"
 	ProvisionerService_CanUpgradeWorkspace_FullMethodName       = "/provisioner.ProvisionerService/CanUpgradeWorkspace"
 	ProvisionerService_UpgradeWorkspaceResources_FullMethodName = "/provisioner.ProvisionerService/UpgradeWorkspaceResources"
-	ProvisionerService_UpgradeWorkspace_FullMethodName          = "/provisioner.ProvisionerService/UpgradeWorkspace"
 	ProvisionerService_DeleteWorkspace_FullMethodName           = "/provisioner.ProvisionerService/DeleteWorkspace"
 )
 
@@ -38,9 +38,9 @@ type ProvisionerServiceClient interface {
 	FindWorkspace(ctx context.Context, in *FindWorkspaceRequest, opts ...grpc.CallOption) (*commonpb.WorkspaceDetails, error)
 	GetUserBlueprints(ctx context.Context, in *GetUserBlueprintsRequest, opts ...grpc.CallOption) (*GetUserBlueprintsResponse, error)
 	ProvisionWorkspaceStream(ctx context.Context, in *ProvisionWorkspaceRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[ProvisionWorkspaceResponse], error)
+	UpgradeWorkspaceStream(ctx context.Context, in *UpgradeWorkspaceRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[ProvisionWorkspaceResponse], error)
 	CanUpgradeWorkspace(ctx context.Context, in *CanUpgradeWorkspaceRequest, opts ...grpc.CallOption) (*CanUpgradeWorkspaceResponse, error)
 	UpgradeWorkspaceResources(ctx context.Context, in *UpgradeWorkspaceResourcesRequest, opts ...grpc.CallOption) (*UpgradeWorkspaceResourcesResponse, error)
-	UpgradeWorkspace(ctx context.Context, in *UpgradeWorkspaceRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[ProvisionWorkspaceResponse], error)
 	DeleteWorkspace(ctx context.Context, in *DeleteWorkspaceRequest, opts ...grpc.CallOption) (*DeleteWorkspaceResponse, error)
 }
 
@@ -101,6 +101,25 @@ func (c *provisionerServiceClient) ProvisionWorkspaceStream(ctx context.Context,
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
 type ProvisionerService_ProvisionWorkspaceStreamClient = grpc.ServerStreamingClient[ProvisionWorkspaceResponse]
 
+func (c *provisionerServiceClient) UpgradeWorkspaceStream(ctx context.Context, in *UpgradeWorkspaceRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[ProvisionWorkspaceResponse], error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	stream, err := c.cc.NewStream(ctx, &ProvisionerService_ServiceDesc.Streams[1], ProvisionerService_UpgradeWorkspaceStream_FullMethodName, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	x := &grpc.GenericClientStream[UpgradeWorkspaceRequest, ProvisionWorkspaceResponse]{ClientStream: stream}
+	if err := x.ClientStream.SendMsg(in); err != nil {
+		return nil, err
+	}
+	if err := x.ClientStream.CloseSend(); err != nil {
+		return nil, err
+	}
+	return x, nil
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type ProvisionerService_UpgradeWorkspaceStreamClient = grpc.ServerStreamingClient[ProvisionWorkspaceResponse]
+
 func (c *provisionerServiceClient) CanUpgradeWorkspace(ctx context.Context, in *CanUpgradeWorkspaceRequest, opts ...grpc.CallOption) (*CanUpgradeWorkspaceResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(CanUpgradeWorkspaceResponse)
@@ -121,25 +140,6 @@ func (c *provisionerServiceClient) UpgradeWorkspaceResources(ctx context.Context
 	return out, nil
 }
 
-func (c *provisionerServiceClient) UpgradeWorkspace(ctx context.Context, in *UpgradeWorkspaceRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[ProvisionWorkspaceResponse], error) {
-	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	stream, err := c.cc.NewStream(ctx, &ProvisionerService_ServiceDesc.Streams[1], ProvisionerService_UpgradeWorkspace_FullMethodName, cOpts...)
-	if err != nil {
-		return nil, err
-	}
-	x := &grpc.GenericClientStream[UpgradeWorkspaceRequest, ProvisionWorkspaceResponse]{ClientStream: stream}
-	if err := x.ClientStream.SendMsg(in); err != nil {
-		return nil, err
-	}
-	if err := x.ClientStream.CloseSend(); err != nil {
-		return nil, err
-	}
-	return x, nil
-}
-
-// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
-type ProvisionerService_UpgradeWorkspaceClient = grpc.ServerStreamingClient[ProvisionWorkspaceResponse]
-
 func (c *provisionerServiceClient) DeleteWorkspace(ctx context.Context, in *DeleteWorkspaceRequest, opts ...grpc.CallOption) (*DeleteWorkspaceResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(DeleteWorkspaceResponse)
@@ -158,9 +158,9 @@ type ProvisionerServiceServer interface {
 	FindWorkspace(context.Context, *FindWorkspaceRequest) (*commonpb.WorkspaceDetails, error)
 	GetUserBlueprints(context.Context, *GetUserBlueprintsRequest) (*GetUserBlueprintsResponse, error)
 	ProvisionWorkspaceStream(*ProvisionWorkspaceRequest, grpc.ServerStreamingServer[ProvisionWorkspaceResponse]) error
+	UpgradeWorkspaceStream(*UpgradeWorkspaceRequest, grpc.ServerStreamingServer[ProvisionWorkspaceResponse]) error
 	CanUpgradeWorkspace(context.Context, *CanUpgradeWorkspaceRequest) (*CanUpgradeWorkspaceResponse, error)
 	UpgradeWorkspaceResources(context.Context, *UpgradeWorkspaceResourcesRequest) (*UpgradeWorkspaceResourcesResponse, error)
-	UpgradeWorkspace(*UpgradeWorkspaceRequest, grpc.ServerStreamingServer[ProvisionWorkspaceResponse]) error
 	DeleteWorkspace(context.Context, *DeleteWorkspaceRequest) (*DeleteWorkspaceResponse, error)
 	mustEmbedUnimplementedProvisionerServiceServer()
 }
@@ -184,14 +184,14 @@ func (UnimplementedProvisionerServiceServer) GetUserBlueprints(context.Context, 
 func (UnimplementedProvisionerServiceServer) ProvisionWorkspaceStream(*ProvisionWorkspaceRequest, grpc.ServerStreamingServer[ProvisionWorkspaceResponse]) error {
 	return status.Errorf(codes.Unimplemented, "method ProvisionWorkspaceStream not implemented")
 }
+func (UnimplementedProvisionerServiceServer) UpgradeWorkspaceStream(*UpgradeWorkspaceRequest, grpc.ServerStreamingServer[ProvisionWorkspaceResponse]) error {
+	return status.Errorf(codes.Unimplemented, "method UpgradeWorkspaceStream not implemented")
+}
 func (UnimplementedProvisionerServiceServer) CanUpgradeWorkspace(context.Context, *CanUpgradeWorkspaceRequest) (*CanUpgradeWorkspaceResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method CanUpgradeWorkspace not implemented")
 }
 func (UnimplementedProvisionerServiceServer) UpgradeWorkspaceResources(context.Context, *UpgradeWorkspaceResourcesRequest) (*UpgradeWorkspaceResourcesResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method UpgradeWorkspaceResources not implemented")
-}
-func (UnimplementedProvisionerServiceServer) UpgradeWorkspace(*UpgradeWorkspaceRequest, grpc.ServerStreamingServer[ProvisionWorkspaceResponse]) error {
-	return status.Errorf(codes.Unimplemented, "method UpgradeWorkspace not implemented")
 }
 func (UnimplementedProvisionerServiceServer) DeleteWorkspace(context.Context, *DeleteWorkspaceRequest) (*DeleteWorkspaceResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method DeleteWorkspace not implemented")
@@ -282,6 +282,17 @@ func _ProvisionerService_ProvisionWorkspaceStream_Handler(srv interface{}, strea
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
 type ProvisionerService_ProvisionWorkspaceStreamServer = grpc.ServerStreamingServer[ProvisionWorkspaceResponse]
 
+func _ProvisionerService_UpgradeWorkspaceStream_Handler(srv interface{}, stream grpc.ServerStream) error {
+	m := new(UpgradeWorkspaceRequest)
+	if err := stream.RecvMsg(m); err != nil {
+		return err
+	}
+	return srv.(ProvisionerServiceServer).UpgradeWorkspaceStream(m, &grpc.GenericServerStream[UpgradeWorkspaceRequest, ProvisionWorkspaceResponse]{ServerStream: stream})
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type ProvisionerService_UpgradeWorkspaceStreamServer = grpc.ServerStreamingServer[ProvisionWorkspaceResponse]
+
 func _ProvisionerService_CanUpgradeWorkspace_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(CanUpgradeWorkspaceRequest)
 	if err := dec(in); err != nil {
@@ -317,17 +328,6 @@ func _ProvisionerService_UpgradeWorkspaceResources_Handler(srv interface{}, ctx 
 	}
 	return interceptor(ctx, in, info, handler)
 }
-
-func _ProvisionerService_UpgradeWorkspace_Handler(srv interface{}, stream grpc.ServerStream) error {
-	m := new(UpgradeWorkspaceRequest)
-	if err := stream.RecvMsg(m); err != nil {
-		return err
-	}
-	return srv.(ProvisionerServiceServer).UpgradeWorkspace(m, &grpc.GenericServerStream[UpgradeWorkspaceRequest, ProvisionWorkspaceResponse]{ServerStream: stream})
-}
-
-// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
-type ProvisionerService_UpgradeWorkspaceServer = grpc.ServerStreamingServer[ProvisionWorkspaceResponse]
 
 func _ProvisionerService_DeleteWorkspace_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(DeleteWorkspaceRequest)
@@ -386,8 +386,8 @@ var ProvisionerService_ServiceDesc = grpc.ServiceDesc{
 			ServerStreams: true,
 		},
 		{
-			StreamName:    "UpgradeWorkspace",
-			Handler:       _ProvisionerService_UpgradeWorkspace_Handler,
+			StreamName:    "UpgradeWorkspaceStream",
+			Handler:       _ProvisionerService_UpgradeWorkspaceStream_Handler,
 			ServerStreams: true,
 		},
 	},

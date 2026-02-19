@@ -16,6 +16,7 @@ import (
 	ws "github.com/k8shell-io/provisioner/internal/workspace"
 	"github.com/k8shell-io/provisioner/pkg/api/provisionerpb"
 	"github.com/rs/zerolog"
+	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	corev1 "k8s.io/api/core/v1"
@@ -493,9 +494,9 @@ func (p *ProvisionerService) convertToGRPCError(err error) error {
 	return status.Errorf(codes.Internal, "%s", err.Error())
 }
 
-func (p *ProvisionerService) UpgradeWorkspaceStream(ctx context.Context,
+func (p *ProvisionerService) UpgradeWorkspaceStream(
 	req *provisionerpb.UpgradeWorkspaceRequest,
-	stream provisionerpb.ProvisionerService_ProvisionWorkspaceStreamServer,
+	stream grpc.ServerStreamingServer[provisionerpb.ProvisionWorkspaceResponse],
 ) error {
 	name := req.Workspace
 	if name == "" {
@@ -503,6 +504,7 @@ func (p *ProvisionerService) UpgradeWorkspaceStream(ctx context.Context,
 			"workspace name is required"))
 	}
 
+	ctx := stream.Context()
 	_, pod, err := ws.FindWorkspace(ctx, p.server.helm, name)
 	if err != nil {
 		if errors.Is(err, models.ErrWorkspaceNotFound) {

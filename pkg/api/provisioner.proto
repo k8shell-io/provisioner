@@ -13,9 +13,9 @@ service ProvisionerService {
   rpc FindWorkspace (FindWorkspaceRequest) returns (common.WorkspaceDetails);
   rpc GetUserBlueprints (GetUserBlueprintsRequest) returns (GetUserBlueprintsResponse);
   rpc ProvisionWorkspaceStream (ProvisionWorkspaceRequest) returns (stream ProvisionWorkspaceResponse);
+  rpc UpgradeWorkspaceStream (UpgradeWorkspaceRequest) returns (stream ProvisionWorkspaceResponse);
   rpc CanUpgradeWorkspace (CanUpgradeWorkspaceRequest) returns (CanUpgradeWorkspaceResponse);
   rpc UpgradeWorkspaceResources (UpgradeWorkspaceResourcesRequest) returns (UpgradeWorkspaceResourcesResponse);
-  rpc UpgradeWorkspace (UpgradeWorkspaceRequest) returns (stream ProvisionWorkspaceResponse);
   rpc DeleteWorkspace (DeleteWorkspaceRequest) returns (DeleteWorkspaceResponse);
 }
 

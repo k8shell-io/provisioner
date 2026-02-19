@@ -1084,15 +1084,15 @@ const file_pkg_api_provisioner_proto_rawDesc = "" +
 	"\x1bCanUpgradeWorkspaceResponse\x12\x1f\n" +
 	"\vcan_upgrade\x18\x01 \x01(\bR\n" +
 	"canUpgrade\x12\x18\n" +
-	"\amessage\x18\x02 \x01(\tR\amessage2\xb6\x06\n" +
+	"\amessage\x18\x02 \x01(\tR\amessage2\xbc\x06\n" +
 	"\x12ProvisionerService\x12V\n" +
 	"\rGetWorkspaces\x12!.provisioner.GetWorkspacesRequest\x1a\".provisioner.GetWorkspacesResponse\x12L\n" +
 	"\rFindWorkspace\x12!.provisioner.FindWorkspaceRequest\x1a\x18.common.WorkspaceDetails\x12b\n" +
 	"\x11GetUserBlueprints\x12%.provisioner.GetUserBlueprintsRequest\x1a&.provisioner.GetUserBlueprintsResponse\x12m\n" +
-	"\x18ProvisionWorkspaceStream\x12&.provisioner.ProvisionWorkspaceRequest\x1a'.provisioner.ProvisionWorkspaceResponse0\x01\x12h\n" +
+	"\x18ProvisionWorkspaceStream\x12&.provisioner.ProvisionWorkspaceRequest\x1a'.provisioner.ProvisionWorkspaceResponse0\x01\x12i\n" +
+	"\x16UpgradeWorkspaceStream\x12$.provisioner.UpgradeWorkspaceRequest\x1a'.provisioner.ProvisionWorkspaceResponse0\x01\x12h\n" +
 	"\x13CanUpgradeWorkspace\x12'.provisioner.CanUpgradeWorkspaceRequest\x1a(.provisioner.CanUpgradeWorkspaceResponse\x12z\n" +
-	"\x19UpgradeWorkspaceResources\x12-.provisioner.UpgradeWorkspaceResourcesRequest\x1a..provisioner.UpgradeWorkspaceResourcesResponse\x12c\n" +
-	"\x10UpgradeWorkspace\x12$.provisioner.UpgradeWorkspaceRequest\x1a'.provisioner.ProvisionWorkspaceResponse0\x01\x12\\\n" +
+	"\x19UpgradeWorkspaceResources\x12-.provisioner.UpgradeWorkspaceResourcesRequest\x1a..provisioner.UpgradeWorkspaceResourcesResponse\x12\\\n" +
 	"\x0fDeleteWorkspace\x12#.provisioner.DeleteWorkspaceRequest\x1a$.provisioner.DeleteWorkspaceResponseBGZEgithub.com/k8shell-io/provisioner/pkg/api/provisionerpb;provisionerpbb\x06proto3"
 
 var (
@@ -1137,17 +1137,17 @@ var file_pkg_api_provisioner_proto_depIdxs = []int32{
 	0,  // 5: provisioner.ProvisionerService.FindWorkspace:input_type -> provisioner.FindWorkspaceRequest
 	3,  // 6: provisioner.ProvisionerService.GetUserBlueprints:input_type -> provisioner.GetUserBlueprintsRequest
 	6,  // 7: provisioner.ProvisionerService.ProvisionWorkspaceStream:input_type -> provisioner.ProvisionWorkspaceRequest
-	15, // 8: provisioner.ProvisionerService.CanUpgradeWorkspace:input_type -> provisioner.CanUpgradeWorkspaceRequest
-	10, // 9: provisioner.ProvisionerService.UpgradeWorkspaceResources:input_type -> provisioner.UpgradeWorkspaceResourcesRequest
-	9,  // 10: provisioner.ProvisionerService.UpgradeWorkspace:input_type -> provisioner.UpgradeWorkspaceRequest
+	9,  // 8: provisioner.ProvisionerService.UpgradeWorkspaceStream:input_type -> provisioner.UpgradeWorkspaceRequest
+	15, // 9: provisioner.ProvisionerService.CanUpgradeWorkspace:input_type -> provisioner.CanUpgradeWorkspaceRequest
+	10, // 10: provisioner.ProvisionerService.UpgradeWorkspaceResources:input_type -> provisioner.UpgradeWorkspaceResourcesRequest
 	13, // 11: provisioner.ProvisionerService.DeleteWorkspace:input_type -> provisioner.DeleteWorkspaceRequest
 	2,  // 12: provisioner.ProvisionerService.GetWorkspaces:output_type -> provisioner.GetWorkspacesResponse
 	17, // 13: provisioner.ProvisionerService.FindWorkspace:output_type -> common.WorkspaceDetails
 	5,  // 14: provisioner.ProvisionerService.GetUserBlueprints:output_type -> provisioner.GetUserBlueprintsResponse
 	7,  // 15: provisioner.ProvisionerService.ProvisionWorkspaceStream:output_type -> provisioner.ProvisionWorkspaceResponse
-	16, // 16: provisioner.ProvisionerService.CanUpgradeWorkspace:output_type -> provisioner.CanUpgradeWorkspaceResponse
-	11, // 17: provisioner.ProvisionerService.UpgradeWorkspaceResources:output_type -> provisioner.UpgradeWorkspaceResourcesResponse
-	7,  // 18: provisioner.ProvisionerService.UpgradeWorkspace:output_type -> provisioner.ProvisionWorkspaceResponse
+	7,  // 16: provisioner.ProvisionerService.UpgradeWorkspaceStream:output_type -> provisioner.ProvisionWorkspaceResponse
+	16, // 17: provisioner.ProvisionerService.CanUpgradeWorkspace:output_type -> provisioner.CanUpgradeWorkspaceResponse
+	11, // 18: provisioner.ProvisionerService.UpgradeWorkspaceResources:output_type -> provisioner.UpgradeWorkspaceResourcesResponse
 	14, // 19: provisioner.ProvisionerService.DeleteWorkspace:output_type -> provisioner.DeleteWorkspaceResponse
 	12, // [12:20] is the sub-list for method output_type
 	4,  // [4:12] is the sub-list for method input_type
