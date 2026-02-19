@@ -35,8 +35,8 @@ func (c *Client) Close() error {
 	return c.client.Close()
 }
 
-// Handshake reads the FIRST stream event that needs to be handshake.
-func (c *Client) Handshake(ctx context.Context, userstr models.UserStr) (workspaceName string, jobID string, stream grpc.ServerStreamingClient[provisionerpb.ProvisionWorkspaceResponse], err error) {
+// ProvisionHandshake reads the first stream event that needs to be handshake.
+func (c *Client) ProvisionHandshake(ctx context.Context, userstr models.UserStr) (workspaceName string, jobID string, stream grpc.ServerStreamingClient[provisionerpb.ProvisionWorkspaceResponse], err error) {
 	stream, err = c.ProvisionWorkspaceStream(ctx, &provisionerpb.ProvisionWorkspaceRequest{
 		Userstr:      userstr.Raw,
 		SendProgress: true,
@@ -45,7 +45,25 @@ func (c *Client) Handshake(ctx context.Context, userstr models.UserStr) (workspa
 	if err != nil {
 		return "", "", nil, fmt.Errorf("failed to start provisioning stream: %w", err)
 	}
+	return c.waitForHandshakeMessage(stream)
+}
 
+// UpgradeHandshake reads the first stream event that needs to be handshake.
+func (c *Client) UpgradeHandshake(ctx context.Context, workspace string) (workspaceName string, jobID string, stream grpc.ServerStreamingClient[provisionerpb.ProvisionWorkspaceResponse], err error) {
+	stream, err = c.UpgradeWorkspace(ctx, &provisionerpb.UpgradeWorkspaceRequest{
+		Workspace:    workspace,
+		SendProgress: true,
+		SendEvents:   true,
+	})
+	if err != nil {
+		return "", "", nil, fmt.Errorf("failed to start upgrade stream: %w", err)
+	}
+	return c.waitForHandshakeMessage(stream)
+}
+
+func (c *Client) waitForHandshakeMessage(
+	stream grpc.ServerStreamingClient[provisionerpb.ProvisionWorkspaceResponse],
+) (string, string, grpc.ServerStreamingClient[provisionerpb.ProvisionWorkspaceResponse], error) {
 	first, err := stream.Recv()
 	if err != nil {
 		return "", "", nil, fmt.Errorf("failed to receive first stream event (handshake expected): %w", err)
@@ -67,8 +85,8 @@ func (c *Client) Handshake(ctx context.Context, userstr models.UserStr) (workspa
 		return "", "", nil, fmt.Errorf("handshake failed: %s", desc)
 	}
 
-	workspaceName = hs.GetWorkspace()
-	jobID = hs.GetJobid()
+	workspaceName := hs.GetWorkspace()
+	jobID := hs.GetJobid()
 	if workspaceName == "" {
 		return "", "", nil, fmt.Errorf("handshake missing required field: workspace")
 	}
