@@ -545,10 +545,14 @@ func (p *ProvisionerService) UpgradeWorkspaceStream(
 		}
 	}
 
-	p.DeleteWorkspace(ctx, &provisionerpb.DeleteWorkspaceRequest{
+	_, err = p.DeleteWorkspace(ctx, &provisionerpb.DeleteWorkspaceRequest{
 		Workspace:    name,
 		DelaySeconds: 0,
 	})
+	if err != nil {
+		return p.sendProvisionHandshakeErr(stream, name, status.Errorf(codes.Internal,
+			"Failed to delete workspace %s for upgrade: %v", name, err))
+	}
 
 	return p.ProvisionWorkspaceStream(&provisionerpb.ProvisionWorkspaceRequest{
 		Userstr:      wl.UserStr.CanonicalUserStr,
