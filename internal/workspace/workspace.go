@@ -368,6 +368,10 @@ func (w *Workspace) Template(ctx context.Context) (string, error) {
 	if err != nil {
 		return "", err
 	}
+
+	values["__jobid__"] = ""
+	values["__manifesthash__"] = ""
+
 	out, err := w.client.Template(ctx, helm.WORKSPACE_CHART_NAME, helm.InstallOptions{
 		ReleaseName: w.blueprint.Name,
 		Values:      values,
