@@ -85,6 +85,9 @@ func (c *Client) waitForHandshakeMessage(
 		if code == "InvalidArgument" {
 			return "", "", nil, fmt.Errorf("%w: handshake failed: %s", ErrInvalidArgument, desc)
 		}
+		if code == "FailedPrecondition" {
+			return "", "", nil, fmt.Errorf("%w: handshake failed: %s", ErrWorkspaceExists, desc)
+		}
 		return "", "", nil, fmt.Errorf("handshake failed: %s", desc)
 	}
 
