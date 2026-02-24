@@ -23,28 +23,29 @@ type ProvisionOptions struct {
 }
 
 // ExistsRunning checks if the workspace already exists and is running
-func (w *Workspace) ExistsRunning(ctx context.Context) (bool, error) {
+func (w *Workspace) ExistsAndRunning(ctx context.Context) (bool, *models.PodStatus, error) {
 	exists, err := w.IsInstalled(ctx)
 	if err != nil {
-		return false, fmt.Errorf("failed to check if workspace exists: %w", err)
+		return false, nil, fmt.Errorf("failed to check if workspace exists: %w", err)
 	}
 
+	var status *models.PodStatus
 	if exists {
-		status, err := w.GetPodStatus(ctx)
+		status, err = w.GetPodStatus(ctx)
 		if err != nil {
 			if errors.Is(err, models.ErrWorkspaceNotFound) {
 				w.log.Warn().Msgf("Workspace is installed but workspace pod %s not found.", w.Name)
 			} else {
-				return false, fmt.Errorf("failed to get workspace pod status: %w", err)
+				return false, nil, fmt.Errorf("failed to get workspace pod status: %w", err)
 			}
 		} else {
 			if status.Status == "Running" {
-				return true, nil
+				return true, status, nil
 			}
 		}
 	}
 
-	return false, nil
+	return false, status, nil
 }
 
 // Provision provisions the workspace

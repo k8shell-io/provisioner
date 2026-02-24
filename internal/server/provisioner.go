@@ -20,6 +20,7 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	corev1 "k8s.io/api/core/v1"
+	k8sErrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
@@ -218,6 +219,40 @@ func (p *ProvisionerService) sendProvisionHandshakeErr(
 	return errx
 }
 
+func (p *ProvisionerService) waitForWorkspacePodGone(ctx context.Context, name string, timeout time.Duration) error {
+	if name == "" {
+		return fmt.Errorf("workspace name is required")
+	}
+	if timeout <= 0 {
+		timeout = 20 * time.Second
+	}
+
+	wctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
+	v1 := p.server.helm.KubeClient().CoreV1()
+	ns := p.server.helm.TargetNamespace()
+
+	ticker := time.NewTicker(500 * time.Millisecond)
+	defer ticker.Stop()
+
+	for {
+		_, err := v1.Pods(ns).Get(wctx, name, metav1.GetOptions{})
+		if err != nil {
+			if k8sErrors.IsNotFound(err) {
+				return nil
+			}
+			return fmt.Errorf("failed to get workspace pod %s while waiting for deletion: %w", name, err)
+		}
+
+		select {
+		case <-wctx.Done():
+			return fmt.Errorf("timeout waiting for workspace pod %s to be deleted: %w", name, wctx.Err())
+		case <-ticker.C:
+		}
+	}
+}
+
 // ProvisionWorkspaceStream provisions a new workspace with streaming updates
 func (p *ProvisionerService) ProvisionWorkspaceStream(
 	req *provisionerpb.ProvisionWorkspaceRequest,
@@ -226,6 +261,11 @@ func (p *ProvisionerService) ProvisionWorkspaceStream(
 
 	var job *ProvisionJobServer
 	ctx := stream.Context()
+
+	timeout := int(req.Timeout)
+	if timeout <= 0 {
+		timeout = 20
+	}
 
 	userstr, err := models.NewUserStr(req.Userstr, false)
 	if err != nil {
@@ -244,7 +284,7 @@ func (p *ProvisionerService) ProvisionWorkspaceStream(
 		return p.sendProvisionHandshakeErr(stream, "", err)
 	}
 
-	exists, err := workspace.ExistsRunning(ctx)
+	exists, st, err := workspace.ExistsAndRunning(ctx)
 	if err != nil {
 		return p.sendProvisionHandshakeErr(stream, workspace.Name, status.Errorf(codes.Internal,
 			"Failed to check if workspace can be provisioned: %v", err))
@@ -252,6 +292,20 @@ func (p *ProvisionerService) ProvisionWorkspaceStream(
 	if exists {
 		return p.sendProvisionHandshakeErr(stream, workspace.Name, status.Errorf(codes.AlreadyExists,
 			"Workspace %s already exists and is running", workspace.Name))
+	}
+
+	if st != nil {
+		if st.Status == models.WorkspaceStatusTerminating || st.Status == models.WorkspaceStatusStopped {
+			p.log.Debug().Msgf("Workspace %s is in %s state, waiting for it to be deleted before provisioning",
+				workspace.Name, st.Status)
+			waitDur := time.Duration(timeout) * time.Second
+			if err := p.waitForWorkspacePodGone(ctx, workspace.Name, waitDur); err != nil {
+				return p.sendProvisionHandshakeErr(stream, workspace.Name, status.Errorf(codes.DeadlineExceeded,
+					"Workspace %s is still being deleted; please retry: %v", workspace.Name, err))
+			} else {
+				p.log.Debug().Msgf("Workspace %s deletion detected, proceeding with provisioning", workspace.Name)
+			}
+		}
 	}
 
 	if p.server.provisionJobsKV != nil {
@@ -277,11 +331,6 @@ func (p *ProvisionerService) ProvisionWorkspaceStream(
 	errorChan := make(chan error)
 	progress := 0
 	percent := 0
-
-	timeout := int(req.Timeout)
-	if timeout <= 0 {
-		timeout = 20
-	}
 
 	go func() {
 		defer close(done)
