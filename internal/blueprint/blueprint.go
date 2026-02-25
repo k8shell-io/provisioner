@@ -22,10 +22,11 @@ import (
 
 // RawBlueprint represents an unprocessed blueprint with CEL expressions intact.
 type RawBlueprint struct {
-	Name       string
-	Template   string
-	IsTemplate bool
-	Node       *yaml.Node
+	Name        string
+	Description string
+	Template    string
+	IsTemplate  bool
+	Node        *yaml.Node
 }
 
 type BlueprintScope struct {
@@ -247,6 +248,22 @@ func (bm *BlueprintManager) GetBlueprint(name string, scope *BlueprintScope) (*m
 	return &bp, nil
 }
 
+// GetBlueprintsSummary returns a summary of all available blueprints without evaluating CEL expressions.
+func (bm *BlueprintManager) GetBlueprintsSummary() []*models.BlueprintSummary {
+	bm.mu.RLock()
+	defer bm.mu.RUnlock()
+
+	summaries := make([]*models.BlueprintSummary, 0, len(bm.rawBlueprints))
+	for name, bp := range bm.rawBlueprints {
+		summaries = append(summaries, &models.BlueprintSummary{
+			Name:        name,
+			Description: bp.Description,
+			IsTemplate:  bp.IsTemplate,
+		})
+	}
+	return summaries
+}
+
 func (bm *BlueprintManager) GetRawBlueprint(name string) (interface{}, error) {
 	bm.mu.RLock()
 	defer bm.mu.RUnlock()
@@ -420,6 +437,8 @@ func (bm *BlueprintManager) extractSingleRawBlueprint(node *yaml.Node, _ string)
 		name = n
 	}
 
+	descr, _ := bpData["description"].(string)
+
 	template := ""
 	if t, ok := bpData["template"].(string); ok {
 		template = t
@@ -431,10 +450,11 @@ func (bm *BlueprintManager) extractSingleRawBlueprint(node *yaml.Node, _ string)
 	}
 
 	bm.rawBlueprints[name] = &RawBlueprint{
-		Name:       name,
-		Template:   template,
-		IsTemplate: isTemplate,
-		Node:       node,
+		Name:        name,
+		Description: descr,
+		Template:    template,
+		IsTemplate:  isTemplate,
+		Node:        node,
 	}
 
 	return nil
@@ -467,11 +487,14 @@ func (bm *BlueprintManager) extractMultipleRawBlueprints(node *yaml.Node, path s
 			isTemplate = t
 		}
 
+		descr, _ := item["description"].(string)
+
 		bm.rawBlueprints[name] = &RawBlueprint{
-			Name:       name,
-			Template:   template,
-			IsTemplate: isTemplate,
-			Node:       childNode,
+			Name:        name,
+			Description: descr,
+			Template:    template,
+			IsTemplate:  isTemplate,
+			Node:        childNode,
 		}
 	}
 
