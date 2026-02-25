@@ -117,7 +117,7 @@ func (p *ProvisionerService) FindWorkspace(ctx context.Context,
 	return gapi.WorkspaceDetailsToProto(s), nil
 }
 
-// ListWorkspaces lists all workspaces, optionally filtered by user and/or blueprint
+// GetWorkspaces lists all workspaces, optionally filtered by user and/or blueprint
 func (p *ProvisionerService) GetWorkspaces(
 	ctx context.Context,
 	req *provisionerpb.GetWorkspacesRequest,
@@ -144,6 +144,34 @@ func (p *ProvisionerService) GetWorkspaces(
 
 	return &provisionerpb.GetWorkspacesResponse{
 		Workspaces: protoWorkspaces,
+	}, nil
+}
+
+func (p *ProvisionerService) GetUserBlueprints(ctx context.Context,
+	req *provisionerpb.GetUserBlueprintsRequest,
+) (*provisionerpb.GetUserBlueprintsResponse, error) {
+
+	userpb, err := p.server.Identity.FindUser(ctx, &identitypb.FindUserRequest{Username: req.Username})
+	if err != nil {
+		return nil, status.Errorf(codes.NotFound, "Failed to get user: %v", err)
+	}
+	user := gapi.ProtoToUser(userpb)
+
+	allblueprints := p.server.bpManager.GetBlueprintsSummary()
+	var blueprints []*models.BlueprintSummary
+	for _, bp := range allblueprints {
+		if user.HasBlueprint(bp.Name) {
+			blueprints = append(blueprints, bp)
+		}
+	}
+
+	var protoBlueprints []*commonpb.BlueprintSummary
+	for _, b := range blueprints {
+		protoBlueprints = append(protoBlueprints, gapi.BlueprintSummaryToProto(b))
+	}
+
+	return &provisionerpb.GetUserBlueprintsResponse{
+		Blueprints: protoBlueprints,
 	}, nil
 }
 
@@ -217,40 +245,6 @@ func (p *ProvisionerService) sendProvisionHandshakeErr(
 		p.log.Error().Err(errx).Msg("Failed to send handshake error response")
 	}
 	return errx
-}
-
-func (p *ProvisionerService) waitForWorkspacePodGone(ctx context.Context, name string, timeout time.Duration) error {
-	if name == "" {
-		return fmt.Errorf("workspace name is required")
-	}
-	if timeout <= 0 {
-		timeout = 20 * time.Second
-	}
-
-	wctx, cancel := context.WithTimeout(ctx, timeout)
-	defer cancel()
-
-	v1 := p.server.helm.KubeClient().CoreV1()
-	ns := p.server.helm.TargetNamespace()
-
-	ticker := time.NewTicker(500 * time.Millisecond)
-	defer ticker.Stop()
-
-	for {
-		_, err := v1.Pods(ns).Get(wctx, name, metav1.GetOptions{})
-		if err != nil {
-			if k8sErrors.IsNotFound(err) {
-				return nil
-			}
-			return fmt.Errorf("failed to get workspace pod %s while waiting for deletion: %w", name, err)
-		}
-
-		select {
-		case <-wctx.Done():
-			return fmt.Errorf("timeout waiting for workspace pod %s to be deleted: %w", name, wctx.Err())
-		case <-ticker.C:
-		}
-	}
 }
 
 // ProvisionWorkspaceStream provisions a new workspace with streaming updates
@@ -476,7 +470,7 @@ func (p *ProvisionerService) prepareWorkspaceWithUserStr(ctx context.Context,
 
 		scope, errx := p.server.GetBlueprintScope(customBlueprint.Metadata.Name, user, &customBlueprint.Metadata, userStr.WorkspaceName)
 		if errx != nil {
-			return nil, p.convertToGRPCError(errx)
+			return nil, convertToGRPCError(errx)
 		}
 
 		blueprintObj, err = p.server.bpManager.ComposeWithScope(&customBlueprint, scope)
@@ -503,7 +497,7 @@ func (p *ProvisionerService) prepareWorkspaceWithUserStr(ctx context.Context,
 
 		scope, errx := p.server.GetBlueprintScope(bpName, user, nil, userStr.WorkspaceName)
 		if errx != nil {
-			return nil, p.convertToGRPCError(errx)
+			return nil, convertToGRPCError(errx)
 		}
 
 		if !user.HasBlueprint(bpName) {
@@ -529,18 +523,6 @@ func (p *ProvisionerService) prepareWorkspaceWithUserStr(ctx context.Context,
 	}
 
 	return workspace, nil
-}
-
-// convertToGRPCError converts internal errors to gRPC status errors
-func (p *ProvisionerService) convertToGRPCError(err error) error {
-	if errors.Is(err, models.ErrWorkspaceNotFound) {
-		return status.Errorf(codes.NotFound, "%s", err.Error())
-	}
-	if errors.Is(err, models.ErrInvalidParameters) {
-		return status.Errorf(codes.InvalidArgument, "%s", err.Error())
-	}
-
-	return status.Errorf(codes.Internal, "%s", err.Error())
 }
 
 func (p *ProvisionerService) UpgradeWorkspaceResources(ctx context.Context,
@@ -681,7 +663,7 @@ func (p *ProvisionerService) DeleteWorkspace(ctx context.Context,
 
 	w, err := ws.NewWorkspaceFromHelmRelease(ctx, name, p.server.helm, p.server.Identity, p.server.config)
 	if err != nil {
-		return nil, p.convertToGRPCError(err)
+		return nil, convertToGRPCError(err)
 	}
 
 	lockCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
@@ -748,4 +730,52 @@ func (p *ProvisionerService) DeleteWorkspace(ctx context.Context,
 	return &provisionerpb.DeleteWorkspaceResponse{
 		Message: fmt.Sprintf("Successfully deleted workspace %s", name),
 	}, nil
+}
+
+// *** helpers
+
+// convertToGRPCError converts internal errors to gRPC status errors
+func convertToGRPCError(err error) error {
+	if errors.Is(err, models.ErrWorkspaceNotFound) {
+		return status.Errorf(codes.NotFound, "%s", err.Error())
+	}
+	if errors.Is(err, models.ErrInvalidParameters) {
+		return status.Errorf(codes.InvalidArgument, "%s", err.Error())
+	}
+
+	return status.Errorf(codes.Internal, "%s", err.Error())
+}
+
+func (p *ProvisionerService) waitForWorkspacePodGone(ctx context.Context, name string, timeout time.Duration) error {
+	if name == "" {
+		return fmt.Errorf("workspace name is required")
+	}
+	if timeout <= 0 {
+		timeout = 20 * time.Second
+	}
+
+	wctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
+	v1 := p.server.helm.KubeClient().CoreV1()
+	ns := p.server.helm.TargetNamespace()
+
+	ticker := time.NewTicker(500 * time.Millisecond)
+	defer ticker.Stop()
+
+	for {
+		_, err := v1.Pods(ns).Get(wctx, name, metav1.GetOptions{})
+		if err != nil {
+			if k8sErrors.IsNotFound(err) {
+				return nil
+			}
+			return fmt.Errorf("failed to get workspace pod %s while waiting for deletion: %w", name, err)
+		}
+
+		select {
+		case <-wctx.Done():
+			return fmt.Errorf("timeout waiting for workspace pod %s to be deleted: %w", name, wctx.Err())
+		case <-ticker.C:
+		}
+	}
 }

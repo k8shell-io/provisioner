@@ -61,6 +61,7 @@ blueprints:
         protocol: "http"
 
   - name: dev
+    description: A general purpose development workspace with Go, Python, Node.js, Git and Docker preinstalled. 
     template: default
     image: workspaces/dev:1.12
 

@@ -1,5 +1,6 @@
 blueprints:
   - name: development
+    description: A parent blueprint for github-based development workspaces. 
     template: default
     isTemplate: true
     image: workspaces/dev:1.12

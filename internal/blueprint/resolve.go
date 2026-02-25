@@ -56,9 +56,11 @@ func (bm *BlueprintManager) resolveRawTemplate(bpName string, visited map[string
 	}
 
 	return &RawBlueprint{
-		Name:     bp.Name,
-		Template: "",
-		Node:     mergedNode,
+		Name:        bp.Name,
+		Description: bp.Description,
+		Template:    bp.Template,
+		IsTemplate:  bp.IsTemplate,
+		Node:        mergedNode,
 	}, nil
 }
 

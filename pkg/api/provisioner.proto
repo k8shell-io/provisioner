@@ -41,13 +41,8 @@ message GetUserBlueprintsRequest {
   string username = 1;
 }
 
-message BlueprintSummary {
-  string name = 1;
-  string description = 2;
-}
-
 message GetUserBlueprintsResponse {
-  repeated BlueprintSummary blueprints = 1;
+  repeated common.BlueprintSummary blueprints = 1;
 }
 
 message ProvisionWorkspaceRequest {
