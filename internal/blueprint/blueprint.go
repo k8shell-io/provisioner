@@ -9,6 +9,7 @@ import (
 	"io/fs"
 	"path/filepath"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -438,6 +439,7 @@ func (bm *BlueprintManager) extractSingleRawBlueprint(node *yaml.Node, _ string)
 	}
 
 	descr, _ := bpData["description"].(string)
+	descr = strings.Join(strings.Fields(descr), " ")
 
 	template := ""
 	if t, ok := bpData["template"].(string); ok {
@@ -488,6 +490,7 @@ func (bm *BlueprintManager) extractMultipleRawBlueprints(node *yaml.Node, path s
 		}
 
 		descr, _ := item["description"].(string)
+		descr = strings.Join(strings.Fields(descr), " ")
 
 		bm.rawBlueprints[name] = &RawBlueprint{
 			Name:        name,
