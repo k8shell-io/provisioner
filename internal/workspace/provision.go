@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/k8shell-io/common/pkg/models"
@@ -294,54 +295,149 @@ func (w *Workspace) watchEvents(ctx context.Context, podName string,
 	criticalErrorChan chan<- error, opts *ProvisionOptions) {
 
 	v1 := w.client.KubeClient().CoreV1()
+	namespace := w.client.TargetNamespace()
 
-	eventList, err := v1.Events(w.client.TargetNamespace()).List(ctx, metav1.ListOptions{
-		FieldSelector: fmt.Sprintf("involvedObject.name=%s", podName),
-		Limit:         1,
-	})
+	eventCh := make(chan *corev1.Event, 256)
+	stopOnce := sync.Once{}
+	stopAll := func() {
+		stopOnce.Do(func() { close(eventCh) })
+	}
+
+	startWatcher := func(fieldSelector string) (watch.Interface, error) {
+		eventList, err := v1.Events(namespace).List(ctx, metav1.ListOptions{
+			FieldSelector: fieldSelector,
+			Limit:         1,
+		})
+		if err != nil {
+			w.log.Warn().Err(err).Str("selector", fieldSelector).Msg("Failed to list events for resourceVersion; watching from beginning")
+		}
+
+		listOptions := metav1.ListOptions{
+			FieldSelector: fieldSelector,
+			Watch:         true,
+		}
+		if eventList != nil {
+			listOptions.ResourceVersion = eventList.ResourceVersion
+		}
+
+		watcher, err := v1.Events(namespace).Watch(ctx, listOptions)
+		if err != nil {
+			return nil, err
+		}
+		return watcher, nil
+	}
+
+	podSelector := fmt.Sprintf("involvedObject.kind=Pod,involvedObject.name=%s", podName)
+	podWatcher, err := startWatcher(podSelector)
 	if err != nil {
-		w.log.Warn().Err(err).Msg("Failed to get current resource version for events, watching from beginning")
+		w.log.Warn().Err(err).Msg("Failed to watch pod events")
+	} else {
+		defer podWatcher.Stop()
+		go func() {
+			defer func() {
+				// If both watchers exit, main loop will end via ctx.Done.
+			}()
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case evt, ok := <-podWatcher.ResultChan():
+					if !ok {
+						return
+					}
+					if evt.Type != watch.Added && evt.Type != watch.Modified {
+						continue
+					}
+					k8sEvent, ok := evt.Object.(*corev1.Event)
+					if !ok || k8sEvent == nil {
+						continue
+					}
+					select {
+					case eventCh <- k8sEvent:
+					case <-ctx.Done():
+						return
+					default:
+						w.log.Debug().Msg("Dropping event due to full channel")
+					}
+				}
+			}
+		}()
 	}
 
-	listOptions := metav1.ListOptions{
-		FieldSelector: fmt.Sprintf("involvedObject.name=%s", podName),
-		Watch:         true,
-	}
-
-	if eventList != nil {
-		listOptions.ResourceVersion = eventList.ResourceVersion
-	}
-
-	watcher, err := v1.Events(w.client.TargetNamespace()).Watch(ctx, listOptions)
+	pvcSelector := "involvedObject.kind=PersistentVolumeClaim"
+	pvcWatcher, err := startWatcher(pvcSelector)
 	if err != nil {
-		w.log.Warn().Err(err).Msg("Failed to watch events")
-		return
+		w.log.Warn().Err(err).Msg("Failed to watch PVC events")
+	} else {
+		defer pvcWatcher.Stop()
+		go func() {
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case evt, ok := <-pvcWatcher.ResultChan():
+					if !ok {
+						return
+					}
+					if evt.Type != watch.Added && evt.Type != watch.Modified {
+						continue
+					}
+					k8sEvent, ok := evt.Object.(*corev1.Event)
+					if !ok || k8sEvent == nil {
+						continue
+					}
+					select {
+					case eventCh <- k8sEvent:
+					case <-ctx.Done():
+						return
+					default:
+						w.log.Debug().Msg("Dropping event due to full channel")
+					}
+				}
+			}
+		}()
 	}
-	defer watcher.Stop()
+
+	defer stopAll()
 
 	seenEvents := map[string]bool{}
+	pvcPrefix := "pvc-" + podName + "-"
 
 	for {
 		select {
 		case <-ctx.Done():
 			return
 
-		case event, ok := <-watcher.ResultChan():
+		case k8sEvent, ok := <-eventCh:
 			if !ok {
 				return
 			}
-
-			if event.Type != watch.Added && event.Type != watch.Modified {
+			if k8sEvent == nil {
 				continue
 			}
 
-			k8sEvent, ok := event.Object.(*corev1.Event)
-			if !ok || k8sEvent == nil {
+			kind := k8sEvent.InvolvedObject.Kind
+			name := k8sEvent.InvolvedObject.Name
+
+			switch kind {
+			case "Pod":
+				if name != podName {
+					continue
+				}
+			case "PersistentVolumeClaim":
+				if !strings.HasPrefix(name, pvcPrefix) {
+					continue
+				}
+			default:
 				continue
 			}
 
-			key := k8sEvent.InvolvedObject.Name + "\x00" + k8sEvent.Message
+			message := k8sEvent.Message
+			if k8sEvent.Reason != "" {
+				message = fmt.Sprintf("%s: %s", k8sEvent.Reason, k8sEvent.Message)
+			}
 
+			key := kind + "\x00" + name + "\x00" + message
 			if _, exists := seenEvents[key]; exists {
 				continue
 			}
@@ -350,8 +446,8 @@ func (w *Workspace) watchEvents(ctx context.Context, podName string,
 			eventMessage := models.WorkspaceStreamEvent{
 				Type:       "event",
 				Timestamp:  k8sEvent.CreationTimestamp.Format("2006-01-02 15:04:05"),
-				ObjectName: k8sEvent.InvolvedObject.Name,
-				Message:    k8sEvent.Message,
+				ObjectName: fmt.Sprintf("%s/%s", kind, name),
+				Message:    message,
 			}
 
 			w.log.Debug().Msg(eventMessage.String())
@@ -370,15 +466,20 @@ func (w *Workspace) watchEvents(ctx context.Context, podName string,
 // isCriticalError determines if an event message indicates a critical error and returns a user-friendly error
 func (w *Workspace) isCriticalError(message string) error {
 	criticalErrors := map[string]string{
-		"Failed to pull image":    "Unable to download the workspace image.",
-		"ImagePullBackOff":        "Unable to download the workspace image.",
-		"ErrImagePull":            "Unable to download the workspace image.",
-		"InvalidImageName":        "The workspace image name is invalid.",
-		"image not found":         "The specified workspace image was not found in the registry.",
-		"authentication required": "Authentication failed when accessing the workspace image.",
-		"insufficient memory":     "Not enough memory available to run the workspace.",
-		"insufficient cpu":        "Not enough CPU resources available to run the workspace.",
-		"no nodes available":      "No suitable servers are available to run the workspace.",
+		"Failed to pull image":                     "Unable to download the workspace image.",
+		"ImagePullBackOff":                         "Unable to download the workspace image.",
+		"ErrImagePull":                             "Unable to download the workspace image.",
+		"InvalidImageName":                         "The workspace image name is invalid.",
+		"image not found":                          "The specified workspace image was not found in the registry.",
+		"authentication required":                  "Authentication failed when accessing the workspace image.",
+		"insufficient memory":                      "Not enough memory available to run the workspace.",
+		"insufficient cpu":                         "Not enough CPU resources available to run the workspace.",
+		"no nodes available":                       "No suitable servers are available to run the workspace.",
+		"unbound immediate persistentvolumeclaims": "Workspace is waiting for storage (PVCs are unbound). Check StorageClass/provisioner and PV availability.",
+		"failedbinding":                            "Workspace storage claim could not be bound. Check PV capacity/access modes and StorageClass.",
+		"failed to provision volume":               "Workspace storage could not be provisioned. Check the CSI provisioner and StorageClass parameters.",
+		"provisioningfailed":                       "Workspace storage provisioning failed. Check CSI controller logs and StorageClass.",
+		"failed scheduling":                        "Workspace could not be scheduled (often due to unbound PVCs or insufficient resources).",
 	}
 
 	messageLower := strings.ToLower(message)
