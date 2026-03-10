@@ -63,7 +63,7 @@ data:
       {{- if ($docker.enabled | default false) }}
       # supplementary groups
       groups:
-        - name: k8shell-docker
+        - name: docker
           gid: {{ if ne ($docker.subgid | default 0 | int) 0 }}{{ add ($docker.subgid | default 0 | int) ($docker.groupId | default 0 | int) -1 }}{{ else }}{{ $docker.groupId | default 0 | int }}{{ end }}
       {{- end }}
 
