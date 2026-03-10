@@ -1,3 +1,6 @@
+{{- $docker := .Values.docker | default dict -}}
+{{- $k8shelld := .Values.k8shelld | default dict -}}
+
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -33,7 +36,7 @@ data:
 
         audience: k8shelld
         allowed:
-          {{- $conn := .Values.k8shelld.connection -}}
+          {{- $conn := $k8shelld.connection -}}
           {{- $out := dict "ns" .Values.__namespace__ "sa" "ssh-proxy" -}}
           {{- if $conn }}
             {{- if $conn.allowAnyNS }}
@@ -57,11 +60,11 @@ data:
       shell: {{ .Values.shell }}
       sudo: {{ .Values.sudo }}
 
-      {{- if .Values.docker.enabled }}
+      {{- if ($docker.enabled | default false) }}
       # supplementary groups
       groups:
         - name: k8shell-docker
-          gid: {{ if and (ne .Values.docker.subgid 0) }}{{ add .Values.docker.subgid .Values.docker.groupId -1 }}{{ else }}{{ .Values.docker.groupId }}{{ end }}
+          gid: {{- $subgid := ($docker.subgid | default 0 | int) -}}{{- $groupId := ($docker.groupId | default 0 | int) -}}{{- if ne $subgid 0 -}}{{ add $subgid $groupId -1 }}{{- else -}}{{ $groupId }}{{- end }}
       {{- end }}
 
     {{- if .Values.portForwarding }}
@@ -80,18 +83,18 @@ data:
     terminateOrphans:
       enabled: true
       checkInterval: 5
-      {{- if .Values.k8shelld.ignoreOrphans }}
+      {{- if $k8shelld.ignoreOrphans }}
       exclude:
-      {{- range .Values.k8shelld.ignoreOrphans }}
+      {{- range $k8shelld.ignoreOrphans }}
       - {{ . }}
       {{- end }}
       {{- end }}
     
     # docker settings
     docker:
-      enabled: {{ .Values.docker.enabled }}
-      createDockerSockSymlink: {{ .Values.docker.enabled }}
-      storages:{{- include "workspace.storages" (dict "storages" .Values.docker.storages) | nindent 8 }}
+      enabled: {{ $docker.enabled | default false }}
+      createDockerSockSymlink: {{ $docker.enabled | default false }}
+      storages:{{- include "workspace.storages" (dict "storages" $docker.storages) | nindent 8 }}
 
     storages:{{- include "workspace.storages" (dict "storages" .Values.storages) | nindent 6 }}
 

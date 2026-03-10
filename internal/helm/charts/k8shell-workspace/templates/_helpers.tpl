@@ -147,10 +147,10 @@ Usage:
 */ -}}
 {{- define "workspace.storages" -}}
 {{- $storages := list -}}
-{{- range $name, $s := .storages }}
-  {{- if $s.enabled }}
+{{- range $name, $s := (.storages | default dict) }}
+  {{- if and $s (kindIs "map" $s) ($s.enabled | default false) }}
     {{- $ro := false -}}
-    {{- if hasKey $s "readonly" -}}
+    {{- if and (kindIs "map" $s) (hasKey $s "readonly") -}}
       {{- $ro = ($s.readonly | default false) -}}
     {{- end -}}
     {{- $storages = append $storages (dict

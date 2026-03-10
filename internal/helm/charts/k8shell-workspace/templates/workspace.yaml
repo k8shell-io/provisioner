@@ -1,3 +1,5 @@
+{{- $docker := .Values.docker | default dict -}}
+
 apiVersion: v1
 kind: Pod
 metadata:
@@ -109,11 +111,13 @@ spec:
       - name: main-volume
         mountPath: /usr/local/k8shell/system
         readOnly: true
+      {{- if .Values.storages }}
       {{- range $storageName, $storage := .Values.storages }}
-      {{- if $storage.enabled }}
+      {{- if and $storage (kindIs "map" $storage) ($storage.enabled | default false) }}
       - name: storage-{{ $storageName }}
         mountPath: {{ $storage.path }}
-        readOnly: {{ $storage.readonly }}
+        readOnly: {{ $storage.readonly | default false }}
+      {{- end }}
       {{- end }}
       {{- end }}
       {{- if .Values.extFiles }}
@@ -123,7 +127,7 @@ spec:
         subPath: {{ $path | replace "/" "__" }}
       {{- end }}
       {{- end }}
-      {{- if .Values.docker.enabled }}
+      {{- if ($docker.enabled | default false) }}
       - name: docker-sock
         mountPath: /var/run/docker
       {{- end }}
@@ -134,9 +138,9 @@ spec:
       {{- end }}
 
     #### docker container
-    {{- if .Values.docker.enabled }}
+    {{- if ($docker.enabled | default false) }}
     - name: k8shell-docker
-      image: {{ .Values.docker.image }}
+      image: {{ $docker.image }}
       securityContext:
         privileged: true
       args:
@@ -145,7 +149,7 @@ spec:
         - --group=$(DOCKER_GROUP_GID)
       env:
         - name: DOCKER_GROUP_GID
-          value: "{{ .Values.docker.groupId }}"
+          value: "{{ $docker.groupId }}"
       volumeMounts:
         - name: docker-sock
           mountPath: /var/run/docker
@@ -155,24 +159,26 @@ spec:
           subPath: registry-ca.pem
       {{- end }}
 
-      {{- if .Values.docker.parentStorages }}    
+      {{- if and ($docker.parentStorages | default false) .Values.storages }}    
       {{- range $storageName, $storage := .Values.storages }}
-      {{- if $storage.enabled }}
+      {{- if and $storage (kindIs "map" $storage) ($storage.enabled | default false) }}
         - name: storage-{{ $storageName }}
           mountPath: {{ $storage.path }}
-          readOnly: {{ $storage.readonly }}
+          readOnly: {{ $storage.readonly | default false }}
       {{- end }}
       {{- end }}
       {{- end }}
-      {{- range $storageName, $storage := .Values.docker.storages }}
-      {{- if $storage.enabled }}
+      {{- if $docker.storages }}
+      {{- range $storageName, $storage := $docker.storages }}
+      {{- if and $storage (kindIs "map" $storage) ($storage.enabled | default false) }}
         - name: storage-docker-{{ $storageName }}
           mountPath: {{ $storage.path }}
-          readOnly: {{ $storage.readonly }}
+          readOnly: {{ $storage.readonly | default false }}
       {{- end }}
       {{- end }}
-      {{- if .Values.docker.extFiles }}
-      {{- range $path, $content := .Values.docker.extFiles }}
+      {{- end }}
+      {{- if $docker.extFiles }}
+      {{- range $path, $content := $docker.extFiles }}
         - name: docker-ext-files-volume
           mountPath: {{ $path }}
           subPath: {{ $path | replace "/" "__" }}
@@ -203,10 +209,11 @@ spec:
         path: __init_{{ printf "%02d" (add $index 1) }}_{{ $key | replace "&" "__bg" | replace "@" "__flag" }}
           {{- end }}
         {{- end }}
+  {{- if .Values.storages }}
   {{- range $storageName, $storage := .Values.storages }}
-  {{- if $storage.enabled }}
+  {{- if and $storage (kindIs "map" $storage) ($storage.enabled | default false) }}
   - name: storage-{{ $storageName }}
-    {{- if $storage.memory }}
+    {{- if ($storage.memory | default false) }}
     emptyDir:
       medium: Memory
       sizeLimit: {{ $storage.size }}
@@ -216,11 +223,14 @@ spec:
     {{- end }}
   {{- end }}
   {{- end }}
-  {{- range $storageName, $storage := .Values.docker.storages }}
-  {{- if $storage.enabled }}
+  {{- end }}
+  {{- if $docker.storages }}
+  {{- range $storageName, $storage := $docker.storages }}
+  {{- if and $storage (kindIs "map" $storage) ($storage.enabled | default false) }}
   - name: storage-docker-{{ $storageName }}
     persistentVolumeClaim:
       claimName: pvc-{{ $.Values.__workspace__ }}-docker-{{ $storageName }}
+  {{- end }}
   {{- end }}
   {{- end }}
   {{- if .Values.extFiles }}
@@ -233,15 +243,15 @@ spec:
           path: {{ $path | replace "/" "__" }}
         {{- end }}
   {{- end }}
-  {{- if .Values.docker.enabled }}
+  {{- if ($docker.enabled | default false) }}
   - name: docker-sock
     emptyDir: {}  
-  {{- if .Values.docker.extFiles }}
+  {{- if $docker.extFiles }}
   - name: dockker-ext-files-volume
     configMap:
       name: {{ .Values.__workspace__ }}-docker-ext-files
       items:
-        {{- range $path, $content := .Values.docker.extFiles }}
+        {{- range $path, $content := $docker.extFiles }}
         - key: {{ $path | replace "/" "__" | quote }}
           path: {{ $path | replace "/" "__" }}
         {{- end }}
