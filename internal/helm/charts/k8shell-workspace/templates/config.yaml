@@ -94,9 +94,21 @@ data:
     docker:
       enabled: {{ $docker.enabled | default false }}
       createDockerSockSymlink: {{ $docker.enabled | default false }}
-      storages:{{- include "workspace.storages" (dict "storages" $docker.storages) | nindent 8 }}
+      {{- $dockerStoragesYaml := include "workspace.storages" (dict "storages" $docker.storages) | trim }}
+      {{- if eq $dockerStoragesYaml "[]" }}
+      storages: []
+      {{- else }}
+      storages:
+{{ $dockerStoragesYaml | nindent 8 }}
+      {{- end }}
 
-    storages:{{- include "workspace.storages" (dict "storages" .Values.storages) | nindent 6 }}
+    {{- $storagesYaml := include "workspace.storages" (dict "storages" .Values.storages) | trim }}
+    {{- if eq $storagesYaml "[]" }}
+    storages: []
+    {{- else }}
+    storages:
+{{ $storagesYaml | nindent 6 }}
+    {{- end }}
 
     # apps
     # global switch to enable/disable apps
