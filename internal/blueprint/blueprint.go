@@ -80,6 +80,7 @@ func TestScope() *BlueprintScope {
 			Name:        "testblueprint",
 			RepoName:    "testrepo",
 			RepoOwner:   "testowner",
+			RepoRef:     "testref",
 			RepoAddress: "testaddress",
 		},
 		User: &models.User{
