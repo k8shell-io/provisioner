@@ -381,6 +381,8 @@ func (p *ProvisionerService) ProvisionWorkspaceStream(
 			}
 
 		case status := <-done:
+			p.log.Debug().Msgf("Provisioning process completed for workspace %s with final status: %s",
+				workspace.Name, status.Status)
 			if status != nil {
 				if err := p.sendProvisionEvent(stream, job, &provisionerpb.ProvisionEvent{
 					Type:       string(models.WorkspaceStreamEventTypeStatus),
@@ -398,6 +400,8 @@ func (p *ProvisionerService) ProvisionWorkspaceStream(
 			return nil
 
 		case err := <-errorChan:
+			p.log.Debug().Msgf("Provisioning process completed for workspace %s with error: %v",
+				workspace.Name, err)
 			if err != nil {
 				if err := p.sendProvisionEvent(stream, job, &provisionerpb.ProvisionEvent{
 					Type:       string(models.WorkspaceStreamEventTypeStatus),
