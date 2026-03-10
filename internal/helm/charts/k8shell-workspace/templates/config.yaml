@@ -64,7 +64,9 @@ data:
       # supplementary groups
       groups:
         - name: k8shell-docker
-          gid: {{- $subgid := ($docker.subgid | default 0 | int) -}}{{- $groupId := ($docker.groupId | default 0 | int) -}}{{- if ne $subgid 0 -}}{{ add $subgid $groupId -1 }}{{- else -}}{{ $groupId }}{{- end }}
+          {{- $subgid := ($docker.subgid | default 0 | int) -}}
+          {{- $groupId := ($docker.groupId | default 0 | int) -}}
+          gid: {{ if ne $subgid 0 }}{{ add $subgid $groupId -1 }}{{ else }}{{ $groupId }}{{ end }}
       {{- end }}
 
     {{- if .Values.portForwarding }}
