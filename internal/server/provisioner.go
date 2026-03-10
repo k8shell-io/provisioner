@@ -381,18 +381,20 @@ func (p *ProvisionerService) ProvisionWorkspaceStream(
 			}
 
 		case status := <-done:
+			st := models.WorkspaceStatusUnknown
+			if status != nil {
+				st = status.Status
+			}
 			p.log.Debug().Msgf("Provisioning process completed for workspace %s with final status: %s",
 				workspace.Name, status.Status)
-			if status != nil {
-				if err := p.sendProvisionEvent(stream, job, &provisionerpb.ProvisionEvent{
-					Type:       string(models.WorkspaceStreamEventTypeStatus),
-					Timestamp:  time.Now().Format("2006-01-02 15:04:05"),
-					ObjectName: workspace.Name,
-					Status:     string(status.Status),
-					Message:    status.Message,
-				}); err != nil {
-					p.log.Error().Err(err).Msg("Failed to send provision status event")
-				}
+			if err := p.sendProvisionEvent(stream, job, &provisionerpb.ProvisionEvent{
+				Type:       string(models.WorkspaceStreamEventTypeStatus),
+				Timestamp:  time.Now().Format("2006-01-02 15:04:05"),
+				ObjectName: workspace.Name,
+				Status:     string(st),
+				Message:    status.Message,
+			}); err != nil {
+				p.log.Error().Err(err).Msg("Failed to send provision status event")
 			}
 			if job != nil {
 				job.SetStatus(models.ProvisionJobCompleted)
