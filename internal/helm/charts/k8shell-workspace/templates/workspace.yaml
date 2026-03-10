@@ -8,6 +8,9 @@ metadata:
     workspace.k8shell.io/splash: {{ .Values.splash | b64enc | quote }}
     {{- end }}
     k8shell.io/manifest-hash: {{ .Values.__manifesthash__ | quote }}
+    {{- if .Values.__identity__ }}
+    k8shell.io/identity: {{ .Values.__identity__ | quote }}
+    {{- end }}
   labels:
     {{- include "workspace.workspaceLabels" . | nindent 4 }} 
 spec:

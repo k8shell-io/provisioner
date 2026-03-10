@@ -4,9 +4,11 @@
   {{- include "pvc-template" (dict "name" $storageName "storage" $storage "pvcPrefix" "" "ctx" $ ) }}
 {{- end }}
 {{- end }}
+{{-if .Values.docker.enabled }}
 {{- range $storageName, $storage := .Values.docker.storages }}
 {{- if $storage.enabled }}
 ---
   {{- include "pvc-template" (dict "name" $storageName "storage" $storage "pvcPrefix" "docker-" "ctx" $ ) }}
+{{- end }}
 {{- end }}
 {{- end }}
