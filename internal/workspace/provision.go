@@ -291,6 +291,8 @@ func (w *Workspace) waitForPodRunning(ctx context.Context, startTime time.Time,
 }
 
 // watchEvents watches and reports Kubernetes events for the pod
+// It captures events related to the pod and its PVCs to provide real-time feedback
+// and detect critical errors during provisioning
 func (w *Workspace) watchEvents(ctx context.Context, podName string,
 	criticalErrorChan chan<- error, opts *ProvisionOptions) {
 
@@ -309,7 +311,8 @@ func (w *Workspace) watchEvents(ctx context.Context, podName string,
 			Limit:         1,
 		})
 		if err != nil {
-			w.log.Warn().Err(err).Str("selector", fieldSelector).Msg("Failed to list events for resourceVersion; watching from beginning")
+			w.log.Warn().Err(err).Str("selector",
+				fieldSelector).Msg("Failed to list events for resourceVersion; watching from beginning")
 		}
 
 		listOptions := metav1.ListOptions{
@@ -352,6 +355,7 @@ func (w *Workspace) watchEvents(ctx context.Context, podName string,
 					if !ok || k8sEvent == nil {
 						continue
 					}
+
 					select {
 					case eventCh <- k8sEvent:
 					case <-ctx.Done():
@@ -466,20 +470,34 @@ func (w *Workspace) watchEvents(ctx context.Context, podName string,
 // isCriticalError determines if an event message indicates a critical error and returns a user-friendly error
 func (w *Workspace) isCriticalError(message string) error {
 	criticalErrors := map[string]string{
-		"Failed to pull image":                     "Unable to download the workspace image.",
-		"ImagePullBackOff":                         "Unable to download the workspace image.",
-		"ErrImagePull":                             "Unable to download the workspace image.",
-		"InvalidImageName":                         "The workspace image name is invalid.",
-		"image not found":                          "The specified workspace image was not found in the registry.",
-		"authentication required":                  "Authentication failed when accessing the workspace image.",
-		"insufficient memory":                      "Not enough memory available to run the workspace.",
-		"insufficient cpu":                         "Not enough CPU resources available to run the workspace.",
-		"no nodes available":                       "No suitable servers are available to run the workspace.",
-		"unbound immediate persistentvolumeclaims": "Workspace is waiting for storage (PVCs are unbound). Check StorageClass/provisioner and PV availability.",
-		"failedbinding":                            "Workspace storage claim could not be bound. Check PV capacity/access modes and StorageClass.",
-		"failed to provision volume":               "Workspace storage could not be provisioned. Check the CSI provisioner and StorageClass parameters.",
-		"provisioningfailed":                       "Workspace storage provisioning failed. Check CSI controller logs and StorageClass.",
-		"failed scheduling":                        "Workspace could not be scheduled (often due to unbound PVCs or insufficient resources).",
+		// workspace image pull errors
+		"Failed to pull image":    "Unable to download the workspace image (code 1).",
+		"ImagePullBackOff":        "Unable to download the workspace image (code 2).",
+		"ErrImagePull":            "Unable to download the workspace image (code 3).",
+		"InvalidImageName":        "The workspace image name is invalid (code 4).",
+		"image not found":         "The workspace image was not found in the registry (code 5).",
+		"authentication required": "Authentication failed when accessing the workspace image (code 6).",
+
+		// resource issues
+		"insufficient memory": "Not enough memory available to run the workspace (code 7).",
+		"insufficient cpu":    "Not enough CPU resources available to run the workspace (code 8).",
+		"no nodes available":  "No suitable servers are available to run the workspace (code 9).",
+
+		// storage issues
+		"unbound immediate persistentvolumeclaims": "Workspace is waiting for storage (code 10).",
+		// (PVCs are unbound). Check StorageClass/provisioner and PV availability.
+
+		"failedbinding": "Workspace storage could not be provisioned (code 11).",
+		//  Check PV capacity/access modes and StorageClass.
+
+		"failed to provision volume": "Workspace storage could not be provisioned (code 12).",
+		// Check CSI controller logs and StorageClass.
+
+		"provisioningfailed": "Workspace storage provisioning error (code 13).",
+		// Check CSI controller logs and StorageClass.
+
+		"failed scheduling": "Workspace could not be scheduled (code 14).",
+		// often due to unbound PVCs or insufficient resources
 	}
 
 	messageLower := strings.ToLower(message)
