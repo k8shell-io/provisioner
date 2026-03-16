@@ -67,6 +67,12 @@ data:
           gid: {{ if ne ($docker.subgid | default 0 | int) 0 }}{{ add ($docker.subgid | default 0 | int) ($docker.groupId | default 0 | int) -1 }}{{ else }}{{ $docker.groupId | default 0 | int }}{{ end }}
       {{- end }}
 
+    {{- if .Values.splash }}
+    # splash message shown to the user on workspace start
+    splash: |
+{{ .Values.splash | indent 6 }}
+    {{- end }}
+
     {{- if .Values.portForwarding }}
     # port forwarding rules
     portForwarding:
