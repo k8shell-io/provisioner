@@ -51,22 +51,6 @@ data:
           - namespace: {{ .Values.__namespace__ | quote }}
             serviceAccount: {{ "api-server" | quote }}
 
-    # workspace user
-    user:
-      username: {{ .Values.__username__ }}
-      fullname: {{ .Values.__user__.fullname }}
-      uid: {{ .Values.__user__.uid }}
-      gid: {{ .Values.__user__.gid }}
-      shell: {{ .Values.shell }}
-      sudo: {{ .Values.sudo }}
-
-      {{- if ($docker.enabled | default false) }}
-      # supplementary groups
-      groups:
-        - name: docker
-          gid: {{ if ne ($docker.subgid | default 0 | int) 0 }}{{ add ($docker.subgid | default 0 | int) ($docker.groupId | default 0 | int) -1 }}{{ else }}{{ $docker.groupId | default 0 | int }}{{ end }}
-      {{- end }}
-
     {{- if .Values.splash }}
     # splash message shown to the user on workspace start
     splash: |
@@ -151,3 +135,9 @@ data:
     {{- end }}
     {{- end }}
     {{- end }}
+
+    # identity token verification
+    identity:
+      tokenPath: {{ .Values.__identityVerifier__.tokenPath }}
+      publicKeyPath: {{ .Values.__identityVerifier__.publicKeyPath }}
+      signingMethod: {{ .Values.__identityVerifier__.signingMethod }}
