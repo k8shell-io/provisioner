@@ -136,6 +136,9 @@ spec:
         mountPath: /etc/tls/k8shelld
         readOnly: true
       {{- end }}
+      - name: identity-token-volume
+        mountPath: /run/secrets/identity-token
+        readOnly: true
 
     #### docker container
     {{- if ($docker.enabled | default false) }}
@@ -270,6 +273,9 @@ spec:
     secret:
       secretName: {{ .Values.__workspace__ }}-tls
   {{- end }}
+  - name: identity-token-volume
+    secret:
+      secretName: identity-token-{{ .Values.__username__ }}
 
   {{- if .Values.affinity }}
   affinity:
