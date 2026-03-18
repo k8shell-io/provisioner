@@ -708,10 +708,11 @@ func (p *ProvisionerService) DeleteWorkspace(ctx context.Context,
 
 	if req.DelaySeconds > 0 {
 		// asynchronously delete the workspace after the specified delay and release the lock when done
+		// Use WithoutCancel so the goroutine outlives the request context.
+		bgCtx := context.WithoutCancel(ctx)
 		go func() {
 			defer func() {
-				unlockCtx := context.Background()
-				if unlockErr := workspaceLock.Release(unlockCtx); unlockErr != nil {
+				if unlockErr := workspaceLock.Release(bgCtx); unlockErr != nil {
 					p.log.Error().Err(unlockErr).Msgf("Failed to release lock after deleting workspace %s", name)
 				}
 			}()
@@ -719,7 +720,7 @@ func (p *ProvisionerService) DeleteWorkspace(ctx context.Context,
 			time.Sleep(time.Duration(req.DelaySeconds) * time.Second)
 			p.log.Debug().Msgf("Starting async deletion of workspace %s", name)
 
-			err := w.Uninstall(context.Background(), time.Duration(10)*time.Second, false, false)
+			err := w.Uninstall(bgCtx, time.Duration(10)*time.Second, false, false)
 			if err != nil {
 				p.log.Error().Err(err).Msgf("Failed to delete workspace %s", name)
 			} else {
@@ -733,14 +734,14 @@ func (p *ProvisionerService) DeleteWorkspace(ctx context.Context,
 	}
 
 	// synchronously delete the workspace and release the lock when done
+	bgCtx := context.WithoutCancel(ctx)
 	defer func() {
-		unlockCtx := context.Background()
-		if unlockErr := workspaceLock.Release(unlockCtx); unlockErr != nil {
+		if unlockErr := workspaceLock.Release(bgCtx); unlockErr != nil {
 			p.log.Error().Err(unlockErr).Msgf("Failed to release lock after deleting workspace %s", name)
 		}
 	}()
 
-	err = w.Uninstall(context.Background(), time.Duration(10)*time.Second, false, false)
+	err = w.Uninstall(bgCtx, time.Duration(10)*time.Second, false, false)
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "Failed to delete workspace %s: %v", name, err)
 	}
