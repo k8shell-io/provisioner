@@ -360,6 +360,8 @@ func (w *Workspace) Values() (map[string]interface{}, error) {
 	values["__apiserver__"] = map[string]interface{}{
 		"enabled": w.config.K8shellCapabilities.APIServerEnabled,
 	}
+	values["__identityPublicKey__"] = w.config.IdentityVerifier.PublicKeyFile != ""
+
 	return values, nil
 }
 

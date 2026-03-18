@@ -125,5 +125,17 @@ func NewConfig(configFile string) (*Config, error) {
 	ClusterDomain = cfg.ClusterDomain
 
 	cfg.BaseDir = filepath.Dir(configFile)
+
+	method := cfg.IdentityVerifier.SigningMethod
+	if method == "" {
+		return nil, fmt.Errorf("identityVerifier.signingMethod is required and must be es256 or rs256")
+	}
+	if method != "es256" && method != "rs256" {
+		return nil, fmt.Errorf("identityVerifier.signingMethod %q is not supported; must be es256 or rs256", method)
+	}
+	if cfg.IdentityVerifier.PublicKeyFile == "" {
+		return nil, fmt.Errorf("identityVerifier.publicKeyFile is required")
+	}
+
 	return &cfg, nil
 }

@@ -279,18 +279,16 @@ func (p *ProvisionerService) ProvisionWorkspaceStream(
 		return p.sendProvisionHandshakeErr(stream, "", err)
 	}
 
-	if p.server.tokenVerifier != nil {
-		tokenResp, err := p.server.Identity.GetUserAccessToken(ctx, &identitypb.GetUserAccessTokenRequest{
-			Username: canUserStr.Identity.Username,
-		})
-		if err != nil {
-			return p.sendProvisionHandshakeErr(stream, workspace.Name, status.Errorf(codes.Unauthenticated,
-				"failed to retrieve identity token for user %s: %v", canUserStr.Identity.Username, err))
-		}
-		if _, err := p.server.tokenVerifier.VerifyToken(tokenResp.AccessToken); err != nil {
-			return p.sendProvisionHandshakeErr(stream, workspace.Name, status.Errorf(codes.Unauthenticated,
-				"identity token for user %s is invalid: %v", canUserStr.Identity.Username, err))
-		}
+	tokenResp, err := p.server.Identity.GetUserAccessToken(ctx, &identitypb.GetUserAccessTokenRequest{
+		Username: canUserStr.Identity.Username,
+	})
+	if err != nil {
+		return p.sendProvisionHandshakeErr(stream, workspace.Name, status.Errorf(codes.Unauthenticated,
+			"failed to retrieve identity token for user %s: %v", canUserStr.Identity.Username, err))
+	}
+	if _, err := p.server.tokenVerifier.VerifyToken(tokenResp.AccessToken); err != nil {
+		return p.sendProvisionHandshakeErr(stream, workspace.Name, status.Errorf(codes.Unauthenticated,
+			"identity token for user %s is invalid: %v", canUserStr.Identity.Username, err))
 	}
 
 	exists, st, err := workspace.ExistsAndRunning(ctx)

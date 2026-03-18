@@ -139,6 +139,11 @@ spec:
       - name: identity-token-volume
         mountPath: /run/secrets/identity-token
         readOnly: true
+      {{- if .Values.__identityPublicKey__ }}
+      - name: identity-pubkey-volume
+        mountPath: /run/secrets/identity-public-key
+        readOnly: true
+      {{- end }}
 
     #### docker container
     {{- if ($docker.enabled | default false) }}
@@ -276,6 +281,11 @@ spec:
   - name: identity-token-volume
     secret:
       secretName: identity-token-{{ .Values.__username__ }}
+  {{- if .Values.__identityPublicKey__ }}
+  - name: identity-pubkey-volume
+    configMap:
+      name: identity-pubkey
+  {{- end }}
 
   {{- if .Values.affinity }}
   affinity:

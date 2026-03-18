@@ -86,17 +86,23 @@ func NewServer(configFile string) (*Server, error) {
 		return nil, fmt.Errorf("failed to create identity client: %w", err)
 	}
 
-	if server.config.IdentityVerifier.PublicKeyFile != "" || server.config.IdentityVerifier.SecretKey != "" {
-		server.tokenVerifier, err = authz.NewJWTVerifier(server.config.IdentityVerifier)
-		if err != nil {
-			return nil, fmt.Errorf("failed to create identity token verifier: %w", err)
-		}
+	server.tokenVerifier, err = authz.NewJWTVerifier(server.config.IdentityVerifier)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create identity token verifier: %w", err)
 	}
 
 	server.log.Info().Msg("Creating Helm client")
 	server.helm, err = helm.NewClient(server.config.TargetNamespace, server.config.DefaultRegistry)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create Helm client: %w", err)
+	}
+
+	if pkFile := server.config.IdentityVerifier.PublicKeyFile; pkFile != "" {
+		pkContent, err := os.ReadFile(pkFile)
+		if err != nil {
+			return nil, fmt.Errorf("failed to read identity public key file %s: %w", pkFile, err)
+		}
+		server.helm.IdentityPublicKey = string(pkContent)
 	}
 
 	server.log.Info().Msg("Creating gRPC service")

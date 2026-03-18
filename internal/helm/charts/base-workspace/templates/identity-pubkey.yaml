@@ -1,0 +1,10 @@
+{{- if .Values.__identityPublicKey__ }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: identity-pubkey
+  namespace: {{ .Release.Namespace }}
+data:
+  identity_public.pem: |
+{{ .Values.__identityPublicKey__ | indent 4 }}
+{{- end }}

@@ -30,12 +30,13 @@ const (
 )
 
 type Client struct {
-	settings        *cli.EnvSettings
-	log             *zerolog.Logger
-	kubeClient      kubernetes.Interface
-	targetNamespace string
-	charts          map[string]*chart.Chart
-	Registry        config.DefaultRegistry
+	settings          *cli.EnvSettings
+	log               *zerolog.Logger
+	kubeClient        kubernetes.Interface
+	targetNamespace   string
+	charts            map[string]*chart.Chart
+	Registry          config.DefaultRegistry
+	IdentityPublicKey string
 }
 
 type InstallOptions struct {
@@ -49,7 +50,6 @@ type InstallOptions struct {
 	AppVersion      string
 }
 
-// NewClient creates a new Helm client
 func NewClient(targetNamespace string, registry config.DefaultRegistry) (*Client, error) {
 	settings := cli.New()
 
@@ -102,15 +102,6 @@ func (c *Client) EnsureBase(ctx context.Context) error {
 		return fmt.Errorf("target namespace is not set")
 	}
 
-	r, err := c.ListWithSelector(c.targetNamespace, "app.kubernetes.io/name="+BASE_WORKSPACE_CHART_NAME)
-	if err != nil {
-		if !errors.IsNotFound(err) {
-			return fmt.Errorf("failed to list releases in namespace %s: %w", c.targetNamespace, err)
-		}
-	} else if len(r) > 0 {
-		return nil
-	}
-
 	labels := map[string]string{
 		"app.kubernetes.io/name":       BASE_WORKSPACE_CHART_NAME,
 		"app.kubernetes.io/instance":   BASE_WORKSPACE_CHART_NAME,
@@ -120,10 +111,28 @@ func (c *Client) EnsureBase(ctx context.Context) error {
 	}
 
 	values := map[string]interface{}{
-		"__registry__": c.Registry.ToValues(),
+		"__registry__":          c.Registry.ToValues(),
+		"__identityPublicKey__": c.IdentityPublicKey,
 	}
 
-	err = c.Install(ctx, BASE_WORKSPACE_CHART_NAME, InstallOptions{
+	r, err := c.ListWithSelector(c.targetNamespace, "app.kubernetes.io/name="+BASE_WORKSPACE_CHART_NAME)
+	if err != nil {
+		if !errors.IsNotFound(err) {
+			return fmt.Errorf("failed to list releases in namespace %s: %w", c.targetNamespace, err)
+		}
+	}
+
+	if len(r) > 0 {
+		return c.Upgrade(ctx, InstallOptions{
+			ReleaseName: BASE_WORKSPACE_CHART_NAME,
+			ChartName:   BASE_WORKSPACE_CHART_NAME,
+			Values:      values,
+			Wait:        true,
+			Labels:      labels,
+		})
+	}
+
+	return c.Install(ctx, BASE_WORKSPACE_CHART_NAME, InstallOptions{
 		ReleaseName:     BASE_WORKSPACE_CHART_NAME,
 		ChartName:       BASE_WORKSPACE_CHART_NAME,
 		CreateNamespace: false,
@@ -131,8 +140,6 @@ func (c *Client) EnsureBase(ctx context.Context) error {
 		Wait:            true,
 		Labels:          labels,
 	})
-
-	return err
 }
 
 func (c *Client) Template(ctx context.Context, chartName string, opts InstallOptions) (string, error) {
