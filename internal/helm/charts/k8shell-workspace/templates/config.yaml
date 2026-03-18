@@ -138,6 +138,6 @@ data:
 
     # identity token verification
     identity:
-      tokenPath: {{ .Values.__identityVerifier__.tokenPath }}
-      publicKeyPath: {{ .Values.__identityVerifier__.publicKeyPath }}
-      signingMethod: {{ .Values.__identityVerifier__.signingMethod }}
+      tokenPath: {{ .Values.__jwtVerifier__.tokenPath }}
+      publicKeyPath: {{ .Values.__jwtVerifier__.publicKeyPath }}
+      signingMethod: {{ .Values.__jwtVerifier__.signingMethod }}

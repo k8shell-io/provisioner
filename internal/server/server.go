@@ -101,7 +101,7 @@ func NewServer(configFile string) (*Server, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to get public key for JWT verifier: %w", err)
 	}
-	server.helm.IdentityPublicKey = pk
+	server.helm.JWTVerifierPublicKey = pk
 
 	server.log.Info().Msg("Creating gRPC service")
 	server.grpc, err = gapi.NewServer(&server.config.GrpcConfig, true)

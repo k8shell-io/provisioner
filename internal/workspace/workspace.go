@@ -360,10 +360,9 @@ func (w *Workspace) Values() (map[string]interface{}, error) {
 	values["__apiserver__"] = map[string]interface{}{
 		"enabled": w.config.K8shellCapabilities.APIServerEnabled,
 	}
-	values["__identityPublicKey__"] = w.config.JWTVerifier.PublicKeyFile != ""
-	values["__identityVerifier__"] = map[string]interface{}{ // #nosec G101 -- these are file paths, not credentials
+	values["__jwtVerifier__"] = map[string]interface{}{ // #nosec G101 -- these are file paths, not credentials
 		"tokenPath":     "/run/secrets/identity-token/token",
-		"publicKeyPath": "/run/secrets/identity-public-key/identity_public.pem",
+		"publicKeyPath": "/run/secrets/jwt-verifier/public-key.pem",
 		"signingMethod": w.config.JWTVerifier.SigningMethod,
 	}
 

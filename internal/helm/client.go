@@ -30,13 +30,13 @@ const (
 )
 
 type Client struct {
-	settings          *cli.EnvSettings
-	log               *zerolog.Logger
-	kubeClient        kubernetes.Interface
-	targetNamespace   string
-	charts            map[string]*chart.Chart
-	Registry          config.DefaultRegistry
-	IdentityPublicKey string
+	settings             *cli.EnvSettings
+	log                  *zerolog.Logger
+	kubeClient           kubernetes.Interface
+	targetNamespace      string
+	charts               map[string]*chart.Chart
+	Registry             config.DefaultRegistry
+	JWTVerifierPublicKey string
 }
 
 type InstallOptions struct {
@@ -111,8 +111,8 @@ func (c *Client) EnsureBase(ctx context.Context) error {
 	}
 
 	values := map[string]interface{}{
-		"__registry__":          c.Registry.ToValues(),
-		"__identityPublicKey__": c.IdentityPublicKey,
+		"__registry__":             c.Registry.ToValues(),
+		"__jwtVerifierPublicKey__": c.JWTVerifierPublicKey,
 	}
 
 	r, err := c.ListWithSelector(c.targetNamespace, "app.kubernetes.io/name="+BASE_WORKSPACE_CHART_NAME)
