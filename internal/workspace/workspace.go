@@ -12,7 +12,7 @@ import (
 	log "github.com/k8shell-io/common/pkg/logger"
 	"github.com/k8shell-io/common/pkg/models"
 	identity "github.com/k8shell-io/identity/pkg/api"
-	"github.com/k8shell-io/identity/pkg/api/identitypb"
+	"github.com/k8shell-io/identity/pkg/api/typespb"
 	"github.com/k8shell-io/provisioner/internal/config"
 	"github.com/k8shell-io/provisioner/internal/helm"
 	"github.com/rs/zerolog"
@@ -30,7 +30,7 @@ const WORKSPACE_DEFAULT_PAGE_SIZE = 20
 type Workspace struct {
 	config   *config.Config
 	client   *helm.Client
-	identify *identity.Client
+	identify *identity.IdentityClient
 
 	Name          string
 	JobId         string
@@ -231,7 +231,7 @@ func NewWorkspace(
 	user *models.User,
 	userStr *models.CanonicalUserStr,
 	helmClient *helm.Client,
-	identityClient *identity.Client,
+	identityClient *identity.IdentityClient,
 	config *config.Config,
 ) (*Workspace, error) {
 
@@ -249,7 +249,7 @@ func NewWorkspace(
 
 // NewWorkspaceFromHelmRelease creates a workspace instance from an existing Helm release
 func NewWorkspaceFromHelmRelease(ctx context.Context, name string, helmClient *helm.Client,
-	identityClient *identity.Client, config *config.Config) (*Workspace, error) {
+	identityClient *identity.IdentityClient, config *config.Config) (*Workspace, error) {
 
 	release, err := FindWorkspaceHelmRelease(ctx, helmClient, name)
 	if err != nil {
@@ -258,7 +258,7 @@ func NewWorkspaceFromHelmRelease(ctx context.Context, name string, helmClient *h
 	username := release.Labels["k8shell.io/username"]
 	blueprintName := release.Labels["k8shell.io/blueprint"]
 
-	userpb, err := identityClient.FindUser(ctx, &identitypb.FindUserRequest{Username: username})
+	userpb, err := identityClient.FindUser(ctx, &typespb.FindUserRequest{Username: username})
 	if err != nil {
 		return nil, fmt.Errorf("failed to get user %s: %w", username, err)
 	}

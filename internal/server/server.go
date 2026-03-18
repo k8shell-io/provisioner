@@ -26,7 +26,7 @@ type Server struct {
 	config          *config.Config
 	log             *zerolog.Logger
 	nats            *natsc.NATSClient
-	Identity        *identity.Client
+	Identity        *identity.IdentityClient
 	grpc            *gapi.Server
 	bpManager       *blueprint.BlueprintManager
 	helm            *helm.Client
@@ -79,7 +79,7 @@ func NewServer(configFile string) (*Server, error) {
 		}
 	}
 
-	server.Identity, err = identity.NewClient(server.config.Identity)
+	server.Identity, err = identity.NewIdentityClient(server.config.Identity)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create identity client: %w", err)
 	}

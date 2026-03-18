@@ -12,7 +12,7 @@ import (
 	"github.com/k8shell-io/common/pkg/gapi/commonpb"
 	"github.com/k8shell-io/common/pkg/models"
 	natsc "github.com/k8shell-io/common/pkg/nats"
-	"github.com/k8shell-io/identity/pkg/api/identitypb"
+	"github.com/k8shell-io/identity/pkg/api/typespb"
 	ws "github.com/k8shell-io/provisioner/internal/workspace"
 	"github.com/k8shell-io/provisioner/pkg/api/provisionerpb"
 	"github.com/rs/zerolog"
@@ -151,7 +151,7 @@ func (p *ProvisionerService) GetUserBlueprints(ctx context.Context,
 	req *provisionerpb.GetUserBlueprintsRequest,
 ) (*provisionerpb.GetUserBlueprintsResponse, error) {
 
-	userpb, err := p.server.Identity.FindUser(ctx, &identitypb.FindUserRequest{Username: req.Username})
+	userpb, err := p.server.Identity.FindUser(ctx, &typespb.FindUserRequest{Username: req.Username})
 	if err != nil {
 		return nil, status.Errorf(codes.NotFound, "Failed to get user: %v", err)
 	}
@@ -449,7 +449,7 @@ func (p *ProvisionerService) prepareWorkspaceWithPod(ctx context.Context, pod *c
 func (p *ProvisionerService) prepareWorkspaceWithUserStr(ctx context.Context,
 	userStr *models.CanonicalUserStr) (*ws.Workspace, error) {
 
-	userpb, err := p.server.Identity.FindUser(ctx, &identitypb.FindUserRequest{Username: userStr.Identity.Username})
+	userpb, err := p.server.Identity.FindUser(ctx, &typespb.FindUserRequest{Username: userStr.Identity.Username})
 	if err != nil {
 		return nil, status.Errorf(codes.NotFound, "Failed to get user: %v", err)
 	}
@@ -458,7 +458,7 @@ func (p *ProvisionerService) prepareWorkspaceWithUserStr(ctx context.Context,
 	var blueprintObj *models.Blueprint
 	switch {
 	case userStr.Identity.BlueprintKind == models.BlueprintKindCustom:
-		blueprintpb, err := p.server.Identity.GetBlueprintByUserStr(ctx, &identitypb.UserStr{Userstr: userStr.CanonicalUserStr})
+		blueprintpb, err := p.server.Identity.GetBlueprintByUserStr(ctx, &typespb.UserStr{Userstr: userStr.CanonicalUserStr})
 		if err != nil {
 			return nil, status.Errorf(codes.InvalidArgument, "failed to get blueprint by userstr: %v", err)
 		}
@@ -556,7 +556,7 @@ func (p *ProvisionerService) UpgradeWorkspaceResources(ctx context.Context,
 		return nil, status.Errorf(codes.Internal, "Failed to parse workspace labels: %v", err)
 	}
 
-	userpb, err := p.server.Identity.FindUser(ctx, &identitypb.FindUserRequest{Username: wl.Username})
+	userpb, err := p.server.Identity.FindUser(ctx, &typespb.FindUserRequest{Username: wl.Username})
 	if err != nil {
 		return nil, fmt.Errorf("failed to get user %s: %w", wl.Username, err)
 	}
@@ -609,7 +609,7 @@ func (p *ProvisionerService) UpgradeWorkspaceStream(
 			"Failed to parse workspace labels: %v", err))
 	}
 
-	_, err = p.server.Identity.FindUser(ctx, &identitypb.FindUserRequest{Username: wl.Username})
+	_, err = p.server.Identity.FindUser(ctx, &typespb.FindUserRequest{Username: wl.Username})
 	if err != nil {
 		return p.sendProvisionHandshakeErr(stream, name, status.Errorf(codes.Internal,
 			"Failed to get user %s: %v", wl.Username, err))
