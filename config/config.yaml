@@ -60,7 +60,7 @@ identity:
 # Used to validate user identity tokens
 jwtVerifier:
   signingMethod: es256
-  publicKeyFile: /opt/shared/auth/identity_public.pem
+  privateKeyFile: /opt/shared/auth/identity_private.pem
 
 # Blueprints configuration
 blueprints:

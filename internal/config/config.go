@@ -133,8 +133,8 @@ func NewConfig(configFile string) (*Config, error) {
 	if method != "es256" && method != "rs256" {
 		return nil, fmt.Errorf("jwtVerifier.signingMethod %q is not supported; must be es256 or rs256", method)
 	}
-	if cfg.JWTVerifier.PublicKeyFile == "" {
-		return nil, fmt.Errorf("jwtVerifier.publicKeyFile is required")
+	if cfg.JWTVerifier.PublicKeyFile == "" && cfg.JWTVerifier.PrivateKeyFile == "" {
+		return nil, fmt.Errorf("jwtVerifier: publicKeyFile or privateKeyFile is required")
 	}
 
 	return &cfg, nil

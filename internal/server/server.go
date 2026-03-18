@@ -97,13 +97,11 @@ func NewServer(configFile string) (*Server, error) {
 		return nil, fmt.Errorf("failed to create Helm client: %w", err)
 	}
 
-	if pkFile := server.config.JWTVerifier.PublicKeyFile; pkFile != "" {
-		pkContent, err := os.ReadFile(pkFile)
-		if err != nil {
-			return nil, fmt.Errorf("failed to read jwt public key file %s: %w", pkFile, err)
-		}
-		server.helm.IdentityPublicKey = string(pkContent)
+	pk, err := server.config.JWTVerifier.GetPublicKey()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get public key for JWT verifier: %w", err)
 	}
+	server.helm.IdentityPublicKey = pk
 
 	server.log.Info().Msg("Creating gRPC service")
 	server.grpc, err = gapi.NewServer(&server.config.GrpcConfig, true)
