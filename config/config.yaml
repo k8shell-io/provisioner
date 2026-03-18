@@ -58,7 +58,7 @@ identity:
 
 # Identity JWT verifier configuration
 # Used to validate user identity tokens
-identityVerifier:
+jwtVerifier:
   signingMethod: es256
   publicKeyFile: /opt/shared/auth/identity_public.pem
 

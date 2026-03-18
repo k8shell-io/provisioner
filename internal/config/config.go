@@ -21,7 +21,7 @@ type Config struct {
 	GrpcConfig          gapi.ServerConfig       `yaml:"grpc"`
 	Nats                ProvisionerNatsConfig   `yaml:"nats"`
 	Identity            gapi.ClientConfig       `yaml:"identity"`
-	IdentityVerifier    authz.JWTVerifierConfig `yaml:"identityVerifier"`
+	JWTVerifier         authz.JWTVerifierConfig `yaml:"jwtVerifier"`
 	Blueprints          BlueprintsFileConfig    `yaml:"blueprints"`
 	BaseDir             string                  `yaml:"baseDir"`
 }
@@ -126,15 +126,15 @@ func NewConfig(configFile string) (*Config, error) {
 
 	cfg.BaseDir = filepath.Dir(configFile)
 
-	method := cfg.IdentityVerifier.SigningMethod
+	method := cfg.JWTVerifier.SigningMethod
 	if method == "" {
-		return nil, fmt.Errorf("identityVerifier.signingMethod is required and must be es256 or rs256")
+		return nil, fmt.Errorf("jwtVerifier.signingMethod is required and must be es256 or rs256")
 	}
 	if method != "es256" && method != "rs256" {
-		return nil, fmt.Errorf("identityVerifier.signingMethod %q is not supported; must be es256 or rs256", method)
+		return nil, fmt.Errorf("jwtVerifier.signingMethod %q is not supported; must be es256 or rs256", method)
 	}
-	if cfg.IdentityVerifier.PublicKeyFile == "" {
-		return nil, fmt.Errorf("identityVerifier.publicKeyFile is required")
+	if cfg.JWTVerifier.PublicKeyFile == "" {
+		return nil, fmt.Errorf("jwtVerifier.publicKeyFile is required")
 	}
 
 	return &cfg, nil

@@ -86,7 +86,7 @@ func NewServer(configFile string) (*Server, error) {
 		return nil, fmt.Errorf("failed to create identity client: %w", err)
 	}
 
-	server.tokenVerifier, err = authz.NewJWTVerifier(server.config.IdentityVerifier)
+	server.tokenVerifier, err = authz.NewJWTVerifier(server.config.JWTVerifier)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create identity token verifier: %w", err)
 	}
@@ -97,10 +97,10 @@ func NewServer(configFile string) (*Server, error) {
 		return nil, fmt.Errorf("failed to create Helm client: %w", err)
 	}
 
-	if pkFile := server.config.IdentityVerifier.PublicKeyFile; pkFile != "" {
+	if pkFile := server.config.JWTVerifier.PublicKeyFile; pkFile != "" {
 		pkContent, err := os.ReadFile(pkFile)
 		if err != nil {
-			return nil, fmt.Errorf("failed to read identity public key file %s: %w", pkFile, err)
+			return nil, fmt.Errorf("failed to read jwt public key file %s: %w", pkFile, err)
 		}
 		server.helm.IdentityPublicKey = string(pkContent)
 	}
