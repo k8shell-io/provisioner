@@ -56,6 +56,12 @@ identity:
   caCertPath: /opt/shared/auth/ca.crt
   serverName: identity.k8shell-test.svc
 
+# Identity JWT verifier configuration
+# Used to validate user identity tokens
+identityVerifier:
+  signingMethod: es256
+  publicKeyFile: /opt/shared/auth/identity_public.pem
+
 # Blueprints configuration
 blueprints:
   directory: blueprints

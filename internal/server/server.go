@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"syscall"
 
+	"github.com/k8shell-io/common/pkg/authz"
 	"github.com/k8shell-io/common/pkg/gapi"
 	log "github.com/k8shell-io/common/pkg/logger"
 	"github.com/k8shell-io/common/pkg/models"
@@ -27,6 +28,7 @@ type Server struct {
 	log             *zerolog.Logger
 	nats            *natsc.NATSClient
 	Identity        *identity.IdentityClient
+	tokenVerifier   *authz.JWTVerifier
 	grpc            *gapi.Server
 	bpManager       *blueprint.BlueprintManager
 	helm            *helm.Client
@@ -82,6 +84,13 @@ func NewServer(configFile string) (*Server, error) {
 	server.Identity, err = identity.NewIdentityClient(server.config.Identity)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create identity client: %w", err)
+	}
+
+	if server.config.IdentityVerifier.PublicKeyFile != "" || server.config.IdentityVerifier.SecretKey != "" {
+		server.tokenVerifier, err = authz.NewJWTVerifier(server.config.IdentityVerifier)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create identity token verifier: %w", err)
+		}
 	}
 
 	server.log.Info().Msg("Creating Helm client")
