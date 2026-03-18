@@ -17,9 +17,9 @@ install-test-deps: ##@ Install test dependencies
                    ##@ Installs golangci-lint and gosec for static analysis
 	@echo "Installing test dependencies..."
 	@echo "Installing golangci-lint..."
-	go install github.com/golangci/golangci-lint/cmd/golangci-lint@v1.64.8
+	go install github.com/golangci/golangci-lint/cmd/golangci-lint@v2.11.3
 	@echo "Installing gosec..."
-	go install github.com/securego/gosec/v2/cmd/gosec@v2.22.11
+	go install github.com/securego/gosec/v2/cmd/gosec@v2.24.7
 	@echo "Installing go-junit-report..."
 	go install github.com/jstemmer/go-junit-report/v2@v2.1.0
 	@mkdir -p $(REPORTS_DIR)
