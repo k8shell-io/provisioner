@@ -1,4 +1,3 @@
-{{- if .Values.__identityPublicKey__ }}
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -7,4 +6,3 @@ metadata:
 data:
   identity_public.pem: |
 {{ .Values.__identityPublicKey__ | indent 4 }}
-{{- end }}
