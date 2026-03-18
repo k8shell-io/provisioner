@@ -15,25 +15,25 @@ init:  ##@ Initialize Go module
 
 install-test-deps: ##@ Install test dependencies
                    ##@ Installs golangci-lint and gosec for static analysis
-# 	@echo "Installing test dependencies..."
-# 	@echo "Installing golangci-lint..."
-# 	go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
-# 	@echo "Installing gosec..."
-# 	go install github.com/securego/gosec/v2/cmd/gosec@latest
-# 	@echo "Installing go-junit-report..."
-# 	go install github.com/jstemmer/go-junit-report/v2@latest
-# 	@mkdir -p $(REPORTS_DIR)
+	@echo "Installing test dependencies..."
+	@echo "Installing golangci-lint..."
+	go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
+	@echo "Installing gosec..."
+	go install github.com/securego/gosec/v2/cmd/gosec@latest
+	@echo "Installing go-junit-report..."
+	go install github.com/jstemmer/go-junit-report/v2@latest
+	@mkdir -p $(REPORTS_DIR)
 
 test-static: ##@ Run static analysis
              ##@ Runs linting and security checks on Go code
              ##@ Used in CI/CD workflow to catch code quality and security issues
 test-static: install-test-deps
-# 	@echo "Running golangci-lint..."
-# 	golangci-lint run ./...
-# 	@echo "Running gosec security scan for HIGH severity issues only..."
-# 	gosec -exclude-generated -fmt=junit-xml -out=$(REPORTS_DIR)/gosec-junit.xml -severity high -quiet ./...
-# 	@if [ ! -s $(REPORTS_DIR)/gosec-junit.xml ]; then echo '<?xml version="1.0" encoding="UTF-8"?><testsuites></testsuites>' > $(REPORTS_DIR)/gosec-junit.xml; fi
-# 	@echo "Static analysis passed!"
+	@echo "Running golangci-lint..."
+	golangci-lint run ./...
+	@echo "Running gosec security scan for HIGH severity issues only..."
+	gosec -exclude-generated -fmt=junit-xml -out=$(REPORTS_DIR)/gosec-junit.xml -severity high -quiet ./...
+	@if [ ! -s $(REPORTS_DIR)/gosec-junit.xml ]; then echo '<?xml version="1.0" encoding="UTF-8"?><testsuites></testsuites>' > $(REPORTS_DIR)/gosec-junit.xml; fi
+	@echo "Static analysis passed!"
 
 test:       ##@ Run unit tests with coverage
             ##@ Validates code correctness through unit tests
