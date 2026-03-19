@@ -447,6 +447,19 @@ func (w *Workspace) Uninstall(ctx context.Context, timeout time.Duration, wait b
 	return nil
 }
 
+// StopPod deletes only the workspace pod, leaving the Helm release and all
+// other resources (PVCs, secrets, ConfigMaps) intact.
+func (w *Workspace) StopPod(ctx context.Context) error {
+	err := w.client.KubeClient().CoreV1().Pods(w.client.TargetNamespace()).Delete(ctx, w.Name, metav1.DeleteOptions{})
+	if err != nil {
+		if k8sErrors.IsNotFound(err) {
+			return nil
+		}
+		return fmt.Errorf("failed to stop workspace pod %s: %w", w.Name, err)
+	}
+	return nil
+}
+
 // workspacePodStatus extracts the workspace details from pod
 func WorkspaceDetailsFromPod(pod *corev1.Pod) *models.WorkspaceDetails {
 	if pod == nil {

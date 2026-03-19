@@ -2,7 +2,7 @@
 // versions:
 // - protoc-gen-go-grpc v1.5.1
 // - protoc             v3.12.4
-// source: pkg/api/provisioner.proto
+// source: provisioner.proto
 
 package provisionerpb
 
@@ -28,6 +28,7 @@ const (
 	ProvisionerService_CanUpgradeWorkspace_FullMethodName       = "/provisioner.ProvisionerService/CanUpgradeWorkspace"
 	ProvisionerService_UpgradeWorkspaceResources_FullMethodName = "/provisioner.ProvisionerService/UpgradeWorkspaceResources"
 	ProvisionerService_DeleteWorkspace_FullMethodName           = "/provisioner.ProvisionerService/DeleteWorkspace"
+	ProvisionerService_StopWorkspace_FullMethodName             = "/provisioner.ProvisionerService/StopWorkspace"
 )
 
 // ProvisionerServiceClient is the client API for ProvisionerService service.
@@ -42,6 +43,7 @@ type ProvisionerServiceClient interface {
 	CanUpgradeWorkspace(ctx context.Context, in *CanUpgradeWorkspaceRequest, opts ...grpc.CallOption) (*CanUpgradeWorkspaceResponse, error)
 	UpgradeWorkspaceResources(ctx context.Context, in *UpgradeWorkspaceResourcesRequest, opts ...grpc.CallOption) (*UpgradeWorkspaceResourcesResponse, error)
 	DeleteWorkspace(ctx context.Context, in *DeleteWorkspaceRequest, opts ...grpc.CallOption) (*DeleteWorkspaceResponse, error)
+	StopWorkspace(ctx context.Context, in *StopWorkspaceRequest, opts ...grpc.CallOption) (*StopWorkspaceResponse, error)
 }
 
 type provisionerServiceClient struct {
@@ -150,6 +152,16 @@ func (c *provisionerServiceClient) DeleteWorkspace(ctx context.Context, in *Dele
 	return out, nil
 }
 
+func (c *provisionerServiceClient) StopWorkspace(ctx context.Context, in *StopWorkspaceRequest, opts ...grpc.CallOption) (*StopWorkspaceResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(StopWorkspaceResponse)
+	err := c.cc.Invoke(ctx, ProvisionerService_StopWorkspace_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // ProvisionerServiceServer is the server API for ProvisionerService service.
 // All implementations must embed UnimplementedProvisionerServiceServer
 // for forward compatibility.
@@ -162,6 +174,7 @@ type ProvisionerServiceServer interface {
 	CanUpgradeWorkspace(context.Context, *CanUpgradeWorkspaceRequest) (*CanUpgradeWorkspaceResponse, error)
 	UpgradeWorkspaceResources(context.Context, *UpgradeWorkspaceResourcesRequest) (*UpgradeWorkspaceResourcesResponse, error)
 	DeleteWorkspace(context.Context, *DeleteWorkspaceRequest) (*DeleteWorkspaceResponse, error)
+	StopWorkspace(context.Context, *StopWorkspaceRequest) (*StopWorkspaceResponse, error)
 	mustEmbedUnimplementedProvisionerServiceServer()
 }
 
@@ -195,6 +208,9 @@ func (UnimplementedProvisionerServiceServer) UpgradeWorkspaceResources(context.C
 }
 func (UnimplementedProvisionerServiceServer) DeleteWorkspace(context.Context, *DeleteWorkspaceRequest) (*DeleteWorkspaceResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method DeleteWorkspace not implemented")
+}
+func (UnimplementedProvisionerServiceServer) StopWorkspace(context.Context, *StopWorkspaceRequest) (*StopWorkspaceResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method StopWorkspace not implemented")
 }
 func (UnimplementedProvisionerServiceServer) mustEmbedUnimplementedProvisionerServiceServer() {}
 func (UnimplementedProvisionerServiceServer) testEmbeddedByValue()                            {}
@@ -347,6 +363,24 @@ func _ProvisionerService_DeleteWorkspace_Handler(srv interface{}, ctx context.Co
 	return interceptor(ctx, in, info, handler)
 }
 
+func _ProvisionerService_StopWorkspace_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(StopWorkspaceRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ProvisionerServiceServer).StopWorkspace(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: ProvisionerService_StopWorkspace_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ProvisionerServiceServer).StopWorkspace(ctx, req.(*StopWorkspaceRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // ProvisionerService_ServiceDesc is the grpc.ServiceDesc for ProvisionerService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -378,6 +412,10 @@ var ProvisionerService_ServiceDesc = grpc.ServiceDesc{
 			MethodName: "DeleteWorkspace",
 			Handler:    _ProvisionerService_DeleteWorkspace_Handler,
 		},
+		{
+			MethodName: "StopWorkspace",
+			Handler:    _ProvisionerService_StopWorkspace_Handler,
+		},
 	},
 	Streams: []grpc.StreamDesc{
 		{
@@ -391,5 +429,5 @@ var ProvisionerService_ServiceDesc = grpc.ServiceDesc{
 			ServerStreams: true,
 		},
 	},
-	Metadata: "pkg/api/provisioner.proto",
+	Metadata: "provisioner.proto",
 }

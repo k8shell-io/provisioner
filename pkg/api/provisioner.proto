@@ -17,6 +17,7 @@ service ProvisionerService {
   rpc CanUpgradeWorkspace (CanUpgradeWorkspaceRequest) returns (CanUpgradeWorkspaceResponse);
   rpc UpgradeWorkspaceResources (UpgradeWorkspaceResourcesRequest) returns (UpgradeWorkspaceResourcesResponse);
   rpc DeleteWorkspace (DeleteWorkspaceRequest) returns (DeleteWorkspaceResponse);
+  rpc StopWorkspace (StopWorkspaceRequest) returns (StopWorkspaceResponse);
 }
 
 message FindWorkspaceRequest {
@@ -98,6 +99,14 @@ message DeleteWorkspaceRequest {
 }
 
 message DeleteWorkspaceResponse {
+  string message = 1;
+}
+
+message StopWorkspaceRequest {
+  string workspace = 1;
+}
+
+message StopWorkspaceResponse {
   string message = 1;
 }
 

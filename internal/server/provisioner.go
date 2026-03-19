@@ -752,6 +752,59 @@ func (p *ProvisionerService) DeleteWorkspace(ctx context.Context,
 	}, nil
 }
 
+// StopWorkspace deletes only the workspace pod, leaving the Helm release and all
+// other resources (PVCs, secrets, ConfigMaps) intact for later re-provisioning.
+func (p *ProvisionerService) StopWorkspace(ctx context.Context,
+	req *provisionerpb.StopWorkspaceRequest) (*provisionerpb.StopWorkspaceResponse, error) {
+
+	name := req.Workspace
+	if name == "" {
+		return nil, status.Errorf(codes.InvalidArgument, "workspace name is required")
+	}
+
+	w, err := ws.NewWorkspaceFromHelmRelease(ctx, name, p.server.helm, p.server.Identity, p.server.config)
+	if err != nil {
+		return nil, convertToGRPCError(err)
+	}
+
+	lockCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+
+	workspaceLock := w.CreateLock()
+	acquired, err := workspaceLock.TryAcquire(lockCtx)
+	if err != nil {
+		if errors.Is(err, ws.ErrLockAlreadyHeld) {
+			return &provisionerpb.StopWorkspaceResponse{
+				Message: fmt.Sprintf("Operation already in progress for workspace %s", name),
+			}, nil
+		}
+		return nil, status.Errorf(codes.Internal,
+			"Failed to acquire lock for workspace %s: %v", name, err)
+	}
+
+	if !acquired {
+		return &provisionerpb.StopWorkspaceResponse{
+			Message: fmt.Sprintf("Operation already in progress for workspace %s", name),
+		}, nil
+	}
+
+	bgCtx := context.WithoutCancel(ctx)
+	defer func() {
+		if unlockErr := workspaceLock.Release(bgCtx); unlockErr != nil {
+			p.log.Error().Err(unlockErr).Msgf("Failed to release lock after stopping workspace %s", name)
+		}
+	}()
+
+	if err := w.StopPod(bgCtx); err != nil {
+		return nil, status.Errorf(codes.Internal, "Failed to stop workspace pod %s: %v", name, err)
+	}
+
+	p.log.Info().Msgf("Successfully stopped workspace pod %s", name)
+	return &provisionerpb.StopWorkspaceResponse{
+		Message: fmt.Sprintf("Successfully stopped workspace %s", name),
+	}, nil
+}
+
 // *** helpers
 
 // convertToGRPCError converts internal errors to gRPC status errors
