@@ -85,10 +85,13 @@ func (w *Workspace) Provision(ctx context.Context, opts *ProvisionOptions) (*mod
 			if !errors.Is(err, models.ErrWorkspaceNotFound) {
 				return nil, fmt.Errorf("failed to recheck workspace status: %w", err)
 			}
-		} else {
-			if status.Status == "Running" {
-				return status, nil
-			}
+			// Helm release exists but pod is gone — re-create only the pod
+			w.log.Debug().Msgf("Workspace %s helm release exists but pod not found, starting pod", w.Name)
+			return w.doStart(ctx, opts)
+		}
+
+		if status.Status == "Running" {
+			return status, nil
 		}
 
 		w.log.Debug().Msgf("Workspace %s still not running after acquiring lock, proceeding with reinstall", w.Name)
@@ -187,6 +190,41 @@ func (w *Workspace) doInstallation(ctx context.Context, opts *ProvisionOptions) 
 	if status.Status == models.WorkspaceStatusRunning {
 		provisionTime := time.Since(startTime)
 		w.log.Info().Msgf("Workspace %s is now running, provisioned in %s", w.Name, provisionTime)
+	}
+	return status, nil
+}
+
+// doStart re-creates the workspace pod by upgrading the existing Helm release.
+// Used when the release is installed but the pod is gone (e.g. after StopWorkspace).
+func (w *Workspace) doStart(ctx context.Context, opts *ProvisionOptions) (*models.PodStatus, error) {
+	values, err := w.Values()
+	if err != nil {
+		return nil, err
+	}
+
+	values["__manifesthash__"], err = w.TemplateHash(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to compute template hash: %w", err)
+	}
+
+	if err := w.client.Upgrade(ctx, helm.InstallOptions{
+		ReleaseName: w.Name,
+		ChartName:   helm.WORKSPACE_CHART_NAME,
+		Values:      values,
+		Timeout:     opts.Timeout,
+		AppVersion:  w.appVersion(),
+	}); err != nil {
+		return nil, fmt.Errorf("failed to start workspace pod: %w", err)
+	}
+
+	startTime := time.Now()
+	status, err := w.waitForPodRunning(ctx, startTime, opts)
+	if err != nil {
+		return nil, err
+	}
+
+	if status.Status == models.WorkspaceStatusRunning {
+		w.log.Info().Msgf("Workspace %s pod started in %s", w.Name, time.Since(startTime))
 	}
 	return status, nil
 }
