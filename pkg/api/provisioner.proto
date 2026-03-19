@@ -104,6 +104,7 @@ message DeleteWorkspaceResponse {
 
 message StopWorkspaceRequest {
   string workspace = 1;
+  uint32 delay_seconds = 2;
 }
 
 message StopWorkspaceResponse {

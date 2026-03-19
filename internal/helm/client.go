@@ -19,9 +19,12 @@ import (
 	"helm.sh/helm/v3/pkg/cli"
 	"helm.sh/helm/v3/pkg/release"
 	"helm.sh/helm/v3/pkg/storage/driver"
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
+	sigsyaml "sigs.k8s.io/yaml"
 )
 
 const (
@@ -264,6 +267,34 @@ func (c *Client) ListAllNamespaces() ([]*release.Release, error) {
 		return nil, fmt.Errorf("failed to list releases across all namespaces: %w", err)
 	}
 	return releases, nil
+}
+
+// PodFromRelease extracts the Pod object from the stored Helm release manifest.
+// This allows re-creating only the pod without a full Helm upgrade cycle.
+func (c *Client) PodFromRelease(releaseName string) (*corev1.Pod, error) {
+	rel, err := c.GetRelease(releaseName)
+	if err != nil {
+		return nil, err
+	}
+
+	for _, doc := range strings.Split(rel.Manifest, "\n---") {
+		doc = strings.TrimSpace(doc)
+		if doc == "" || !strings.Contains(doc, "kind: Pod") {
+			continue
+		}
+		var pod corev1.Pod
+		if err := sigsyaml.Unmarshal([]byte(doc), &pod); err != nil {
+			return nil, fmt.Errorf("failed to decode pod manifest from release %s: %w", releaseName, err)
+		}
+		if pod.Kind == "Pod" {
+			pod.ResourceVersion = ""
+			pod.UID = ""
+			pod.CreationTimestamp = metav1.Time{}
+			pod.Status = corev1.PodStatus{}
+			return &pod, nil
+		}
+	}
+	return nil, fmt.Errorf("pod not found in release %s manifest", releaseName)
 }
 
 // GetRelease gets information about a specific release in a namespace

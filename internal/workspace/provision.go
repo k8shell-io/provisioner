@@ -194,27 +194,18 @@ func (w *Workspace) doInstallation(ctx context.Context, opts *ProvisionOptions) 
 	return status, nil
 }
 
-// doStart re-creates the workspace pod by upgrading the existing Helm release.
-// Used when the release is installed but the pod is gone (e.g. after StopWorkspace).
+// doStart re-creates the workspace pod by extracting the pod manifest from the
+// stored Helm release and creating the pod directly via the Kubernetes API.
 func (w *Workspace) doStart(ctx context.Context, opts *ProvisionOptions) (*models.PodStatus, error) {
-	values, err := w.Values()
+	pod, err := w.client.PodFromRelease(w.Name)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to get pod manifest from release: %w", err)
 	}
 
-	values["__manifesthash__"], err = w.TemplateHash(ctx)
+	namespace := w.client.TargetNamespace()
+	_, err = w.client.KubeClient().CoreV1().Pods(namespace).Create(ctx, pod, metav1.CreateOptions{})
 	if err != nil {
-		return nil, fmt.Errorf("failed to compute template hash: %w", err)
-	}
-
-	if err := w.client.Upgrade(ctx, helm.InstallOptions{
-		ReleaseName: w.Name,
-		ChartName:   helm.WORKSPACE_CHART_NAME,
-		Values:      values,
-		Timeout:     opts.Timeout,
-		AppVersion:  w.appVersion(),
-	}); err != nil {
-		return nil, fmt.Errorf("failed to start workspace pod: %w", err)
+		return nil, fmt.Errorf("failed to create workspace pod: %w", err)
 	}
 
 	startTime := time.Now()

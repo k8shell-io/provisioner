@@ -762,6 +762,10 @@ func (p *ProvisionerService) StopWorkspace(ctx context.Context,
 		return nil, status.Errorf(codes.InvalidArgument, "workspace name is required")
 	}
 
+	if req.DelaySeconds > 60 {
+		return nil, status.Errorf(codes.InvalidArgument, "delay seconds cannot be greater than 60 seconds")
+	}
+
 	w, err := ws.NewWorkspaceFromHelmRelease(ctx, name, p.server.helm, p.server.Identity, p.server.config)
 	if err != nil {
 		return nil, convertToGRPCError(err)
@@ -775,7 +779,7 @@ func (p *ProvisionerService) StopWorkspace(ctx context.Context,
 	if err != nil {
 		if errors.Is(err, ws.ErrLockAlreadyHeld) {
 			return &provisionerpb.StopWorkspaceResponse{
-				Message: fmt.Sprintf("Operation already in progress for workspace %s", name),
+				Message: fmt.Sprintf("Request to stop the workspace %s already exists", name),
 			}, nil
 		}
 		return nil, status.Errorf(codes.Internal,
@@ -784,7 +788,31 @@ func (p *ProvisionerService) StopWorkspace(ctx context.Context,
 
 	if !acquired {
 		return &provisionerpb.StopWorkspaceResponse{
-			Message: fmt.Sprintf("Operation already in progress for workspace %s", name),
+			Message: fmt.Sprintf("Request to stop the workspace %s already exists", name),
+		}, nil
+	}
+
+	if req.DelaySeconds > 0 {
+		bgCtx := context.WithoutCancel(ctx)
+		go func() {
+			defer func() {
+				if unlockErr := workspaceLock.Release(bgCtx); unlockErr != nil {
+					p.log.Error().Err(unlockErr).Msgf("Failed to release lock after stopping workspace %s", name)
+				}
+			}()
+
+			time.Sleep(time.Duration(req.DelaySeconds) * time.Second)
+			p.log.Debug().Msgf("Starting async stop of workspace pod %s", name)
+
+			if err := w.StopPod(bgCtx); err != nil {
+				p.log.Error().Err(err).Msgf("Failed to stop workspace pod %s", name)
+			} else {
+				p.log.Info().Msgf("Successfully stopped workspace pod %s", name)
+			}
+		}()
+
+		return &provisionerpb.StopWorkspaceResponse{
+			Message: fmt.Sprintf("Request to stop the workspace %s was submitted", name),
 		}, nil
 	}
 

@@ -2,7 +2,7 @@
 // versions:
 // - protoc-gen-go-grpc v1.5.1
 // - protoc             v3.12.4
-// source: provisioner.proto
+// source: pkg/api/provisioner.proto
 
 package provisionerpb
 
@@ -429,5 +429,5 @@ var ProvisionerService_ServiceDesc = grpc.ServiceDesc{
 			ServerStreams: true,
 		},
 	},
-	Metadata: "provisioner.proto",
+	Metadata: "pkg/api/provisioner.proto",
 }
