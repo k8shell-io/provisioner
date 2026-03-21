@@ -1,0 +1,63 @@
+blueprints:
+  - name: base
+    shell: /bin/sh
+    isTemplate: true
+    sudo: false
+
+    splash: |
+      Welcome to k8shell - cloud-native workspaces on Kubernetes!
+      Connected to k8shelld (version: {{.Version}}-{{.Commit}})
+      For more information, visit https://k8shell.io
+
+    image: <image:tag>
+    imagePullPolicy: IfNotPresent
+
+    subdomain: !cel "user.organization"
+    hostname: !cel "user.username + '-' + metadata.name"
+
+    k8shelld:
+      image: k8shell-base/k8shelld:pr-50-75343ab
+      imagePullPolicy: IfNotPresent
+      ignoreOrphans:
+        - .*JetBrains.*
+
+    portForwarding:
+      - localnetworks:0
+
+    network:
+      networkPolicy: system
+
+    resources:
+      cpu: 4
+      memory: 4Gi
+
+    docker:
+      enabled: false
+      image: docker:29.3.0-dind 
+
+      resources:
+        cpu: 2
+        memory: 2Gi
+
+      # group id used in the dind image to create the docker socket; when the dind image is rootless
+      # the actual group id will be 100000 + group_id - 1 where 100000 is subordinate group id
+      groupId: 999
+
+      # subordinate group id used in the dind image;
+      # this should be set to 100000 when the dind image is rootless otehrwise it should be set to 0
+      #subgid: 100000
+      subgid: 0
+
+      # use the same volumes as in the main workspace
+      parentStorages: true
+
+    # list of storages in the workspace
+    # storages:
+    #   home:
+    #     enabled: false
+    #     storageClass: ""
+    #     size: 10Gi
+    #     path: !cel "'/home/' + user.username"
+    #     readonly: False
+
+    enableApps: false

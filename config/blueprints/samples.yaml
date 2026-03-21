@@ -1,0 +1,51 @@
+blueprints:
+  - name: dev
+    template: base
+    image: workspaces/dev:1.12
+    shell: /bin/bash
+    sudo: true
+
+    resources:
+      cpu: 8
+      memory: 4Gi
+
+    storages:
+      home:
+        enabled: true
+        size: 10Gi
+        storageClass: !cel env("WORKSPACE_STORAGE_CLASS")
+        path: !cel "'/home/' + user.username"
+        readonly: False
+
+    docker:
+      enabled: true
+
+  - name: ubt
+    template: dev
+    image: docker.io/ubuntu:latest
+    shell: /bin/bash
+
+  - name: cos
+    template: dev
+    image: docker.io/centos:8
+    shell: /bin/bash
+
+  - name: alp
+    template: dev
+    image: docker.io/alpine:latest
+    docker:
+      enabled: true
+
+  - name: bsb
+    template: dev
+    image: docker.io/busybox:latest
+    docker:
+      enabled: false
+    sudo: false
+
+  - name: jup
+    template: dev
+    image: docker.io/jupyter/base-notebook:latest
+    docker:
+      enabled: false
+    sudo: true

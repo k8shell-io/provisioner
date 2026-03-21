@@ -1,7 +1,7 @@
 # Provisioner service configuration
 
 # Namespace for the k8shell workspace
-targetNamespace: ${TARGET_NAMESPACE}
+targetNamespace: workspaces-x
 
 clusterDomain: cluster.local
 
@@ -51,16 +51,16 @@ nats:
 
 # Identity service configuration
 identity:
-  address: identity.k8shell-test:9020
+  address: 10.42.2.245:9020 #identity.k8shell-test:9020
   tokenFilePath: /opt/shared/provisioner/identity-token
-  caCertPath: /opt/shared/auth/ca.crt
-  serverName: identity.k8shell-test.svc
+  # caCertPath: /opt/shared/auth/ca.crt
+  # serverName: identity.k8shell-test.svc
 
 # Identity JWT verifier configuration
 # Used to validate user identity tokens
 jwtVerifier:
   signingMethod: es256
-  privateKeyFile: /opt/shared/auth/identity_private.pem
+  privateKeyFile: /opt/shared/identity/secrets/jwt_private.pem
 
 # Blueprints configuration
 blueprints:

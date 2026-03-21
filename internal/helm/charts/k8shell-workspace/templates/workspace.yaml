@@ -21,6 +21,7 @@ spec:
   - name: {{ .Values.__registry__.regcred }}
   {{ end }}  
   serviceAccountName: {{ .Values.__workspace__ }}-sa
+  restartPolicy: OnFailure
   {{- if and .Values.subdomain .Values.hostname }}
   hostname: {{ .Values.hostname }}
   subdomain: {{ .Values.subdomain }}
