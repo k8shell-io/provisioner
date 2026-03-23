@@ -7,7 +7,7 @@ require github.com/rs/zerolog v1.34.0 // direct
 require (
 	github.com/fsnotify/fsnotify v1.9.0
 	github.com/google/uuid v1.6.0
-	github.com/k8shell-io/common v0.12.179
+	github.com/k8shell-io/common v0.12.181
 	github.com/k8shell-io/yaml-cel v0.2.6
 	github.com/stretchr/testify v1.11.1
 	go.uber.org/automaxprocs v1.6.0

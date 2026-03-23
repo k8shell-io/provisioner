@@ -8,10 +8,10 @@ import (
 	"path/filepath"
 	"syscall"
 
+	"github.com/k8shell-io/common/pkg/api/client/identity"
 	provisionerv1 "github.com/k8shell-io/common/pkg/api/gen/go/provisioner/v1"
 	"github.com/k8shell-io/common/pkg/authz"
 	"github.com/k8shell-io/common/pkg/gapi"
-	"github.com/k8shell-io/common/pkg/identity"
 	log "github.com/k8shell-io/common/pkg/logger"
 	"github.com/k8shell-io/common/pkg/models"
 	natsc "github.com/k8shell-io/common/pkg/nats"

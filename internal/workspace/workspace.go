@@ -8,9 +8,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/k8shell-io/common/pkg/api/client/identity"
 	identityv1 "github.com/k8shell-io/common/pkg/api/gen/go/identity/v1"
 	"github.com/k8shell-io/common/pkg/gapi"
-	"github.com/k8shell-io/common/pkg/identity"
 	log "github.com/k8shell-io/common/pkg/logger"
 	"github.com/k8shell-io/common/pkg/models"
 	"github.com/k8shell-io/provisioner/internal/config"
