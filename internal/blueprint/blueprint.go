@@ -95,7 +95,6 @@ func TestScope() *BlueprintScope {
 			Auths:      []string{models.AuthMethodPublicKey, models.AuthMethodPassword},
 			AuthKeys:   []string{"ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQC3..."},
 			Locked:     false,
-			Envs:       []string{},
 			Roles:      []models.Role{"role1", "role2"},
 			Blueprints: []string{"testblueprint"},
 			Source:     "testsource",

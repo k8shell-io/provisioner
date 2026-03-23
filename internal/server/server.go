@@ -8,17 +8,17 @@ import (
 	"path/filepath"
 	"syscall"
 
+	provisionerv1 "github.com/k8shell-io/common/pkg/api/gen/go/provisioner/v1"
 	"github.com/k8shell-io/common/pkg/authz"
 	"github.com/k8shell-io/common/pkg/gapi"
+	"github.com/k8shell-io/common/pkg/identity"
 	log "github.com/k8shell-io/common/pkg/logger"
 	"github.com/k8shell-io/common/pkg/models"
 	natsc "github.com/k8shell-io/common/pkg/nats"
-	identity "github.com/k8shell-io/identity/pkg/api"
 	"github.com/k8shell-io/provisioner/internal/blueprint"
 	"github.com/k8shell-io/provisioner/internal/config"
 	"github.com/k8shell-io/provisioner/internal/helm"
 	"github.com/k8shell-io/provisioner/internal/workspace"
-	"github.com/k8shell-io/provisioner/pkg/api/provisionerpb"
 	"github.com/rs/zerolog"
 	"google.golang.org/grpc"
 )
@@ -110,7 +110,7 @@ func NewServer(configFile string) (*Server, error) {
 	}
 
 	err = server.grpc.RegisterService(func(s *grpc.Server) error {
-		provisionerpb.RegisterProvisionerServiceServer(s, NewProvisionerService(server))
+		provisionerv1.RegisterProvisionerServiceServer(s, NewProvisionerService(server))
 		return nil
 	})
 	if err != nil {

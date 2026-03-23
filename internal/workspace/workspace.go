@@ -8,11 +8,11 @@ import (
 	"strings"
 	"time"
 
+	identityv1 "github.com/k8shell-io/common/pkg/api/gen/go/identity/v1"
 	"github.com/k8shell-io/common/pkg/gapi"
+	"github.com/k8shell-io/common/pkg/identity"
 	log "github.com/k8shell-io/common/pkg/logger"
 	"github.com/k8shell-io/common/pkg/models"
-	identity "github.com/k8shell-io/identity/pkg/api"
-	"github.com/k8shell-io/identity/pkg/api/typespb"
 	"github.com/k8shell-io/provisioner/internal/config"
 	"github.com/k8shell-io/provisioner/internal/helm"
 	"github.com/rs/zerolog"
@@ -258,7 +258,7 @@ func NewWorkspaceFromHelmRelease(ctx context.Context, name string, helmClient *h
 	username := release.Labels["k8shell.io/username"]
 	blueprintName := release.Labels["k8shell.io/blueprint"]
 
-	userpb, err := identityClient.FindUser(ctx, &typespb.FindUserRequest{Username: username})
+	userpb, err := identityClient.FindUser(ctx, &identityv1.FindUserRequest{Username: username})
 	if err != nil {
 		return nil, fmt.Errorf("failed to get user %s: %w", username, err)
 	}
