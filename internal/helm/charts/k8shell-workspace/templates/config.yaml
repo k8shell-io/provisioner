@@ -84,6 +84,7 @@ data:
     docker:
       enabled: {{ $docker.enabled | default false }}
       createDockerSockSymlink: {{ $docker.enabled | default false }}
+      groupId: {{ $docker.groupId | default 999 }}
       {{- $dockerStoragesYaml := include "workspace.storages" (dict "storages" $docker.storages) | trim }}
       {{- if eq $dockerStoragesYaml "[]" }}
       storages: []
