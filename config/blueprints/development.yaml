@@ -1,0 +1,46 @@
+blueprints:
+  - name: development
+    template: base
+    isTemplate: true
+    image: workspaces/dev:1.12
+
+    capabilities:
+      - NET_ADMIN
+      - NET_RAW
+
+    portForwarding:
+      - 0.0.0.0:0
+
+    docker:
+      enabled: true
+
+    subdomain: !cel "metadata.repoOwner"
+    hostname: !cel "user.username + '-' + metadata.repoName"
+
+    env:
+      GIT_ADDRESS: !cel "metadata.repoAddress"
+      GIT_REPOOWNER: !cel "metadata.repoOwner"
+      GIT_REPONAME: !cel "metadata.repoName"
+      GIT_REPOREF: !cel "metadata.repoRef"
+
+    storages:
+      home:
+        annotations:
+          zfs-csi.k8shell.io/volume-name: !cel "workspaceName"
+          zfs-csi.k8shell.io/retain-on-delete: "false"
+      shared:
+        readonly: false
+        annotations:
+          zfs-csi.k8shell.io/volume-name: !cel "metadata.repoOwner + '/shared'"
+
+    initScripts:
+      - clone_repo@: |
+          cd "$HOME"
+          git config --global credential.helper k8shell
+          REPO_URL="${GIT_ADDRESS}/${GIT_REPOOWNER}/${GIT_REPONAME}.git"
+          if [ -n "${GIT_REPOREF:-}" ]; then
+             git clone -b "$GIT_REPOREF" --single-branch "$REPO_URL"
+          else
+             git clone "$REPO_URL"
+          fi
+
