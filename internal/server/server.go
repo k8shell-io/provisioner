@@ -18,7 +18,6 @@ import (
 	"github.com/k8shell-io/provisioner/internal/blueprint"
 	"github.com/k8shell-io/provisioner/internal/config"
 	"github.com/k8shell-io/provisioner/internal/helm"
-	"github.com/k8shell-io/provisioner/internal/workspace"
 	"github.com/rs/zerolog"
 	"google.golang.org/grpc"
 )
@@ -121,39 +120,12 @@ func NewServer(configFile string, appVersion string, commit string) (*Server, er
 
 	models.SetRefResolver(server)
 
-	err = server.ensureBaseResources(context.Background())
-	if err != nil {
-		return nil, fmt.Errorf("failed to ensure base resources: %w", err)
+	server.log.Info().Msgf("Ensuring workspace base, namespace %s", server.config.TargetNamespace)
+	if err := server.helm.EnsureBase(context.Background()); err != nil {
+		return nil, fmt.Errorf("failed to ensure base namespace: %w", err)
 	}
 
 	return server, nil
-}
-
-func (s Server) ensureBaseResources(ctx context.Context) error {
-	lock := workspace.NewWorkspaceLock(s.helm.KubeClient(), s.config.TargetNamespace, "init")
-	ok, err := lock.TryAcquire(ctx)
-	if !ok || err == workspace.ErrLockAlreadyHeld {
-		s.log.Info().Msg("Workspace lock is already held by another process, proceeding without initialization")
-	} else if err != nil {
-		return fmt.Errorf("failed to acquire workspace lock: %w", err)
-	}
-	if ok {
-		defer func() {
-			err := lock.Release(ctx)
-			if err != nil {
-				s.log.Error().Err(err).Msg("Failed to release workspace lock")
-			} else {
-				s.log.Info().Msg("Workspace lock released successfully")
-			}
-		}()
-
-		s.log.Info().Msgf("Ensuring workspace base, namespace %s", s.config.TargetNamespace)
-		err = s.helm.EnsureBase(ctx)
-		if err != nil {
-			return fmt.Errorf("failed to ensure base namespace: %w", err)
-		}
-	}
-	return nil
 }
 
 // ResolvePullRequestRef
