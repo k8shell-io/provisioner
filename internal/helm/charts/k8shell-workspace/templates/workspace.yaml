@@ -226,7 +226,7 @@ spec:
       sizeLimit: {{ $storage.size }}
     {{- else if eq ($storage.type | default "local") "shared" }}
     persistentVolumeClaim:
-      claimName: pvc-{{ $storageName }}
+      claimName: pvc-{{ $storageName }}{{- if $storage.id }}-{{ $storage.id }}{{- end }}
     {{- else }}
     persistentVolumeClaim:
       claimName: pvc-{{ $.Values.__workspace__ }}-{{ $storageName }}

@@ -242,6 +242,9 @@ func (w *Workspace) ensureSharedStorages(ctx context.Context) error {
 		}
 
 		pvcName := "pvc-" + name
+		if storage.Id != "" {
+			pvcName += "-" + storage.Id
+		}
 
 		existing, err := kubeClient.CoreV1().PersistentVolumeClaims(namespace).Get(ctx, pvcName, metav1.GetOptions{})
 		if err != nil && !apierrors.IsNotFound(err) {
