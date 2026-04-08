@@ -281,8 +281,8 @@ spec:
     secret:
       secretName: identity-token-{{ .Values.__username__ }}
   - name: jwt-verifier-volume
-    configMap:
-      name: jwt-verifier
+    secret:
+      secretName: jwt-verifier
 
   {{- if .Values.affinity }}
   affinity:
