@@ -224,6 +224,9 @@ spec:
     emptyDir:
       medium: Memory
       sizeLimit: {{ $storage.size }}
+    {{- else if eq ($storage.type | default "local") "shared" }}
+    persistentVolumeClaim:
+      claimName: pvc-{{ $storageName }}
     {{- else }}
     persistentVolumeClaim:
       claimName: pvc-{{ $.Values.__workspace__ }}-{{ $storageName }}

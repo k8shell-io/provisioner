@@ -2,7 +2,7 @@
 
 {{- if .Values.storages }}
 {{- range $storageName, $storage := .Values.storages }}
-{{- if and $storage ($storage.enabled | default false) (not ($storage.memory | default false)) }}
+{{- if and $storage ($storage.enabled | default false) (not ($storage.memory | default false)) (ne ($storage.type | default "local") "shared") }}
 ---
   {{- include "pvc-template" (dict "name" $storageName "storage" $storage "pvcPrefix" "" "ctx" $ ) }}
 {{- end }}

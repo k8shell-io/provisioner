@@ -142,6 +142,10 @@ func (w *Workspace) unlock() error {
 
 // doInstallation performs the actual installation of the workspace
 func (w *Workspace) doInstallation(ctx context.Context, opts *ProvisionOptions) (*models.PodStatus, error) {
+	if err := w.ensureSharedStorages(ctx); err != nil {
+		return nil, fmt.Errorf("failed to ensure shared storages: %w", err)
+	}
+
 	values, err := w.Values()
 	if err != nil {
 		return nil, err
@@ -218,6 +222,93 @@ func (w *Workspace) doStart(ctx context.Context, opts *ProvisionOptions) (*model
 		w.log.Info().Msgf("Workspace %s pod started in %s", w.Name, time.Since(startTime))
 	}
 	return status, nil
+}
+
+// ensureSharedStorages creates PVCs for storages of type "shared" if they don't already exist.
+// Shared PVCs are named pvc-<storageName> and are not workspace-scoped, allowing multiple
+// workspaces to reference the same PVC. If a shared PVC already exists, it is left untouched.
+// A warning is logged when an existing PVC has different capacity or storage class.
+func (w *Workspace) ensureSharedStorages(ctx context.Context) error {
+	if w.blueprint == nil {
+		return nil
+	}
+
+	namespace := w.client.TargetNamespace()
+	kubeClient := w.client.KubeClient()
+
+	for name, storage := range w.blueprint.Storages {
+		if !storage.Enabled || storage.Type != "shared" {
+			continue
+		}
+
+		pvcName := "pvc-" + name
+
+		existing, err := kubeClient.CoreV1().PersistentVolumeClaims(namespace).Get(ctx, pvcName, metav1.GetOptions{})
+		if err != nil && !apierrors.IsNotFound(err) {
+			return fmt.Errorf("failed to check shared PVC %s: %w", pvcName, err)
+		}
+
+		if err == nil {
+			// PVC already exists — check for parameter mismatches and warn
+			existingStorage := existing.Spec.Resources.Requests[corev1.ResourceStorage]
+			if existingStorage.String() != storage.Size {
+				w.log.Warn().
+					Str("pvc", pvcName).
+					Str("existingSize", existingStorage.String()).
+					Str("requestedSize", storage.Size).
+					Msgf("Shared PVC %s already exists with different size; skipping update", pvcName)
+			}
+			if storage.StorageClass != "" && existing.Spec.StorageClassName != nil &&
+				*existing.Spec.StorageClassName != storage.StorageClass {
+				w.log.Warn().
+					Str("pvc", pvcName).
+					Str("existingStorageClass", *existing.Spec.StorageClassName).
+					Str("requestedStorageClass", storage.StorageClass).
+					Msgf("Shared PVC %s already exists with different storageClass; skipping update", pvcName)
+			}
+			continue
+		}
+
+		pvc := &corev1.PersistentVolumeClaim{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      pvcName,
+				Namespace: namespace,
+				Labels: map[string]string{
+					"app.kubernetes.io/version":     w.client.AppVersion,
+					"app.kubernetes.io/managed-by":  "k8shell-provisioner",
+					"k8shell.io/storage-type":       "shared",
+					"k8shell.io/storage-name":       name,
+					"io.k8shell.provisioner/commit": w.client.Commit,
+				},
+				Annotations: storage.Annotations,
+			},
+			Spec: corev1.PersistentVolumeClaimSpec{
+				AccessModes: []corev1.PersistentVolumeAccessMode{corev1.ReadWriteMany},
+				Resources: corev1.VolumeResourceRequirements{
+					Requests: corev1.ResourceList{
+						corev1.ResourceStorage: mustParseQuantity(storage.Size),
+					},
+				},
+			},
+		}
+
+		if storage.StorageClass != "" {
+			sc := storage.StorageClass
+			pvc.Spec.StorageClassName = &sc
+		}
+
+		if _, err := kubeClient.CoreV1().PersistentVolumeClaims(namespace).Create(ctx, pvc, metav1.CreateOptions{}); err != nil {
+			if apierrors.IsAlreadyExists(err) {
+				w.log.Debug().Msgf("Shared PVC %s was created concurrently; skipping", pvcName)
+				continue
+			}
+			return fmt.Errorf("failed to create shared PVC %s: %w", pvcName, err)
+		}
+
+		w.log.Info().Msgf("Created shared PVC %s in namespace %s", pvcName, namespace)
+	}
+
+	return nil
 }
 
 // createHeadlessService creates a headless service if subdomain and hostname are defined

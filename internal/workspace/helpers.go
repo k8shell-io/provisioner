@@ -9,6 +9,7 @@ import (
 	"github.com/k8shell-io/common/pkg/models"
 	"gopkg.in/yaml.v3"
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/resource"
 )
 
 func getNamespace() string {
@@ -336,4 +337,10 @@ func getSelector(labels map[string]string) string {
 	}
 
 	return strings.Join(selectors, ",")
+}
+
+// mustParseQuantity parses a Kubernetes resource quantity string (e.g. "10Gi").
+// Panics if the string is invalid — callers should validate blueprint storage sizes upstream
+func mustParseQuantity(s string) resource.Quantity {
+	return resource.MustParse(s)
 }
