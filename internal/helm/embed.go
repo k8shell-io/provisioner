@@ -14,8 +14,6 @@ import (
 //go:embed charts/k8shell-workspace/*
 //go:embed charts/k8shell-workspace/templates/*
 //go:embed charts/k8shell-workspace/templates/_helpers.tpl
-//go:embed charts/base-workspace/*
-//go:embed charts/base-workspace/templates/*
 var chartFS embed.FS
 
 // GetChartFS returns the embedded filesystem containing Helm charts

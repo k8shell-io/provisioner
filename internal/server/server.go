@@ -35,7 +35,7 @@ type Server struct {
 	provisionJobsKV *natsc.JetStreamKV
 }
 
-func NewServer(configFile string) (*Server, error) {
+func NewServer(configFile string, appVersion string, commit string) (*Server, error) {
 	server := &Server{
 		log: log.NewLogger("server"),
 	}
@@ -102,6 +102,8 @@ func NewServer(configFile string) (*Server, error) {
 		return nil, fmt.Errorf("failed to get public key for JWT verifier: %w", err)
 	}
 	server.helm.JWTVerifierPublicKey = pk
+	server.helm.AppVersion = appVersion
+	server.helm.Commit = commit
 
 	server.log.Info().Msg("Creating gRPC service")
 	server.grpc, err = gapi.NewServer(&server.config.GrpcConfig, true)
@@ -119,31 +121,39 @@ func NewServer(configFile string) (*Server, error) {
 
 	models.SetRefResolver(server)
 
-	lock := workspace.NewWorkspaceLock(server.helm.KubeClient(), server.config.TargetNamespace, "init")
-	ok, err := lock.TryAcquire(context.Background())
-	if !ok || err == workspace.ErrLockAlreadyHeld {
-		server.log.Info().Msg("Workspace lock is already held by another process, proceeding without initialization")
-	} else if err != nil {
-		return nil, fmt.Errorf("failed to acquire workspace lock: %w", err)
-	}
-	if ok {
-		defer func() {
-			err := lock.Release(context.Background())
-			if err != nil {
-				server.log.Error().Err(err).Msg("Failed to release workspace lock")
-			} else {
-				server.log.Info().Msg("Workspace lock released successfully")
-			}
-		}()
-
-		server.log.Info().Msgf("Ensuring workspace base, namespace %s", server.config.TargetNamespace)
-		err = server.helm.EnsureBase(context.Background())
-		if err != nil {
-			return nil, fmt.Errorf("failed to ensure base namespace: %w", err)
-		}
+	err = server.ensureBaseResources(context.Background())
+	if err != nil {
+		return nil, fmt.Errorf("failed to ensure base resources: %w", err)
 	}
 
 	return server, nil
+}
+
+func (s Server) ensureBaseResources(ctx context.Context) error {
+	lock := workspace.NewWorkspaceLock(s.helm.KubeClient(), s.config.TargetNamespace, "init")
+	ok, err := lock.TryAcquire(ctx)
+	if !ok || err == workspace.ErrLockAlreadyHeld {
+		s.log.Info().Msg("Workspace lock is already held by another process, proceeding without initialization")
+	} else if err != nil {
+		return fmt.Errorf("failed to acquire workspace lock: %w", err)
+	}
+	if ok {
+		defer func() {
+			err := lock.Release(ctx)
+			if err != nil {
+				s.log.Error().Err(err).Msg("Failed to release workspace lock")
+			} else {
+				s.log.Info().Msg("Workspace lock released successfully")
+			}
+		}()
+
+		s.log.Info().Msgf("Ensuring workspace base, namespace %s", s.config.TargetNamespace)
+		err = s.helm.EnsureBase(ctx)
+		if err != nil {
+			return fmt.Errorf("failed to ensure base namespace: %w", err)
+		}
+	}
+	return nil
 }
 
 // ResolvePullRequestRef
