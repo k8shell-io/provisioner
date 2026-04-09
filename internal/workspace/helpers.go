@@ -61,30 +61,30 @@ func podMountsSecret(pod *corev1.Pod, secretName string) bool {
 	return false
 }
 
-// workspacePodStatus returns a small set of UI-friendly statuses.
-// Keep this stable for UI/API consumers.
+// workspacePodStatus returns a small set of UI-friendly statuses
 func workspacePodStatus(pod *corev1.Pod) models.WorkspacePodStatus {
 	if pod == nil {
 		return models.WorkspaceStatusUnknown
 	}
 
-	// If there's a concrete reason from init/containers, map it.
+	// a concrete reason from init/containers
 	reason, _ := podTopReason(pod)
 	if reason != "" {
 		switch {
 		case isFailingReason(reason):
 			return models.WorkspaceStatusFailing
-		case isPullingReason(reason):
-			return models.WorkspaceStatusPulling
 		case isProvisioningReason(reason):
+			if podAnyContainerImagePending(pod) {
+				return models.WorkspaceStatusPulling
+			}
 			return models.WorkspaceStatusProvisioning
 		}
 	}
 
-	// Otherwise decide by phase + readiness.
+	// decide by phase + readiness
 	switch pod.Status.Phase {
 	case corev1.PodPending:
-		if pod.Spec.NodeName != "" {
+		if podAnyContainerImagePending(pod) {
 			return models.WorkspaceStatusPulling
 		}
 		return models.WorkspaceStatusProvisioning
@@ -102,13 +102,13 @@ func workspacePodStatus(pod *corev1.Pod) models.WorkspacePodStatus {
 	}
 }
 
-// workspacePodMessage returns a single message consistent with workspacePodStatus.
+// workspacePodMessage returns a single message consistent with workspacePodStatus
 func workspacePodMessage(pod *corev1.Pod) string {
 	if pod == nil {
 		return ""
 	}
 
-	// Prefer the most actionable reason/message from init/containers.
+	// Prefer the most actionable reason/message from init/containers
 	reason, msg := podTopReason(pod)
 	if reason != "" {
 		if msg != "" {
@@ -214,20 +214,25 @@ func isFailingReason(reason string) bool {
 
 func isProvisioningReason(reason string) bool {
 	switch reason {
-	case "PodInitializing":
+	case "ContainerCreating", "PodInitializing":
 		return true
 	default:
 		return false
 	}
 }
 
-func isPullingReason(reason string) bool {
-	switch reason {
-	case "ContainerCreating":
-		return true
-	default:
+// podAnyContainerImagePending returns true when at least one regular container
+// has not yet had its image pulled (imageID is empty), indicating an active download.
+func podAnyContainerImagePending(pod *corev1.Pod) bool {
+	if pod == nil {
 		return false
 	}
+	for _, cs := range pod.Status.ContainerStatuses {
+		if cs.ImageID == "" {
+			return true
+		}
+	}
+	return false
 }
 
 // podRestartCount returns total restarts across init + regular containers.
