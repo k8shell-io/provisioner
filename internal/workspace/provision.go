@@ -40,7 +40,7 @@ func (w *Workspace) ExistsAndRunning(ctx context.Context) (bool, *models.PodStat
 				return false, nil, fmt.Errorf("failed to get workspace pod status: %w", err)
 			}
 		} else {
-			if status.Status == "Running" {
+			if status.Status == models.WorkspaceStatusRunning {
 				return true, status, nil
 			}
 		}
@@ -90,8 +90,14 @@ func (w *Workspace) Provision(ctx context.Context, opts *ProvisionOptions) (*mod
 			return w.doStart(ctx, opts)
 		}
 
-		if status.Status == "Running" {
+		if status.Status == models.WorkspaceStatusRunning {
 			return status, nil
+		}
+
+		if status.Status == models.WorkspaceStatusPulling {
+			w.log.Info().Msgf("Workspace %s pod is pulling image, waiting", w.Name)
+			w.sendPodStatusMessage(opts, models.WorkspaceStatusPulling, "Workspace image is being downloaded")
+			return w.waitForPodRunning(ctx, time.Now(), opts)
 		}
 
 		w.log.Debug().Msgf("Workspace %s still not running after acquiring lock, proceeding with reinstall", w.Name)
@@ -101,6 +107,20 @@ func (w *Workspace) Provision(ctx context.Context, opts *ProvisionOptions) (*mod
 	}
 
 	return w.doInstallation(ctx, opts)
+}
+
+// sendMessage sends a plain informational message to the client if a Messages
+// channel is configured, and also logs it at debug level.
+func (w *Workspace) sendPodStatusMessage(opts *ProvisionOptions, status models.WorkspacePodStatus, msg string) {
+	if opts != nil && opts.Messages != nil {
+		opts.Messages <- models.WorkspaceStreamEvent{
+			Type:       models.WorkspaceStreamEventTypeStatus,
+			Timestamp:  time.Now().Format("2006-01-02 15:04:05"),
+			ObjectName: w.Name,
+			Status:     status,
+			Message:    msg,
+		}
+	}
 }
 
 // Lock acquires a distributed lock for the workspace
@@ -375,12 +395,19 @@ func (w *Workspace) waitForPodRunning(ctx context.Context, startTime time.Time,
 	ticker := time.NewTicker(1 * time.Second)
 	defer ticker.Stop()
 
+	const downloadingMsgInterval = 30 * time.Second
+	lastDownloadingMsg := time.Time{}
+
 	for {
 		select {
 		case <-ctx.Done():
 			return nil, ctx.Err()
 
 		case <-timeout.C:
+			if st, err := w.GetPodStatus(ctx); err == nil && st.Status == models.WorkspaceStatusPulling {
+				return nil, fmt.Errorf("timeout waiting for pod %s: image is still being downloaded",
+					podName)
+			}
 			return nil, fmt.Errorf("timeout waiting for pod %s to be running after %v",
 				podName, opts.Timeout)
 
@@ -407,6 +434,13 @@ func (w *Workspace) waitForPodRunning(ctx context.Context, startTime time.Time,
 				if time.Since(startTime) > time.Duration(opts.Timeout)*time.Second {
 					return status, fmt.Errorf("workspace %s has been starting for too long: %s",
 						podName, status.Message)
+				}
+
+			case models.WorkspaceStatusPulling:
+				if time.Since(lastDownloadingMsg) >= downloadingMsgInterval {
+					w.sendPodStatusMessage(opts, models.WorkspaceStatusPulling,
+						"Workspace image is being downloaded")
+					lastDownloadingMsg = time.Now()
 				}
 			}
 		}
@@ -571,7 +605,7 @@ func (w *Workspace) watchEvents(ctx context.Context, podName string,
 			seenEvents[key] = true
 
 			eventMessage := models.WorkspaceStreamEvent{
-				Type:       "event",
+				Type:       models.WorkspaceStreamEventTypeEvent,
 				Timestamp:  k8sEvent.CreationTimestamp.Format("2006-01-02 15:04:05"),
 				ObjectName: fmt.Sprintf("%s/%s", kind, name),
 				Message:    message,

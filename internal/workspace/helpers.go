@@ -74,6 +74,8 @@ func workspacePodStatus(pod *corev1.Pod) models.WorkspacePodStatus {
 		switch {
 		case isFailingReason(reason):
 			return models.WorkspaceStatusFailing
+		case isPullingReason(reason):
+			return models.WorkspaceStatusPulling
 		case isProvisioningReason(reason):
 			return models.WorkspaceStatusProvisioning
 		}
@@ -209,7 +211,16 @@ func isFailingReason(reason string) bool {
 
 func isProvisioningReason(reason string) bool {
 	switch reason {
-	case "ContainerCreating", "PodInitializing":
+	case "PodInitializing":
+		return true
+	default:
+		return false
+	}
+}
+
+func isPullingReason(reason string) bool {
+	switch reason {
+	case "ContainerCreating":
 		return true
 	default:
 		return false

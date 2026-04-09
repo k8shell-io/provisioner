@@ -337,6 +337,7 @@ func (p *ProvisionerService) ProvisionWorkspaceStream(
 	errorChan := make(chan error)
 	progress := 0
 	percent := 0
+	// isPullingImage := false
 
 	go func() {
 		defer close(done)
@@ -364,6 +365,18 @@ func (p *ProvisionerService) ProvisionWorkspaceStream(
 			if !ok {
 				continue
 			}
+			if msg.Status == models.WorkspaceStatusPulling {
+				if err := p.sendProvisionEvent(stream, job, &provisionerv1.ProvisionEvent{
+					Type:       string(models.WorkspaceStreamEventTypeStatus),
+					Timestamp:  msg.Timestamp,
+					ObjectName: msg.ObjectName,
+					Status:     string(msg.Status),
+					Message:    msg.Message,
+				}); err != nil {
+					p.log.Error().Err(err).Msg("Failed to send provision event message")
+				}
+			}
+
 			if req.SendEvents {
 				if err := p.sendProvisionEvent(stream, job, &provisionerv1.ProvisionEvent{
 					Type:       string(models.WorkspaceStreamEventTypeEvent),
