@@ -84,6 +84,9 @@ func workspacePodStatus(pod *corev1.Pod) models.WorkspacePodStatus {
 	// Otherwise decide by phase + readiness.
 	switch pod.Status.Phase {
 	case corev1.PodPending:
+		if pod.Spec.NodeName != "" {
+			return models.WorkspaceStatusPulling
+		}
 		return models.WorkspaceStatusProvisioning
 	case corev1.PodRunning:
 		if podAllContainersReady(pod) {
