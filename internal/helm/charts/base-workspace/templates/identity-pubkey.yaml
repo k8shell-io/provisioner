@@ -1,8 +1,0 @@
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: jwt-verifier
-  namespace: {{ .Release.Namespace }}
-data:
-  public-key.pem: |
-{{ .Values.__jwtVerifierPublicKey__ | indent 4 }}

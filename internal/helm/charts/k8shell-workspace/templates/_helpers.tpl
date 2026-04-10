@@ -119,9 +119,12 @@ Uses regex to detect registry hostname in image name
 {{- if regexMatch "^[^/]*[.:].*/" $image -}}
   {{/* Image already has a registry */}}
   {{- $image -}}
-{{- else -}}
+{{- else if $registry -}}
   {{/* No registry detected, prepend the provided registry */}}
   {{- $registry -}}/{{- $image -}}
+{{- else -}}
+  {{/* No registry configured, use image as-is */}}
+  {{- $image -}}
 {{- end -}}
 {{- end }}
 
