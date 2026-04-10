@@ -96,7 +96,6 @@ func (w *Workspace) Provision(ctx context.Context, opts *ProvisionOptions) (*mod
 
 		if status.Status == models.WorkspaceStatusPulling {
 			w.log.Info().Msgf("Workspace %s pod is pulling image, waiting", w.Name)
-			w.sendPodStatusMessage(opts, models.WorkspaceStatusPulling, "Workspace image is being downloaded")
 			return w.waitForPodRunning(ctx, time.Now(), opts)
 		}
 
@@ -395,8 +394,10 @@ func (w *Workspace) waitForPodRunning(ctx context.Context, startTime time.Time,
 	ticker := time.NewTicker(1 * time.Second)
 	defer ticker.Stop()
 
-	const downloadingMsgInterval = 30 * time.Second
-	lastDownloadingMsg := time.Time{}
+	const pullReportDelay = 7 * time.Second
+	pullingFirstSeen := time.Time{}
+	pullingReported := false
+	hadPriorPulling := false
 
 	for {
 		select {
@@ -430,17 +431,28 @@ func (w *Workspace) waitForPodRunning(ctx context.Context, startTime time.Time,
 				return status, fmt.Errorf("workspace %s is in final state: %s - %s",
 					podName, status.Status, status.Message)
 
+			case models.WorkspaceStatusPulling:
+				if pullingFirstSeen.IsZero() {
+					pullingFirstSeen = time.Now()
+					pullingReported = false
+				}
+				if !pullingReported {
+					if hadPriorPulling || time.Since(pullingFirstSeen) >= pullReportDelay {
+						w.sendPodStatusMessage(opts, models.WorkspaceStatusPulling,
+							"Workspace image is being downloaded")
+						pullingReported = true
+					}
+				}
+
 			case models.WorkspaceStatusProvisioning:
+				if !pullingFirstSeen.IsZero() {
+					hadPriorPulling = true
+					pullingFirstSeen = time.Time{}
+					w.sendPodStatusMessage(opts, models.WorkspaceStatusProvisioning, "Workspace is starting")
+				}
 				if time.Since(startTime) > time.Duration(opts.Timeout)*time.Second {
 					return status, fmt.Errorf("workspace %s has been starting for too long: %s",
 						podName, status.Message)
-				}
-
-			case models.WorkspaceStatusPulling:
-				if time.Since(lastDownloadingMsg) >= downloadingMsgInterval {
-					w.sendPodStatusMessage(opts, models.WorkspaceStatusPulling,
-						"Workspace image is being downloaded")
-					lastDownloadingMsg = time.Now()
 				}
 			}
 		}
