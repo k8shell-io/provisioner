@@ -36,7 +36,7 @@ func (w *Workspace) CanUpgrade(ctx context.Context, pod *corev1.Pod) (bool, erro
 
 // Upgrade upgrades an existing workspace release (or installs it if missing).
 // It uses a distributed lock to avoid concurrent upgrades for the same workspace.
-func (w *Workspace) Upgrade(ctx context.Context, opts *ProvisionOptions) (*models.PodStatus, error) {
+func (w *Workspace) Upgrade(ctx context.Context, opts *ProvisionOptions) (*models.WorkspaceStatus, error) {
 	if opts == nil {
 		opts = &ProvisionOptions{
 			Timeout:     20,
@@ -51,7 +51,7 @@ func (w *Workspace) Upgrade(ctx context.Context, opts *ProvisionOptions) (*model
 	return w.upgradeWithLock(ctx, opts)
 }
 
-func (w *Workspace) upgradeWithLock(ctx context.Context, opts *ProvisionOptions) (*models.PodStatus, error) {
+func (w *Workspace) upgradeWithLock(ctx context.Context, opts *ProvisionOptions) (*models.WorkspaceStatus, error) {
 	if err := w.lock(time.Duration(opts.LockTimeout) * time.Second); err != nil {
 		return nil, err
 	}

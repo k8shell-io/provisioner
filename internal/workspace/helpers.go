@@ -62,9 +62,14 @@ func podMountsSecret(pod *corev1.Pod, secretName string) bool {
 }
 
 // workspacePodStatus returns a small set of UI-friendly statuses
-func workspacePodStatus(pod *corev1.Pod) models.WorkspacePodStatus {
+func workspacePodStatus(pod *corev1.Pod) models.WorkspaceStatusMessage {
 	if pod == nil {
 		return models.WorkspaceStatusUnknown
+	}
+
+	// Pod is being deleted — report Terminating
+	if pod.DeletionTimestamp != nil {
+		return models.WorkspaceStatusTerminating
 	}
 
 	// a concrete reason from init/containers
@@ -147,7 +152,7 @@ func workspacePodMessage(pod *corev1.Pod) string {
 		if pod.Status.Reason != "" {
 			return pod.Status.Reason
 		}
-		return string(pod.Status.Phase)
+		return "Unknown"
 	}
 }
 

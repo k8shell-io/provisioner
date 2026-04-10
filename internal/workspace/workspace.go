@@ -399,7 +399,7 @@ func (w *Workspace) TemplateHash(ctx context.Context) (string, error) {
 	return fmt.Sprintf("%x", h.Sum(nil)), nil
 }
 
-func (w *Workspace) GetPodStatus(ctx context.Context) (*models.PodStatus, error) {
+func (w *Workspace) GetPodStatus(ctx context.Context) (*models.WorkspaceStatus, error) {
 	v1 := w.client.KubeClient().CoreV1()
 	pod, err := v1.Pods(w.client.TargetNamespace()).Get(ctx, w.Name, metav1.GetOptions{})
 	if err != nil {
@@ -408,7 +408,7 @@ func (w *Workspace) GetPodStatus(ctx context.Context) (*models.PodStatus, error)
 		}
 		return nil, fmt.Errorf("failed to get workspace pod status %s: %w", w.Name, err)
 	}
-	return &models.PodStatus{
+	return &models.WorkspaceStatus{
 		Created:         pod.CreationTimestamp.Time,
 		Status:          workspacePodStatus(pod),
 		Message:         workspacePodMessage(pod),
@@ -495,7 +495,7 @@ func WorkspaceDetailsFromPod(pod *corev1.Pod) *models.WorkspaceDetails {
 	memory := pod.Spec.Containers[0].Resources.Limits.Memory().String()
 
 	wsDetails := &models.WorkspaceDetails{
-		PodStatus: models.PodStatus{
+		WorkspaceStatus: models.WorkspaceStatus{
 			Created:         pod.CreationTimestamp.Time,
 			Status:          workspacePodStatus(pod),
 			Message:         workspacePodMessage(pod),

@@ -24,13 +24,13 @@ type ProvisionOptions struct {
 }
 
 // ExistsRunning checks if the workspace already exists and is running
-func (w *Workspace) ExistsAndRunning(ctx context.Context) (bool, *models.PodStatus, error) {
+func (w *Workspace) ExistsAndRunning(ctx context.Context) (bool, *models.WorkspaceStatus, error) {
 	exists, err := w.IsInstalled(ctx)
 	if err != nil {
 		return false, nil, fmt.Errorf("failed to check if workspace exists: %w", err)
 	}
 
-	var status *models.PodStatus
+	var status *models.WorkspaceStatus
 	if exists {
 		status, err = w.GetPodStatus(ctx)
 		if err != nil {
@@ -50,7 +50,7 @@ func (w *Workspace) ExistsAndRunning(ctx context.Context) (bool, *models.PodStat
 }
 
 // Provision provisions the workspace
-func (w *Workspace) Provision(ctx context.Context, opts *ProvisionOptions) (*models.PodStatus, error) {
+func (w *Workspace) Provision(ctx context.Context, opts *ProvisionOptions) (*models.WorkspaceStatus, error) {
 	if opts == nil {
 		opts = &ProvisionOptions{
 			Timeout:     20,
@@ -122,7 +122,7 @@ func (w *Workspace) Provision(ctx context.Context, opts *ProvisionOptions) (*mod
 
 // sendMessage sends a plain informational message to the client if a Messages
 // channel is configured, and also logs it at debug level.
-func (w *Workspace) sendPodStatusMessage(opts *ProvisionOptions, status models.WorkspacePodStatus, msg string) {
+func (w *Workspace) sendPodStatusMessage(opts *ProvisionOptions, status models.WorkspaceStatusMessage, msg string) {
 	if opts != nil && opts.Messages != nil {
 		opts.Messages <- models.WorkspaceStreamEvent{
 			Type:       models.WorkspaceStreamEventTypeStatus,
@@ -172,7 +172,7 @@ func (w *Workspace) unlock() error {
 }
 
 // doInstallation performs the actual installation of the workspace
-func (w *Workspace) doInstallation(ctx context.Context, opts *ProvisionOptions) (*models.PodStatus, error) {
+func (w *Workspace) doInstallation(ctx context.Context, opts *ProvisionOptions) (*models.WorkspaceStatus, error) {
 	if err := w.ensureSharedStorages(ctx); err != nil {
 		return nil, fmt.Errorf("failed to ensure shared storages: %w", err)
 	}
@@ -231,7 +231,7 @@ func (w *Workspace) doInstallation(ctx context.Context, opts *ProvisionOptions) 
 
 // doStart re-creates the workspace pod by extracting the pod manifest from the
 // stored Helm release and creating the pod directly via the Kubernetes API.
-func (w *Workspace) doStart(ctx context.Context, opts *ProvisionOptions) (*models.PodStatus, error) {
+func (w *Workspace) doStart(ctx context.Context, opts *ProvisionOptions) (*models.WorkspaceStatus, error) {
 	pod, err := w.client.PodFromRelease(w.Name)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get pod manifest from release: %w", err)
@@ -391,7 +391,7 @@ func (w *Workspace) createHeadlessService(ctx context.Context, values map[string
 
 // waitForPodRunning with quick failure detection
 func (w *Workspace) waitForPodRunning(ctx context.Context, startTime time.Time,
-	opts *ProvisionOptions) (*models.PodStatus, error) {
+	opts *ProvisionOptions) (*models.WorkspaceStatus, error) {
 
 	podName := w.Name
 	timeout := time.NewTimer(time.Duration(opts.Timeout) * time.Second)

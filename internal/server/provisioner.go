@@ -59,7 +59,7 @@ func (j *ProvisionJobServer) AddEvent(ev *provisionerv1.ProvisionEvent) {
 		Type:      models.WorkspaceStreamEventType(ev.Type),
 		Timestamp: ev.Timestamp,
 		Message:   ev.Message,
-		Status:    models.WorkspacePodStatus(ev.Status),
+		Status:    models.WorkspaceStatusMessage(ev.Status),
 	}
 	j.Events = append(j.Events, event)
 	j.NextEventId++
@@ -333,7 +333,7 @@ func (p *ProvisionerService) ProvisionWorkspaceStream(
 	}
 
 	messages := make(chan models.WorkspaceStreamEvent, 100)
-	done := make(chan *models.PodStatus)
+	done := make(chan *models.WorkspaceStatus)
 	errorChan := make(chan error)
 	progress := 0
 	percent := 0
