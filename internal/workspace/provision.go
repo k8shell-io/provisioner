@@ -63,6 +63,18 @@ func (w *Workspace) Provision(ctx context.Context, opts *ProvisionOptions) (*mod
 		opts.LockTimeout = 30
 	}
 
+	if preExists, _ := w.IsInstalled(ctx); preExists {
+		if preStatus, err := w.GetPodStatus(ctx); err == nil {
+			switch preStatus.Status {
+			case models.WorkspaceStatusRunning:
+				return preStatus, nil
+			case models.WorkspaceStatusProvisioning, models.WorkspaceStatusPulling:
+				w.log.Info().Msgf("Workspace %s is already being provisioned, observing", w.Name)
+				return w.waitForPodRunning(ctx, preStatus.Created, opts)
+			}
+		}
+	}
+
 	if err := w.lock(time.Duration(opts.LockTimeout) * time.Second); err != nil {
 		return nil, err
 	}
