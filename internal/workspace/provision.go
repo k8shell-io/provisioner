@@ -394,10 +394,8 @@ func (w *Workspace) waitForPodRunning(ctx context.Context, startTime time.Time,
 	ticker := time.NewTicker(1 * time.Second)
 	defer ticker.Stop()
 
-	const pullReportDelay = 7 * time.Second
-	pullingFirstSeen := time.Time{}
+	const pullReportDelay = 5 * time.Second
 	pullingReported := false
-	hadPriorPulling := false
 
 	for {
 		select {
@@ -432,22 +430,15 @@ func (w *Workspace) waitForPodRunning(ctx context.Context, startTime time.Time,
 					podName, status.Status, status.Message)
 
 			case models.WorkspaceStatusPulling:
-				if pullingFirstSeen.IsZero() {
-					pullingFirstSeen = time.Now()
-					pullingReported = false
-				}
-				if !pullingReported {
-					if hadPriorPulling || time.Since(pullingFirstSeen) >= pullReportDelay {
-						w.sendPodStatusMessage(opts, models.WorkspaceStatusPulling,
-							"Workspace image is being downloaded")
-						pullingReported = true
-					}
+				if !pullingReported && time.Since(status.Created) >= pullReportDelay {
+					w.sendPodStatusMessage(opts, models.WorkspaceStatusPulling,
+						"Workspace image is being downloaded")
+					pullingReported = true
 				}
 
 			case models.WorkspaceStatusProvisioning:
-				if !pullingFirstSeen.IsZero() {
-					hadPriorPulling = true
-					pullingFirstSeen = time.Time{}
+				if pullingReported {
+					pullingReported = false
 					w.sendPodStatusMessage(opts, models.WorkspaceStatusProvisioning, "Workspace is starting")
 				}
 				if time.Since(startTime) > time.Duration(opts.Timeout)*time.Second {
