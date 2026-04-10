@@ -214,7 +214,8 @@ func isFailingReason(reason string) bool {
 
 func isProvisioningReason(reason string) bool {
 	switch reason {
-	case "ContainerCreating", "PodInitializing":
+	case "ContainerCreating",
+		"PodInitializing":
 		return true
 	default:
 		return false

@@ -406,8 +406,9 @@ func (w *Workspace) waitForPodRunning(ctx context.Context, startTime time.Time,
 	ticker := time.NewTicker(1 * time.Second)
 	defer ticker.Stop()
 
-	const pullReportDelay = 5 * time.Second
+	const pullReportDelay = 8 * time.Second
 	pullingReported := false
+	observationStarted := time.Now()
 
 	for {
 		select {
@@ -433,6 +434,11 @@ func (w *Workspace) waitForPodRunning(ctx context.Context, startTime time.Time,
 				continue
 			}
 
+			pullReportSince := time.Since(status.Created)
+			if pullReportSince < pullReportDelay {
+				pullReportSince = time.Since(observationStarted)
+			}
+
 			switch status.Status {
 			case models.WorkspaceStatusRunning:
 				return status, nil
@@ -442,7 +448,7 @@ func (w *Workspace) waitForPodRunning(ctx context.Context, startTime time.Time,
 					podName, status.Status, status.Message)
 
 			case models.WorkspaceStatusPulling:
-				if !pullingReported && time.Since(status.Created) >= pullReportDelay {
+				if !pullingReported && pullReportSince >= pullReportDelay {
 					w.sendPodStatusMessage(opts, models.WorkspaceStatusPulling,
 						"Workspace image is being downloaded")
 					pullingReported = true
