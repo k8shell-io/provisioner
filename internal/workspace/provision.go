@@ -111,6 +111,14 @@ func (w *Workspace) Provision(ctx context.Context, opts *ProvisionOptions) (*mod
 			return w.waitForPodRunning(ctx, time.Now(), opts)
 		}
 
+		if status.Status == models.WorkspaceStatusStopped {
+			w.log.Info().Msgf("Workspace %s pod is stopped, recycling pod", w.Name)
+			if err := w.StopPod(ctx); err != nil {
+				return nil, fmt.Errorf("failed to delete stopped pod: %w", err)
+			}
+			return w.doStart(ctx, opts)
+		}
+
 		w.log.Debug().Msgf("Workspace %s still not running after acquiring lock, proceeding with reinstall", w.Name)
 		if err := w.client.Uninstall(w.Name, int(opts.Timeout), true); err != nil {
 			return nil, fmt.Errorf("failed to delete workspace: %w", err)

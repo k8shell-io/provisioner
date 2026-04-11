@@ -301,17 +301,18 @@ func (p *ProvisionerService) ProvisionWorkspaceStream(
 	}
 
 	if st != nil {
-		if st.Status == models.WorkspaceStatusTerminating || st.Status == models.WorkspaceStatusStopped {
-			p.log.Debug().Msgf("Workspace %s is in %s state, waiting for it to be deleted before provisioning",
-				workspace.Name, st.Status)
+		if st.Status == models.WorkspaceStatusTerminating {
+			// Pod is actively being deleted — wait for it to disappear before reprovisioning.
+			p.log.Debug().Msgf("Workspace %s is terminating, waiting for pod to be gone", workspace.Name)
 			waitDur := time.Duration(timeout) * time.Second
 			if err := p.waitForWorkspacePodGone(ctx, workspace.Name, waitDur); err != nil {
 				return p.sendProvisionHandshakeErr(stream, workspace.Name, status.Errorf(codes.DeadlineExceeded,
 					"Workspace %s is still being deleted; please retry: %v", workspace.Name, err))
-			} else {
-				p.log.Debug().Msgf("Workspace %s deletion detected, proceeding with provisioning", workspace.Name)
 			}
+			p.log.Debug().Msgf("Workspace %s deletion detected, proceeding with provisioning", workspace.Name)
 		}
+		// WorkspaceStatusStopped (PodSucceeded) is a final state — the pod will never self-delete.
+		// Provision() handles it by recycling the pod directly via doStart().
 	}
 
 	if p.server.provisionJobsKV != nil {
