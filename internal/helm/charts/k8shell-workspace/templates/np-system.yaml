@@ -26,4 +26,24 @@ spec:
         - namespaceSelector: {}
         - ipBlock:
             cidr: 0.0.0.0/0
+{{- if .Capabilities.APIVersions.Has "cilium.io/v2/CiliumNetworkPolicy" }}
+---
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: cilium-np-{{ .Values.__workspace__ }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "workspace.labels" . | nindent 4 }}
+spec:
+  endpointSelector:
+    matchLabels:
+      k8shell.io/app: k8shell-workspace
+      k8shell.io/organization: {{ .Values.__organization__ }}
+      k8shell.io/workspace: {{ .Values.__workspace__ }}
+  egress:
+    - toEntities:
+        - world
+        - cluster
+{{- end }}
 {{- end }}
