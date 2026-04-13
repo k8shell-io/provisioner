@@ -50,6 +50,7 @@ k8shell.io/job-id: "{{ .Values.__jobid__ }}"
 
 {{/* default networkpolicy egress rules */}}
 {{- define "default.egress" -}}
+{{- $cilium := .Values.network.cilium | default dict }}
 - to:
     - namespaceSelector:
         matchLabels:
@@ -71,12 +72,14 @@ k8shell.io/job-id: "{{ .Values.__jobid__ }}"
           {{ $k }}: {{ $v | quote }}
           {{- end }}
     {{- end }}
+    {{- if not $cilium.enabled }}
     - ipBlock:
         cidr: 0.0.0.0/0
         except:
         - 10.0.0.0/8
         - 192.168.0.0/16
         - 172.16.0.0/12
+    {{- end }}
 - to:
     - namespaceSelector:
         matchLabels:
@@ -84,13 +87,16 @@ k8shell.io/job-id: "{{ .Values.__jobid__ }}"
       podSelector:
         matchLabels:
           k8s-app: kube-dns
+{{- if not $cilium.enabled }}
 {{- /* kube-apiserver ClusterIP lives in the service CIDR (default 10.96.0.0/12 for kubeadm)
      which is inside 10.0.0.0/8 and therefore excluded by the ipBlock rule above.
      This explicit carve-out restores reachability for kubectl and k8s client calls.
+     When Cilium is enabled, kube-apiserver is covered by the CiliumNetworkPolicy entity.
      Adjust if your cluster uses a non-default --service-cluster-ip-range. */}}
 - to:
     - ipBlock:
         cidr: 10.96.0.0/12
+{{- end }}
 {{- end -}}
 
 {{/* pvc template */}}
