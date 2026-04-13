@@ -63,9 +63,14 @@ k8shell.io/job-id: "{{ .Values.__jobid__ }}"
       podSelector:
         matchLabels:
           k8shell.io/app: api-server
-    - podSelector:
+    {{- range .Values.network.allowEgressToPods }}
+    - namespaceSelector: {}
+      podSelector:
         matchLabels:
-          type: backend
+          {{- range $k, $v := . }}
+          {{ $k }}: {{ $v | quote }}
+          {{- end }}
+    {{- end }}
     - ipBlock:
         cidr: 0.0.0.0/0
         except:
@@ -79,6 +84,13 @@ k8shell.io/job-id: "{{ .Values.__jobid__ }}"
       podSelector:
         matchLabels:
           k8s-app: kube-dns
+{{- /* kube-apiserver ClusterIP lives in the service CIDR (default 10.96.0.0/12 for kubeadm)
+     which is inside 10.0.0.0/8 and therefore excluded by the ipBlock rule above.
+     This explicit carve-out restores reachability for kubectl and k8s client calls.
+     Adjust if your cluster uses a non-default --service-cluster-ip-range. */}}
+- to:
+    - ipBlock:
+        cidr: 10.96.0.0/12
 {{- end -}}
 
 {{/* pvc template */}}
