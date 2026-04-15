@@ -156,14 +156,9 @@ spec:
       - service
       - --time=0
       - unix:///var/run/podman/podman.sock
-      # env:
-      # - name: HOME
-      #   value: /tmp
         
       # see https://docs.k8shell.io/concepts/overview/security#least-privileged-workspace-containers
       securityContext:
-        # runAsUser: {{ .Values.__user__.uid }}
-        # runAsGroup: {{ .Values.__user__.gid }}
         runAsUser: 1000
         runAsGroup: 1000
         appArmorProfile:

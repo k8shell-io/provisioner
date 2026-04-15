@@ -84,7 +84,6 @@ data:
     podman:
       enabled: {{ $podman.enabled | default false }}
       createDockerSockSymlink: {{ $podman.createDockerSockSymlink | default false }}
-      groupId: {{ $podman.groupId | default 999 }}
       {{- $podmanStoragesYaml := include "workspace.storages" (dict "storages" $podman.storages) | trim }}
       {{- if eq $podmanStoragesYaml "[]" }}
       storages: []
