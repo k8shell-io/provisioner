@@ -150,33 +150,17 @@ spec:
     - name: k8shell-podman
       image: {{ $podman.image }}
       command:
-        - /bin/bash
-        - -c
-        - |
-          _shutdown() { kill "$PODMAN_PID" 2>/dev/null; wait "$PODMAN_PID" 2>/dev/null; exit 0; }
-          trap _shutdown TERM INT
-          podman system service --time=0 unix:///var/run/podman/podman.sock &
-          PODMAN_PID=$!
-          for i in $(seq 1 10); do
-            [ -S /var/run/podman/podman.sock ] && break
-            if ! kill -0 "$PODMAN_PID" 2>/dev/null; then
-              echo "podman service exited unexpectedly" >&2
-              exit 1
-            fi
-            sleep 0.2
-          done
-          if [ ! -S /var/run/podman/podman.sock ]; then
-            echo "podman socket not available after timeout" >&2
-            kill "$PODMAN_PID" 2>/dev/null
-            exit 1
-          fi
-          chmod 777 /var/run/podman/podman.sock
-          wait "$PODMAN_PID"
+      - podman
+      args:
+      - system
+      - service
+      - --time=0
+      - unix:///var/run/podman/podman.sock
 
       # see https://docs.k8shell.io/concepts/overview/security#least-privileged-workspace-containers
       securityContext:
-        runAsUser: 1000
-        runAsGroup: 1000
+        runAsUser: {{ .Values.__user__.uid }}
+        runAsGroup: {{ .Values.__user__.gid }}
         appArmorProfile:
           type: Unconfined
 
