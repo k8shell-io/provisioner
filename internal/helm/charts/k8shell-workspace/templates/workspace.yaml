@@ -130,7 +130,7 @@ spec:
       {{- end }}
       {{- if ($podman.enabled | default false) }}
       - name: podman-sock
-        mountPath: /var/run/podman/podman.sock
+        mountPath: /var/run/podman
         readOnly: true
       {{- end }}
       {{- if .Values.__certmanager__.enabled }}
@@ -153,6 +153,10 @@ spec:
         - /bin/bash
         - -c
         - |
+          cat >> /etc/containers/containers.conf << 'EOF'
+          [network]
+          default_network = "host"
+          EOF        
           #mkdir -p /var/run/podman
           podman system service --time=0 unix:///var/run/podman/podman.sock &
           sleep 2
