@@ -153,10 +153,6 @@ spec:
         - /bin/bash
         - -c
         - |
-          cat >> /etc/containers/containers.conf << 'EOF'
-          [network]
-          default_network = "host"
-          EOF        
           #mkdir -p /var/run/podman
           podman system service --time=0 unix:///var/run/podman/podman.sock &
           sleep 2
@@ -173,6 +169,19 @@ spec:
       volumeMounts:
         - name: podman-sock
           mountPath: /var/run/podman
+      {{- if $podman.containersConf }}
+        - name: podman-containers-conf-volume
+          mountPath: /etc/containers/containers.conf
+          subPath: containers.conf
+          readOnly: true
+      {{- end }}
+      {{- if $podman.extFiles }}
+      {{- range $path, $content := $podman.extFiles }}
+        - name: podman-ext-files-volume
+          mountPath: {{ $path }}
+          subPath: {{ $path | replace "/" "__" }}
+      {{- end }}
+      {{- end }}
     {{- end }}
 
   ####  list of volumes to mount into the containers
@@ -238,6 +247,11 @@ spec:
   {{- if ($podman.enabled | default false) }}
   - name: podman-sock
     emptyDir: {}
+  {{- if $podman.containersConf }}
+  - name: podman-containers-conf-volume
+    configMap:
+      name: {{ .Values.__workspace__ }}-podman-containers-conf
+  {{- end }}
   {{- if $podman.extFiles }}
   - name: podman-ext-files-volume
     configMap:
