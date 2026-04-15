@@ -1,4 +1,4 @@
-{{- $docker := .Values.docker | default dict -}}
+{{- $podman := .Values.podman | default dict -}}
 
 {{- if .Values.storages }}
 {{- range $storageName, $storage := .Values.storages }}
@@ -9,12 +9,12 @@
 {{- end }}
 {{- end }}
 
-{{- if ($docker.enabled | default false) }}
-{{- if $docker.storages }}
-{{- range $storageName, $storage := $docker.storages }}
+{{- if ($podman.enabled | default false) }}
+{{- if $podman.storages }}
+{{- range $storageName, $storage := $podman.storages }}
 {{- if and $storage ($storage.enabled | default false) }}
 ---
-  {{- include "pvc-template" (dict "name" $storageName "storage" $storage "pvcPrefix" "docker-" "ctx" $ ) }}
+  {{- include "pvc-template" (dict "name" $storageName "storage" $storage "pvcPrefix" "podman-" "ctx" $ ) }}
 {{- end }}
 {{- end }}
 {{- end }}
