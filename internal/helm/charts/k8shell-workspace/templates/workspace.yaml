@@ -153,11 +153,25 @@ spec:
         - /bin/bash
         - -c
         - |
-          #mkdir -p /var/run/podman
+          _shutdown() { kill "$PODMAN_PID" 2>/dev/null; wait "$PODMAN_PID" 2>/dev/null; exit 0; }
+          trap _shutdown TERM INT
           podman system service --time=0 unix:///var/run/podman/podman.sock &
-          sleep 2
+          PODMAN_PID=$!
+          for i in $(seq 1 10); do
+            [ -S /var/run/podman/podman.sock ] && break
+            if ! kill -0 "$PODMAN_PID" 2>/dev/null; then
+              echo "podman service exited unexpectedly" >&2
+              exit 1
+            fi
+            sleep 0.2
+          done
+          if [ ! -S /var/run/podman/podman.sock ]; then
+            echo "podman socket not available after timeout" >&2
+            kill "$PODMAN_PID" 2>/dev/null
+            exit 1
+          fi
           chmod 777 /var/run/podman/podman.sock
-          wait
+          wait "$PODMAN_PID"
 
       # see https://docs.k8shell.io/concepts/overview/security#least-privileged-workspace-containers
       securityContext:
@@ -169,10 +183,6 @@ spec:
       volumeMounts:
         - name: podman-sock
           mountPath: /var/run/podman
-        - name: podman-containers-conf-volume
-          mountPath: /etc/containers/containers.conf
-          subPath: containers.conf
-          readOnly: true
       {{- if $podman.extFiles }}
       {{- range $path, $content := $podman.extFiles }}
         - name: podman-ext-files-volume
@@ -245,9 +255,6 @@ spec:
   {{- if ($podman.enabled | default false) }}
   - name: podman-sock
     emptyDir: {}
-  - name: podman-containers-conf-volume
-    configMap:
-      name: {{ .Values.__workspace__ }}-podman-containers-conf
   {{- if $podman.extFiles }}
   - name: podman-ext-files-volume
     configMap:

@@ -31,28 +31,3 @@ data:
 {{- end }}
 {{- if .Values.podman.containersConf }}
 {{- end }}
----
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: {{ .Values.__workspace__ }}-podman-containers-conf
-  namespace: {{ .Release.Namespace }}
-  labels:
-    {{- include "workspace.labels" . | nindent 4 }}
-    type: podman-containers-conf
-data:
-  containers.conf: |
-    [containers]
-    netns="host"
-    userns="host"
-    ipcns="host"
-    utsns="host"
-    cgroupns="host"
-    cgroups="disabled"
-    log_driver = "k8s-file"
-    [engine]
-    cgroup_manager = "cgroupfs"
-    events_logger="file"
-    runtime="crun"
-    [network]
-    default_network = "host"
