@@ -147,7 +147,7 @@ spec:
 
     #### podman engine container
     {{- if ($podman.enabled | default false) }}
-    - name: podman-engine
+    - name: k8shell-podman
       image: {{ $podman.image }}
       command:
         - /bin/bash
