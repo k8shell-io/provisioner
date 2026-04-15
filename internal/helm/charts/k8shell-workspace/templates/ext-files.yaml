@@ -29,5 +29,3 @@ data:
 {{ $content | indent 4 }}
 {{- end }}
 {{- end }}
-{{- if .Values.podman.containersConf }}
-{{- end }}

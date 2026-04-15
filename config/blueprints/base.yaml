@@ -42,22 +42,6 @@ blueprints:
       # group owner of podman unix socket
       groupId: 999
 
-      containersConf: |
-        [containers]
-        netns="host"
-        userns="host"
-        ipcns="host"
-        utsns="host"
-        cgroupns="host"
-        cgroups="disabled"
-        log_driver = "k8s-file"
-        [engine]
-        cgroup_manager = "cgroupfs"
-        events_logger="file"
-        runtime="crun"
-        [network]
-        default_network = "host"
-
       # use the same volumes as in the main workspace
       parentStorages: true
 

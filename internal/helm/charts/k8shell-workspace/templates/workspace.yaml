@@ -167,6 +167,30 @@ spec:
       volumeMounts:
         - name: podman-sock
           mountPath: /var/run/podman
+      {{- if .Values.__registry__.certCA }}
+        - name: podman-ca-cert
+          mountPath: /etc/ssl/certs/registry-ca.pem
+          subPath: registry-ca.pem
+      {{- end }}
+
+      {{- if and ($podman.parentStorages | default false) .Values.storages }}    
+      {{- range $storageName, $storage := .Values.storages }}
+      {{- if and $storage (kindIs "map" $storage) ($storage.enabled | default false) }}
+        - name: storage-{{ $storageName }}
+          mountPath: {{ $storage.path }}
+          readOnly: {{ $storage.readonly | default false }}
+      {{- end }}
+      {{- end }}
+      {{- end }}
+      {{- if $podman.storages }}
+      {{- range $storageName, $storage := $podman.storages }}
+      {{- if and $storage (kindIs "map" $storage) ($storage.enabled | default false) }}
+        - name: storage-podman-{{ $storageName }}
+          mountPath: {{ $storage.path }}
+          readOnly: {{ $storage.readonly | default false }}
+      {{- end }}
+      {{- end }}
+      {{- end }}
       {{- if $podman.extFiles }}
       {{- range $path, $content := $podman.extFiles }}
         - name: podman-ext-files-volume
