@@ -1,4 +1,4 @@
-{{- $docker := .Values.docker | default dict -}}
+{{- $podman := .Values.podman | default dict -}}
 
 apiVersion: v1
 kind: Pod
@@ -128,9 +128,10 @@ spec:
         subPath: {{ $path | replace "/" "__" }}
       {{- end }}
       {{- end }}
-      {{- if ($docker.enabled | default false) }}
-      - name: docker-sock
-        mountPath: /var/run/docker
+      {{- if ($podman.enabled | default false) }}
+      - name: podman-sock
+        mountPath: /var/run/podman/podman.sock
+        readOnly: true
       {{- end }}
       {{- if .Values.__certmanager__.enabled }}
       - name: {{ .Values.__workspace__ }}-cert
@@ -144,53 +145,30 @@ spec:
         mountPath: /run/secrets/jwt-verifier
         readOnly: true
 
-    #### docker container
-    {{- if ($docker.enabled | default false) }}
-    - name: k8shell-docker
-      image: {{ $docker.image }}
-      securityContext:
-        privileged: true
-      args:
-        - dockerd
-        - --host=unix:///var/run/docker/docker.sock
-        - --group=$(DOCKER_GROUP_GID)
-      env:
-        - name: DOCKER_GROUP_GID
-          value: "{{ $docker.groupId }}"
-      volumeMounts:
-        - name: docker-sock
-          mountPath: /var/run/docker
-      {{- if .Values.__registry__.certCA }}
-        - name: docker-ca-cert
-          mountPath: /etc/ssl/certs/registry-ca.pem
-          subPath: registry-ca.pem
-      {{- end }}
+    #### podman engine container
+    {{- if ($podman.enabled | default false) }}
+    - name: podman-engine
+      image: {{ $podman.image }}
+      command:
+        - /bin/bash
+        - -c
+        - |
+          mkdir -p /var/run/podman
+          podman system service --time=0 unix:///var/run/podman/podman.sock &
+          sleep 2
+          chmod 660 /var/run/podman/podman.sock
+          wait
 
-      {{- if and ($docker.parentStorages | default false) .Values.storages }}    
-      {{- range $storageName, $storage := .Values.storages }}
-      {{- if and $storage (kindIs "map" $storage) ($storage.enabled | default false) }}
-        - name: storage-{{ $storageName }}
-          mountPath: {{ $storage.path }}
-          readOnly: {{ $storage.readonly | default false }}
-      {{- end }}
-      {{- end }}
-      {{- end }}
-      {{- if $docker.storages }}
-      {{- range $storageName, $storage := $docker.storages }}
-      {{- if and $storage (kindIs "map" $storage) ($storage.enabled | default false) }}
-        - name: storage-docker-{{ $storageName }}
-          mountPath: {{ $storage.path }}
-          readOnly: {{ $storage.readonly | default false }}
-      {{- end }}
-      {{- end }}
-      {{- end }}
-      {{- if $docker.extFiles }}
-      {{- range $path, $content := $docker.extFiles }}
-        - name: docker-ext-files-volume
-          mountPath: {{ $path }}
-          subPath: {{ $path | replace "/" "__" }}
-      {{- end }}
-      {{- end }}
+      # see https://docs.k8shell.io/concepts/overview/security#least-privileged-workspace-containers
+      securityContext:
+        runAsUser: 1000
+        runAsGroup: {{ $podman.groupId }}
+        appArmorProfile:
+          type: Unconfined
+
+      volumeMounts:
+        - name: podman-sock
+          mountPath: /var/run/podman
     {{- end }}
 
   ####  list of volumes to mount into the containers
@@ -234,12 +212,12 @@ spec:
   {{- end }}
   {{- end }}
   {{- end }}
-  {{- if $docker.storages }}
-  {{- range $storageName, $storage := $docker.storages }}
+  {{- if $podman.storages }}
+  {{- range $storageName, $storage := $podman.storages }}
   {{- if and $storage (kindIs "map" $storage) ($storage.enabled | default false) }}
-  - name: storage-docker-{{ $storageName }}
+  - name: storage-podman-{{ $storageName }}
     persistentVolumeClaim:
-      claimName: pvc-{{ $.Values.__workspace__ }}-docker-{{ $storageName }}
+      claimName: pvc-{{ $.Values.__workspace__ }}-podman-{{ $storageName }}
   {{- end }}
   {{- end }}
   {{- end }}
@@ -253,22 +231,22 @@ spec:
           path: {{ $path | replace "/" "__" }}
         {{- end }}
   {{- end }}
-  {{- if ($docker.enabled | default false) }}
-  - name: docker-sock
-    emptyDir: {}  
-  {{- if $docker.extFiles }}
-  - name: dockker-ext-files-volume
+  {{- if ($podman.enabled | default false) }}
+  - name: podman-sock
+    emptyDir: {}
+  {{- if $podman.extFiles }}
+  - name: podman-ext-files-volume
     configMap:
-      name: {{ .Values.__workspace__ }}-docker-ext-files
+      name: {{ .Values.__workspace__ }}-podman-ext-files
       items:
-        {{- range $path, $content := $docker.extFiles }}
+        {{- range $path, $content := $podman.extFiles }}
         - key: {{ $path | replace "/" "__" | quote }}
           path: {{ $path | replace "/" "__" }}
         {{- end }}
   {{- end }}
   {{- end }}
   {{- if .Values.__registry__.certCA }}
-  - name: docker-ca-cert
+  - name: podman-ca-cert
     configMap:
       name: registryca
       items:

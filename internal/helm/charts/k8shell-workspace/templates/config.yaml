@@ -1,4 +1,4 @@
-{{- $docker := .Values.docker | default dict -}}
+{{- $podman := .Values.podman | default dict -}}
 {{- $k8shelld := .Values.k8shelld | default dict -}}
 
 apiVersion: v1
@@ -80,17 +80,17 @@ data:
       {{- end }}
       {{- end }}
     
-    # docker settings
-    docker:
-      enabled: {{ $docker.enabled | default false }}
-      createDockerSockSymlink: {{ $docker.enabled | default false }}
-      groupId: {{ $docker.groupId | default 999 }}
-      {{- $dockerStoragesYaml := include "workspace.storages" (dict "storages" $docker.storages) | trim }}
-      {{- if eq $dockerStoragesYaml "[]" }}
+    # podman settings
+    podman:
+      enabled: {{ $podman.enabled | default false }}
+      createDockerSockSymlink: {{ $podman.createDockerSockSymlink | default false }}
+      groupId: {{ $podman.groupId | default 999 }}
+      {{- $podmanStoragesYaml := include "workspace.storages" (dict "storages" $podman.storages) | trim }}
+      {{- if eq $podmanStoragesYaml "[]" }}
       storages: []
       {{- else }}
       storages:
-{{ $dockerStoragesYaml | nindent 8 }}
+{{ $podmanStoragesYaml | nindent 8 }}
       {{- end }}
 
     {{- $storagesYaml := include "workspace.storages" (dict "storages" .Values.storages) | trim }}
