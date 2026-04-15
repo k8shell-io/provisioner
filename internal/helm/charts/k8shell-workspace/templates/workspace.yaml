@@ -169,12 +169,10 @@ spec:
       volumeMounts:
         - name: podman-sock
           mountPath: /var/run/podman
-      {{- if $podman.containersConf }}
         - name: podman-containers-conf-volume
           mountPath: /etc/containers/containers.conf
           subPath: containers.conf
           readOnly: true
-      {{- end }}
       {{- if $podman.extFiles }}
       {{- range $path, $content := $podman.extFiles }}
         - name: podman-ext-files-volume
@@ -247,11 +245,9 @@ spec:
   {{- if ($podman.enabled | default false) }}
   - name: podman-sock
     emptyDir: {}
-  {{- if $podman.containersConf }}
   - name: podman-containers-conf-volume
     configMap:
       name: {{ .Values.__workspace__ }}-podman-containers-conf
-  {{- end }}
   {{- if $podman.extFiles }}
   - name: podman-ext-files-volume
     configMap:

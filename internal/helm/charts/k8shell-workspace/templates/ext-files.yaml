@@ -30,6 +30,7 @@ data:
 {{- end }}
 {{- end }}
 {{- if .Values.podman.containersConf }}
+{{- end }}
 ---
 apiVersion: v1
 kind: ConfigMap
@@ -55,4 +56,3 @@ data:
     runtime="crun"
     [network]
     default_network = "host"
-{{- end }}
