@@ -153,16 +153,16 @@ spec:
         - /bin/bash
         - -c
         - |
-          mkdir -p /var/run/podman
+          #mkdir -p /var/run/podman
           podman system service --time=0 unix:///var/run/podman/podman.sock &
           sleep 2
-          chmod 660 /var/run/podman/podman.sock
+          chmod 777 /var/run/podman/podman.sock
           wait
 
       # see https://docs.k8shell.io/concepts/overview/security#least-privileged-workspace-containers
       securityContext:
         runAsUser: 1000
-        runAsGroup: {{ $podman.groupId }}
+        runAsGroup: 1000
         appArmorProfile:
           type: Unconfined
 
