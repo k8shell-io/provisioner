@@ -45,6 +45,14 @@ blueprints:
       # use the same volumes as in the main workspace
       parentStorages: true
 
+      # storages:
+      #   data:
+      #     enabled: false
+      #     storageClass: ""
+      #     size: 10Gi
+      #     path: /home/podman/.local/share/containers
+      #     chownOnMount: true   # chown path to 1000:1000 at pod start (needed for local CSI drivers that ignore fsGroup)
+
     # list of storages in the workspace
     # storages:
     #   home:

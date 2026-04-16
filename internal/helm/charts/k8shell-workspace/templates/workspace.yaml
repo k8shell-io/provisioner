@@ -22,11 +22,6 @@ spec:
   {{ end }}  
   serviceAccountName: {{ .Values.__workspace__ }}-sa
   restartPolicy: OnFailure
-  {{- if ($podman.enabled | default false) }}
-  securityContext:
-    fsGroup: 1000
-    fsGroupChangePolicy: OnRootMismatch
-  {{- end }}
   {{- if and .Values.subdomain .Values.hostname }}
   hostname: {{ .Values.hostname }}
   subdomain: {{ .Values.subdomain }}
@@ -40,10 +35,25 @@ spec:
       securityContext:
         runAsUser: 0
         runAsGroup: 0
-      command: ["/bin/sh", "-c", "/k8shell/dist/scripts/init-base" ]
+      command:
+        - /bin/sh
+        - -c
+        - |
+          /k8shell/dist/scripts/init-base
+          {{- range $storageName, $storage := $podman.storages }}
+          {{- if and $storage (kindIs "map" $storage) ($storage.enabled | default false) ($storage.chownOnMount | default false) }}
+          chown 1000:1000 {{ $storage.path }}
+          {{- end }}
+          {{- end }}
       volumeMounts:
         - name: bin-volume
           mountPath: /usr/local/bin
+        {{- range $storageName, $storage := $podman.storages }}
+        {{- if and $storage (kindIs "map" $storage) ($storage.enabled | default false) ($storage.chownOnMount | default false) }}
+        - name: storage-podman-{{ $storageName }}
+          mountPath: {{ $storage.path }}
+        {{- end }}
+        {{- end }}
 
   containers:
     #### main container
@@ -154,22 +164,22 @@ spec:
     {{- if ($podman.enabled | default false) }}
     - name: k8shell-podman
       image: {{ $podman.image }}
-      command: ["/bin/sh"]
-      args:
-      - -c
-      - |
-        trap '' TERM INT
-        while true; do
-          sleep 86400
-        done
-
-      # command:
-      # - podman
+      # command: ["/bin/sh"]
       # args:
-      # - system
-      # - service
-      # - --time=0
-      # - unix:///var/run/podman/podman.sock
+      # - -c
+      # - |
+      #   trap '' TERM INT
+      #   while true; do
+      #     sleep 86400
+      #   done
+
+      command:
+      - podman
+      args:
+      - system
+      - service
+      - --time=0
+      - unix:///var/run/podman/podman.sock
         
       # see https://docs.k8shell.io/concepts/overview/security#least-privileged-workspace-containers
       securityContext:
