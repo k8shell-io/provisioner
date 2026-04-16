@@ -40,20 +40,13 @@ spec:
         - -c
         - |
           /k8shell/dist/scripts/init-base
-          {{- range $storageName, $storage := $podman.storages }}
-          {{- if and $storage (kindIs "map" $storage) ($storage.enabled | default false) ($storage.chownOnMount | default false) }}
-          chown 1000:1000 {{ $storage.path }}
-          {{- end }}
-          {{- end }}
+          {{- include "workspace.storage.chownCommands" (dict "storages" .Values.storages) | nindent 10 }}
+          {{- include "workspace.storage.chownCommands" (dict "storages" $podman.storages) | nindent 10 }}
       volumeMounts:
         - name: bin-volume
           mountPath: /usr/local/bin
-        {{- range $storageName, $storage := $podman.storages }}
-        {{- if and $storage (kindIs "map" $storage) ($storage.enabled | default false) ($storage.chownOnMount | default false) }}
-        - name: storage-podman-{{ $storageName }}
-          mountPath: {{ $storage.path }}
-        {{- end }}
-        {{- end }}
+        {{- include "workspace.storage.chownVolumeMounts" (dict "storages" .Values.storages "prefix" "") | nindent 8 }}
+        {{- include "workspace.storage.chownVolumeMounts" (dict "storages" $podman.storages "prefix" "podman-") | nindent 8 }}
 
   containers:
     #### main container

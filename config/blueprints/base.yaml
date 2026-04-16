@@ -51,7 +51,8 @@ blueprints:
       #     storageClass: ""
       #     size: 10Gi
       #     path: /home/podman/.local/share/containers
-      #     chownOnMount: true   # chown path to 1000:1000 at pod start (needed for local CSI drivers that ignore fsGroup)
+      #     fsOwnerId: 1000   # chown path to this uid at pod start (0 = skip)
+      #     fsOwnerGid: 1000  # chown path to this gid at pod start (0 = skip)
 
     # list of storages in the workspace
     # storages:

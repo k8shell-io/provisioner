@@ -178,3 +178,41 @@ Usage:
 {{- end }}
 {{- toYaml $storages -}}
 {{- end -}}
+
+{{/*
+Emit chown shell commands for storages that have fsOwnerId or fsOwnerGid set.
+Expects: dict "storages" <storages-map>
+*/}}
+{{- define "workspace.storage.chownCommands" -}}
+{{- range $name, $s := .storages -}}
+{{- if and $s (kindIs "map" $s) ($s.enabled | default false) -}}
+{{- $uid := $s.fsOwnerId | default 0 | int -}}
+{{- $gid := $s.fsOwnerGid | default 0 | int -}}
+{{- if and (ne $uid 0) (ne $gid 0) }}
+chown {{ $uid }}:{{ $gid }} {{ $s.path }}
+{{- else if ne $uid 0 }}
+chown {{ $uid }} {{ $s.path }}
+{{- else if ne $gid 0 }}
+chown :{{ $gid }} {{ $s.path }}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+
+{{/*
+Emit volumeMount entries for storages that have fsOwnerId or fsOwnerGid set.
+Expects: dict "storages" <storages-map> "prefix" <volume-name-prefix>
+*/}}
+{{- define "workspace.storage.chownVolumeMounts" -}}
+{{- $prefix := .prefix -}}
+{{- range $name, $s := .storages -}}
+{{- if and $s (kindIs "map" $s) ($s.enabled | default false) -}}
+{{- $uid := $s.fsOwnerId | default 0 | int -}}
+{{- $gid := $s.fsOwnerGid | default 0 | int -}}
+{{- if or (ne $uid 0) (ne $gid 0) }}
+- name: storage-{{ $prefix }}{{ $name }}
+  mountPath: {{ $s.path }}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
