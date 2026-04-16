@@ -27,6 +27,7 @@ type RawBlueprint struct {
 	Description string
 	Template    string
 	IsTemplate  bool
+	SourceFile  string
 	Node        *yaml.Node
 }
 
@@ -424,7 +425,7 @@ func (bm *BlueprintManager) extractFromSequence(root *yaml.Node, path string) er
 }
 
 // extractSingleRawBlueprint extracts a single raw blueprint.
-func (bm *BlueprintManager) extractSingleRawBlueprint(node *yaml.Node, _ string) error {
+func (bm *BlueprintManager) extractSingleRawBlueprint(node *yaml.Node, path string) error {
 	var bpData map[string]interface{}
 	if err := node.Decode(&bpData); err != nil {
 		bpData = make(map[string]interface{})
@@ -448,11 +449,16 @@ func (bm *BlueprintManager) extractSingleRawBlueprint(node *yaml.Node, _ string)
 		isTemplate = t
 	}
 
+	if existing, exists := bm.rawBlueprints[name]; exists {
+		return fmt.Errorf("duplicate blueprint name %q: already defined in %s", name, existing.SourceFile)
+	}
+
 	bm.rawBlueprints[name] = &RawBlueprint{
 		Name:        name,
 		Description: descr,
 		Template:    template,
 		IsTemplate:  isTemplate,
+		SourceFile:  path,
 		Node:        node,
 	}
 
@@ -489,11 +495,16 @@ func (bm *BlueprintManager) extractMultipleRawBlueprints(node *yaml.Node, path s
 		descr, _ := item["description"].(string)
 		descr = strings.Join(strings.Fields(descr), " ")
 
+		if existing, exists := bm.rawBlueprints[name]; exists {
+			return fmt.Errorf("duplicate blueprint name %q: already defined in %s", name, existing.SourceFile)
+		}
+
 		bm.rawBlueprints[name] = &RawBlueprint{
 			Name:        name,
 			Description: descr,
 			Template:    template,
 			IsTemplate:  isTemplate,
+			SourceFile:  path,
 			Node:        childNode,
 		}
 	}
