@@ -348,6 +348,15 @@ func (bm *BlueprintManager) loadRawBlueprints(dir string) error {
 		if err != nil {
 			return err
 		}
+		// Skip Kubernetes ConfigMap internal directories (e.g. ..2024_01_01_12_00_00.000000000)
+		// which contain the real files that are symlinked from the mount root.
+		// Walking both would cause duplicate blueprint names.
+		if strings.HasPrefix(d.Name(), "..") {
+			if d.IsDir() {
+				return fs.SkipDir
+			}
+			return nil
+		}
 		if d.IsDir() {
 			return nil
 		}
