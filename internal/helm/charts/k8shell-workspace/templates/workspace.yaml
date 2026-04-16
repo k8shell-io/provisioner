@@ -22,6 +22,11 @@ spec:
   {{ end }}  
   serviceAccountName: {{ .Values.__workspace__ }}-sa
   restartPolicy: OnFailure
+  {{- if ($podman.enabled | default false) }}
+  securityContext:
+    fsGroup: 1000
+    fsGroupChangePolicy: OnRootMismatch
+  {{- end }}
   {{- if and .Values.subdomain .Values.hostname }}
   hostname: {{ .Values.hostname }}
   subdomain: {{ .Values.subdomain }}
