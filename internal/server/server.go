@@ -57,6 +57,44 @@ func NewServer(configFile string, appVersion string, commit string) (*Server, er
 	server.bpManager, err = blueprint.NewBlueprintManager(blueprint.LoadOptions{
 		Dir:         blueprintDir,
 		EnableWatch: true,
+		Strategies: blueprint.MergeStrategies{
+			// initScripts: child entries with a matching name replace the parent entry;
+			// entries with unique names are appended.
+			"initScripts": func(parent, child []interface{}) []interface{} {
+				result := make([]interface{}, 0, len(parent))
+				childByName := make(map[string]interface{})
+				for _, item := range child {
+					if m, ok := item.(map[string]interface{}); ok {
+						if name, ok := m["name"].(string); ok && name != "" {
+							childByName[name] = item
+						}
+					}
+				}
+				for _, item := range parent {
+					if m, ok := item.(map[string]interface{}); ok {
+						if name, ok := m["name"].(string); ok {
+							if override, exists := childByName[name]; exists {
+								result = append(result, override)
+								delete(childByName, name)
+								continue
+							}
+						}
+					}
+					result = append(result, item)
+				}
+				// append any child scripts that didn't exist in parent
+				for _, item := range child {
+					if m, ok := item.(map[string]interface{}); ok {
+						if name, ok := m["name"].(string); ok && name != "" {
+							if _, remaining := childByName[name]; remaining {
+								result = append(result, item)
+							}
+						}
+					}
+				}
+				return result
+			},
+		},
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to create blueprint manager: %w", err)

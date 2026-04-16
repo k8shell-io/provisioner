@@ -235,10 +235,8 @@ spec:
       - key: README
         path: README
         {{- range $index, $script := .Values.initScripts }}
-          {{- range $key, $value := $script }}
-      - key: __init_{{ printf "%02d" (add $index 1) }}_{{ $key | replace "&" "__bg" | replace "@" "__flag" }}
-        path: __init_{{ printf "%02d" (add $index 1) }}_{{ $key | replace "&" "__bg" | replace "@" "__flag" }}
-          {{- end }}
+      - key: __init_{{ printf "%02d" (add $index 1) }}_{{ $script.name }}
+        path: __init_{{ printf "%02d" (add $index 1) }}_{{ $script.name }}
         {{- end }}
   {{- if .Values.storages }}
   {{- range $storageName, $storage := .Values.storages }}
