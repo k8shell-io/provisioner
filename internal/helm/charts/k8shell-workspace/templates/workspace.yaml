@@ -230,7 +230,7 @@ spec:
   - name: main-volume
     configMap:
       name: {{ .Values.__workspace__ }}-files
-      defaultMode: 0777
+      defaultMode: 0755
       items:
       - key: README
         path: README
