@@ -154,13 +154,22 @@ spec:
     {{- if ($podman.enabled | default false) }}
     - name: k8shell-podman
       image: {{ $podman.image }}
-      command:
-      - podman
+      command: ["/bin/sh"]
       args:
-      - system
-      - service
-      - --time=0
-      - unix:///var/run/podman/podman.sock
+      - -c
+      - |
+        trap '' TERM INT
+        while true; do
+          sleep 86400
+        done
+
+      # command:
+      # - podman
+      # args:
+      # - system
+      # - service
+      # - --time=0
+      # - unix:///var/run/podman/podman.sock
         
       # see https://docs.k8shell.io/concepts/overview/security#least-privileged-workspace-containers
       securityContext:
