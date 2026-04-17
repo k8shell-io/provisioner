@@ -366,6 +366,12 @@ func (w *Workspace) Values() (map[string]interface{}, error) {
 		"signingMethod": w.config.JWTVerifier.SigningMethod,
 	}
 
+	blueprintYAML, err := yaml.Marshal(w.blueprint)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal blueprint to YAML: %w", err)
+	}
+	values["__blueprintyaml__"] = string(blueprintYAML)
+
 	return values, nil
 }
 

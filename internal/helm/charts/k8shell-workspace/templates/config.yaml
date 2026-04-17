@@ -84,21 +84,6 @@ data:
     podman:
       enabled: {{ $podman.enabled | default false }}
       createDockerSockSymlink: {{ $podman.createDockerSockSymlink | default false }}
-      {{- $podmanStoragesYaml := include "workspace.storages" (dict "storages" $podman.storages) | trim }}
-      {{- if eq $podmanStoragesYaml "[]" }}
-      storages: []
-      {{- else }}
-      storages:
-{{ $podmanStoragesYaml | nindent 8 }}
-      {{- end }}
-
-    {{- $storagesYaml := include "workspace.storages" (dict "storages" .Values.storages) | trim }}
-    {{- if eq $storagesYaml "[]" }}
-    storages: []
-    {{- else }}
-    storages:
-{{ $storagesYaml | nindent 6 }}
-    {{- end }}
 
     # apps
     # global switch to enable/disable apps
@@ -141,3 +126,5 @@ data:
       tokenPath: {{ .Values.__jwtVerifier__.tokenPath }}
       publicKeyPath: {{ .Values.__jwtVerifier__.publicKeyPath }}
       signingMethod: {{ .Values.__jwtVerifier__.signingMethod }}
+  blueprint.yaml: |-
+{{ .Values.__blueprintyaml__ | indent 4 }}

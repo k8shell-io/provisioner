@@ -227,6 +227,8 @@ spec:
       items:
       - key: config.yaml
         path: config.yaml
+      - key: blueprint.yaml
+        path: blueprint.yaml
   - name: main-volume
     configMap:
       name: {{ .Values.__workspace__ }}-files
