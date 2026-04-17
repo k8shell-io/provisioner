@@ -61,7 +61,7 @@ func (w *Workspace) buildConfigYAML() (string, error) {
 		ReapZombies: k8shelldcfg.ReapZombies{Enabled: true},
 	}
 
-	out, err := marshalYAMLAllFields(cfg)
+	out, err := marshalYAML2(cfg)
 	if err != nil {
 		return "", fmt.Errorf("failed to marshal k8shelld config YAML: %w", err)
 	}
