@@ -482,6 +482,7 @@ func (p *ProvisionerService) prepareWorkspaceWithUserStr(ctx context.Context,
 	user := gapi.ProtoToUser(userpb)
 
 	var blueprintObj *models.Blueprint
+	var resolvedBpName string
 	switch {
 	case userStr.Identity.BlueprintKind == models.BlueprintKindCustom:
 		blueprintpb, err := p.server.Identity.GetBlueprintByUserStr(ctx, &identityv1.UserStr{Userstr: userStr.CanonicalUserStr})
@@ -546,6 +547,7 @@ func (p *ProvisionerService) prepareWorkspaceWithUserStr(ctx context.Context,
 			return nil, status.Errorf(codes.InvalidArgument,
 				"Blueprint %s is a template and cannot be used to provision a workspace", userStr.Identity.Blueprint)
 		}
+		resolvedBpName = bpName
 	}
 
 	workspace, err := ws.NewWorkspace(userStr.WorkspaceName, blueprintObj, user, userStr,
@@ -553,6 +555,7 @@ func (p *ProvisionerService) prepareWorkspaceWithUserStr(ctx context.Context,
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "Failed to create workspace: %v", err)
 	}
+	workspace.SetBlueprintChain(p.server.bpManager.GetBlueprintChain(resolvedBpName))
 
 	return workspace, nil
 }

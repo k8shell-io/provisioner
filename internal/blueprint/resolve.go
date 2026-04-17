@@ -39,6 +39,9 @@ func (bm *BlueprintManager) resolveRawTemplate(bpName string, visited map[string
 	}
 
 	if bp.Template == "" {
+		if len(bp.InheritanceChain) == 0 {
+			bp.InheritanceChain = []string{bpName}
+		}
 		return bp, nil
 	}
 
@@ -57,11 +60,12 @@ func (bm *BlueprintManager) resolveRawTemplate(bpName string, visited map[string
 	}
 
 	return &RawBlueprint{
-		Name:        bp.Name,
-		Description: bp.Description,
-		Template:    bp.Template,
-		IsTemplate:  bp.IsTemplate,
-		Node:        mergedNode,
+		Name:             bp.Name,
+		Description:      bp.Description,
+		Template:         bp.Template,
+		IsTemplate:       bp.IsTemplate,
+		Node:             mergedNode,
+		InheritanceChain: append(parent.InheritanceChain, bpName),
 	}, nil
 }
 

@@ -32,13 +32,14 @@ type Workspace struct {
 	client   *helm.Client
 	identify *identity.IdentityClient
 
-	Name          string
-	JobId         string
-	log           *zerolog.Logger
-	blueprint     *models.Blueprint
-	user          *models.User
-	userStr       *models.CanonicalUserStr
-	workspaceLock *WorkspaceLock
+	Name           string
+	JobId          string
+	log            *zerolog.Logger
+	blueprint      *models.Blueprint
+	blueprintChain []string // ordered inheritance chain from root ancestor to this blueprint
+	user           *models.User
+	userStr        *models.CanonicalUserStr
+	workspaceLock  *WorkspaceLock
 }
 
 type Values struct {
@@ -292,6 +293,11 @@ func (w *Workspace) SetJobId(jobId string) {
 	w.JobId = jobId
 }
 
+// SetBlueprintChain stores the inheritance chain for this workspace's blueprint.
+func (w *Workspace) SetBlueprintChain(chain []string) {
+	w.blueprintChain = chain
+}
+
 func (w *Workspace) CreateLock() *WorkspaceLock {
 	return NewWorkspaceLock(
 		w.client.KubeClient(),
@@ -369,6 +375,10 @@ func (w *Workspace) Values() (map[string]interface{}, error) {
 	blueprintYAML, err := yaml.Marshal(w.blueprint)
 	if err != nil {
 		return nil, fmt.Errorf("failed to marshal blueprint to YAML: %w", err)
+	}
+	if len(w.blueprintChain) > 0 {
+		comment := "# inheritance: " + strings.Join(w.blueprintChain, " -> ") + "\n"
+		blueprintYAML = append([]byte(comment), blueprintYAML...)
 	}
 	values["__blueprintyaml__"] = string(blueprintYAML)
 

@@ -27,12 +27,13 @@ import (
 
 // RawBlueprint represents an unprocessed blueprint with CEL expressions intact.
 type RawBlueprint struct {
-	Name        string
-	Description string
-	Template    string
-	IsTemplate  bool
-	SourceFile  string
-	Node        *yaml.Node
+	Name             string
+	Description      string
+	Template         string
+	IsTemplate       bool
+	SourceFile       string
+	Node             *yaml.Node
+	InheritanceChain []string // ordered list of blueprint names from root ancestor to this blueprint
 }
 
 type BlueprintScope struct {
@@ -286,6 +287,19 @@ func (bm *BlueprintManager) GetBlueprint(name string, scope *BlueprintScope) (*m
 	}
 
 	return &bp, nil
+}
+
+// GetBlueprintChain returns the inheritance chain for the given blueprint name.
+// The chain is an ordered slice from the root ancestor to the blueprint itself, e.g. ["base", "git-dev", "dev"].
+// Returns nil if the blueprint is not found.
+func (bm *BlueprintManager) GetBlueprintChain(name string) []string {
+	bm.mu.RLock()
+	defer bm.mu.RUnlock()
+	rawBp, exists := bm.rawBlueprints[name]
+	if !exists {
+		return nil
+	}
+	return rawBp.InheritanceChain
 }
 
 // GetBlueprintsSummary returns a summary of all available blueprints without evaluating CEL expressions.
