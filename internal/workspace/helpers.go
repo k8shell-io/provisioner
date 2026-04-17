@@ -1,8 +1,10 @@
 package workspace
 
 import (
+	"bytes"
 	"fmt"
 	"os"
+	"reflect"
 	"strings"
 	"time"
 
@@ -361,4 +363,111 @@ func getSelector(labels map[string]string) string {
 	}
 
 	return strings.Join(selectors, ",")
+}
+
+// marshalYAML2 marshals v to YAML using 2-space indentation.
+func marshalYAML2(v interface{}) ([]byte, error) {
+	var buf bytes.Buffer
+	enc := yaml.NewEncoder(&buf)
+	enc.SetIndent(2)
+	if err := enc.Encode(v); err != nil {
+		return nil, err
+	}
+	return buf.Bytes(), nil
+}
+
+// marshalYAMLAllFields marshals a struct to YAML with 2-space indentation,
+// including all fields even if they hold zero values (ignoring omitempty tags).
+func marshalYAMLAllFields(v interface{}) ([]byte, error) {
+	full, err := toFullValue(reflect.ValueOf(v))
+	if err != nil {
+		return nil, err
+	}
+	return marshalYAML2(full)
+}
+
+// toFullValue recursively converts a reflect.Value to a plain Go value
+// (map, slice, scalar) using yaml tag names and preserving zero values.
+func toFullValue(rv reflect.Value) (interface{}, error) {
+	for rv.Kind() == reflect.Ptr || rv.Kind() == reflect.Interface {
+		if rv.IsNil() {
+			return nil, nil
+		}
+		rv = rv.Elem()
+	}
+	switch rv.Kind() {
+	case reflect.Struct:
+		return structToFullMap(rv)
+	case reflect.Slice:
+		if rv.IsNil() {
+			return []interface{}{}, nil
+		}
+		result := make([]interface{}, rv.Len())
+		for i := 0; i < rv.Len(); i++ {
+			v, err := toFullValue(rv.Index(i))
+			if err != nil {
+				return nil, err
+			}
+			result[i] = v
+		}
+		return result, nil
+	case reflect.Map:
+		if rv.IsNil() {
+			return map[string]interface{}{}, nil
+		}
+		result := make(map[string]interface{})
+		for _, k := range rv.MapKeys() {
+			v, err := toFullValue(rv.MapIndex(k))
+			if err != nil {
+				return nil, err
+			}
+			result[fmt.Sprintf("%v", k.Interface())] = v
+		}
+		return result, nil
+	default:
+		return rv.Interface(), nil
+	}
+}
+
+// structToFullMap converts a struct reflect.Value to a map[string]interface{}
+// keyed by yaml tag names (falling back to lowercase field name), including all
+// exported fields regardless of omitempty.
+func structToFullMap(rv reflect.Value) (map[string]interface{}, error) {
+	rt := rv.Type()
+	result := make(map[string]interface{})
+	for i := 0; i < rt.NumField(); i++ {
+		field := rt.Field(i)
+		if !field.IsExported() {
+			continue
+		}
+		fv := rv.Field(i)
+		name := strings.ToLower(field.Name)
+		inline := false
+		if tag := field.Tag.Get("yaml"); tag != "" {
+			parts := strings.SplitN(tag, ",", 2)
+			if parts[0] == "-" {
+				continue
+			}
+			if parts[0] != "" {
+				name = parts[0]
+			}
+			if len(parts) > 1 && strings.Contains(parts[1], "inline") {
+				inline = true
+			}
+		}
+		val, err := toFullValue(fv)
+		if err != nil {
+			return nil, err
+		}
+		if inline {
+			if m, ok := val.(map[string]interface{}); ok {
+				for k, v := range m {
+					result[k] = v
+				}
+			}
+		} else {
+			result[name] = val
+		}
+	}
+	return result, nil
 }

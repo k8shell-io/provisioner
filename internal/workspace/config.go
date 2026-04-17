@@ -5,7 +5,6 @@ import (
 
 	k8shelldcfg "github.com/k8shell-io/common/pkg/api/client/k8shelld"
 	"github.com/k8shell-io/common/pkg/gapi"
-	"gopkg.in/yaml.v3"
 )
 
 // buildConfigYAML constructs the k8shelld config.yaml content from the workspace's
@@ -62,7 +61,7 @@ func (w *Workspace) buildConfigYAML() (string, error) {
 		ReapZombies: k8shelldcfg.ReapZombies{Enabled: true},
 	}
 
-	out, err := yaml.Marshal(cfg)
+	out, err := marshalYAMLAllFields(cfg)
 	if err != nil {
 		return "", fmt.Errorf("failed to marshal k8shelld config YAML: %w", err)
 	}

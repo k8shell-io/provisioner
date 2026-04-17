@@ -370,7 +370,7 @@ func (w *Workspace) Values() (map[string]interface{}, error) {
 	}
 	values["__configyaml__"] = configYAML
 
-	rawBpYAML, err := yaml.Marshal(w.blueprint)
+	rawBpYAML, err := marshalYAMLAllFields(w.blueprint)
 	if err != nil {
 		return nil, fmt.Errorf("failed to marshal blueprint to YAML: %w", err)
 	}
@@ -387,7 +387,7 @@ func (w *Workspace) Values() (map[string]interface{}, error) {
 		Metadata:  metadata,
 		Blueprint: bpMap,
 	}
-	blueprintYAML, err := yaml.Marshal(fileContent)
+	blueprintYAML, err := marshalYAML2(fileContent)
 	if err != nil {
 		return nil, fmt.Errorf("failed to marshal blueprint file YAML: %w", err)
 	}
