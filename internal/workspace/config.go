@@ -40,29 +40,6 @@ func (w *Workspace) buildConfigYAML() (string, error) {
 		grpc.KeyFile = "/etc/tls/k8shelld/tls.key"
 	}
 
-	// Only include enabled apps in the config file.
-	var apps k8shelldcfg.Apps
-	for name, app := range bp.Apps {
-		if !app.Enabled {
-			continue
-		}
-		if apps == nil {
-			apps = make(k8shelldcfg.Apps)
-		}
-		apps[name] = &k8shelldcfg.AppSpec{
-			Binary:        app.Binary,
-			VersionCmd:    app.VersionCmd,
-			VersionRegex:  app.VersionRegex,
-			Install:       app.Install,
-			Start:         app.Start,
-			Listen:        app.Listen,
-			RestartPolicy: app.RestartPolicy,
-			InstallAsRoot: app.InstallAsRoot,
-			AutoStart:     app.AutoStart,
-			Protocol:      app.Protocol,
-		}
-	}
-
 	cfg := k8shelldcfg.Config{
 		System: k8shelldcfg.System{
 			PProf: false,
@@ -75,21 +52,14 @@ func (w *Workspace) buildConfigYAML() (string, error) {
 		Identity: k8shelldcfg.Identity{
 			TokenPath:     "/run/secrets/identity-token/token",
 			PublicKeyPath: "/run/secrets/jwt-verifier/public-key.pem",
-			SigningMethod:  w.config.JWTVerifier.SigningMethod,
+			SigningMethod: w.config.JWTVerifier.SigningMethod,
 		},
-		Splash: bp.Splash,
 		TerminateOrphans: k8shelldcfg.TerminateOrphans{
 			Enabled:       true,
 			CheckInterval: 5,
 			Exclude:       bp.K8shelld.IgnoreOrphans,
 		},
 		ReapZombies: k8shelldcfg.ReapZombies{Enabled: true},
-		Podman: k8shelldcfg.PodmanConfig{
-			Enabled:                 bp.Podman.Enabled,
-			CreateDockerSockSymlink: bp.Podman.CreateDockerSockSymlink,
-		},
-		EnableApps: bp.EnableApps,
-		Apps:       apps,
 	}
 
 	out, err := yaml.Marshal(cfg)
