@@ -3,6 +3,7 @@ package blueprint
 import (
 	"errors"
 	"fmt"
+	"strings"
 
 	"gopkg.in/yaml.v3"
 )
@@ -67,11 +68,12 @@ func (bm *BlueprintManager) resolveRawTemplate(bpName string, visited map[string
 // mergeYAMLNodes merges two YAML nodes, preserving CEL expressions.
 func (bm *BlueprintManager) mergeYAMLNodes(parent, child *yaml.Node) (*yaml.Node, error) {
 	// Instead of decoding to maps (which loses tags), we need to merge at the node level
-	return bm.mergeYAMLNodesWithTags(parent, child)
+	return bm.mergeYAMLNodesWithTags(parent, child, "")
 }
 
-// mergeYAMLNodesWithTags merges YAML nodes while preserving all tags
-func (bm *BlueprintManager) mergeYAMLNodesWithTags(parent, child *yaml.Node) (*yaml.Node, error) {
+// mergeYAMLNodesWithTags merges YAML nodes while preserving all tags.
+// path tracks the dotted key path for strategy lookup (e.g. "storages.home.claimSpec").
+func (bm *BlueprintManager) mergeYAMLNodesWithTags(parent, child *yaml.Node, path string) (*yaml.Node, error) {
 	if child.Kind != yaml.MappingNode {
 		return child, nil
 	}
@@ -104,7 +106,11 @@ func (bm *BlueprintManager) mergeYAMLNodesWithTags(parent, child *yaml.Node) (*y
 			key := keyNode.Value
 
 			if parentValue, exists := parentKeys[key]; exists {
-				mergedValue, err := bm.mergeValueNodes(parentValue, valueNode, key)
+				childPath := key
+				if path != "" {
+					childPath = path + "." + key
+				}
+				mergedValue, err := bm.mergeValueNodes(parentValue, valueNode, key, childPath)
 				if err != nil {
 					return nil, err
 				}
@@ -133,22 +139,46 @@ func (bm *BlueprintManager) mergeYAMLNodesWithTags(parent, child *yaml.Node) (*y
 	return result, nil
 }
 
-// mergeValueNodes merges two value nodes based on their types and merge strategies
-func (bm *BlueprintManager) mergeValueNodes(parentValue, childValue *yaml.Node, key string) (*yaml.Node, error) {
+// mergeValueNodes merges two value nodes based on their types and merge strategies.
+// key is the immediate key name; path is the full dotted path used for strategy lookup.
+func (bm *BlueprintManager) mergeValueNodes(parentValue, childValue *yaml.Node, key, path string) (*yaml.Node, error) {
 	if parentValue.Kind == yaml.MappingNode && childValue.Kind == yaml.MappingNode {
-		return bm.mergeYAMLNodesWithTags(parentValue, childValue)
+		return bm.mergeYAMLNodesWithTags(parentValue, childValue, path)
 	}
 
 	if parentValue.Kind == yaml.SequenceNode && childValue.Kind == yaml.SequenceNode {
-		return bm.mergeSequenceNodes(parentValue, childValue, key)
+		return bm.mergeSequenceNodes(parentValue, childValue, key, path)
 	}
 
 	return childValue, nil
 }
 
-// mergeSequenceNodes merges two sequence nodes based on the configured strategy
-func (bm *BlueprintManager) mergeSequenceNodes(parentSeq, childSeq *yaml.Node, key string) (*yaml.Node, error) {
-	if strategy, exists := bm.strategies[key]; exists {
+// findStrategy returns the merge strategy for a sequence node by checking:
+// 1. Exact full path (e.g. "storages.home.claimSpec.accessModes")
+// 2. Suffix match (e.g. "claimSpec.accessModes" matches any path ending with it)
+// 3. Bare key name (e.g. "initScripts")
+func (bm *BlueprintManager) findStrategy(key, path string) func([]interface{}, []interface{}) []interface{} {
+	if s, ok := bm.strategies[path]; ok {
+		return s
+	}
+	for k, s := range bm.strategies {
+		if strings.HasSuffix(path, "."+k) {
+			return s
+		}
+	}
+	if s, ok := bm.strategies[key]; ok {
+		return s
+	}
+	return nil
+}
+
+// mergeSequenceNodes merges two sequence nodes based on the configured strategy.
+// Strategy lookup checks for an exact full-path match first, then a suffix match
+// (e.g. "claimSpec.accessModes" matches "storages.home.claimSpec.accessModes"),
+// then falls back to the bare key name.
+func (bm *BlueprintManager) mergeSequenceNodes(parentSeq, childSeq *yaml.Node, key, path string) (*yaml.Node, error) {
+	strategy := bm.findStrategy(key, path)
+	if strategy != nil {
 		var parentList, childList []interface{}
 
 		if err := parentSeq.Decode(&parentList); err != nil {

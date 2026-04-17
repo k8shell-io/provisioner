@@ -12,10 +12,15 @@ blueprints:
     storages:
       home:
         enabled: true
-        size: 10Gi
-        storageClass: !cel env("WORKSPACE_STORAGE_CLASS")
         path: !cel "'/home/' + user.username"
-        readonly: False
+        readonly: false
+        claimSpec:
+          storageClassName: !cel env("WORKSPACE_STORAGE_CLASS")
+          accessModes:
+            - ReadWriteMany
+          resources:
+            requests:
+              storage: 10Gi
 
     docker:
       enabled: true

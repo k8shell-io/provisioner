@@ -48,19 +48,29 @@ blueprints:
       # storages:
       #   data:
       #     enabled: false
-      #     storageClass: ""
-      #     size: 10Gi
       #     path: /home/podman/.local/share/containers
-      #     fsOwnerId: 1000   # chown path to this uid at pod start (0 = skip)
-      #     fsOwnerGid: 1000  # chown path to this gid at pod start (0 = skip)
+      #     fsOwnerUid: 1000   # chown path to this uid at pod start (0 = skip)
+      #     fsOwnerGid: 1000   # chown path to this gid at pod start (0 = skip)
+      #     claimSpec:
+      #       storageClassName: ""
+      #       accessModes:
+      #         - ReadWriteMany
+      #       resources:
+      #         requests:
+      #           storage: 10Gi
 
     # list of storages in the workspace
     # storages:
     #   home:
     #     enabled: false
-    #     storageClass: ""
-    #     size: 10Gi
     #     path: !cel "'/home/' + user.username"
-    #     readonly: False
+    #     readonly: false
+    #     claimSpec:
+    #       storageClassName: ""
+    #       accessModes:
+    #         - ReadWriteMany
+    #       resources:
+    #         requests:
+    #           storage: 10Gi
 
     enableApps: false

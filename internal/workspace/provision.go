@@ -10,6 +10,7 @@ import (
 
 	"github.com/k8shell-io/common/pkg/models"
 	"github.com/k8shell-io/provisioner/internal/helm"
+	"gopkg.in/yaml.v3"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -290,22 +291,35 @@ func (w *Workspace) ensureSharedStorages(ctx context.Context) error {
 			return fmt.Errorf("failed to check shared PVC %s: %w", pvcName, err)
 		}
 
+		var claimSpec corev1.PersistentVolumeClaimSpec
+		if storage.ClaimSpec != nil {
+			raw, err := yaml.Marshal(storage.ClaimSpec)
+			if err != nil {
+				return fmt.Errorf("storage %q: failed to marshal claimSpec: %w", name, err)
+			}
+			if err := yaml.Unmarshal(raw, &claimSpec); err != nil {
+				return fmt.Errorf("storage %q: invalid claimSpec: %w", name, err)
+			}
+		}
+
 		if err == nil {
 			// PVC already exists — check for parameter mismatches and warn
 			existingStorage := existing.Spec.Resources.Requests[corev1.ResourceStorage]
-			if existingStorage.String() != storage.Size {
-				w.log.Warn().
-					Str("pvc", pvcName).
-					Str("existingSize", existingStorage.String()).
-					Str("requestedSize", storage.Size).
-					Msgf("Shared PVC %s already exists with different size; skipping update", pvcName)
+			if requestedStorage, ok := claimSpec.Resources.Requests[corev1.ResourceStorage]; ok {
+				if existingStorage.String() != requestedStorage.String() {
+					w.log.Warn().
+						Str("pvc", pvcName).
+						Str("existingSize", existingStorage.String()).
+						Str("requestedSize", requestedStorage.String()).
+						Msgf("Shared PVC %s already exists with different size; skipping update", pvcName)
+				}
 			}
-			if storage.StorageClass != "" && existing.Spec.StorageClassName != nil &&
-				*existing.Spec.StorageClassName != storage.StorageClass {
+			if claimSpec.StorageClassName != nil && existing.Spec.StorageClassName != nil &&
+				*existing.Spec.StorageClassName != *claimSpec.StorageClassName {
 				w.log.Warn().
 					Str("pvc", pvcName).
 					Str("existingStorageClass", *existing.Spec.StorageClassName).
-					Str("requestedStorageClass", storage.StorageClass).
+					Str("requestedStorageClass", *claimSpec.StorageClassName).
 					Msgf("Shared PVC %s already exists with different storageClass; skipping update", pvcName)
 			}
 			continue
@@ -322,21 +336,13 @@ func (w *Workspace) ensureSharedStorages(ctx context.Context) error {
 					"k8shell.io/storage-name":       name,
 					"io.k8shell.provisioner/commit": w.client.Commit,
 				},
-				Annotations: storage.Annotations,
+				Annotations: storage.ClaimSpecAnnotations,
 			},
-			Spec: corev1.PersistentVolumeClaimSpec{
-				AccessModes: []corev1.PersistentVolumeAccessMode{corev1.ReadWriteMany},
-				Resources: corev1.VolumeResourceRequirements{
-					Requests: corev1.ResourceList{
-						corev1.ResourceStorage: mustParseQuantity(storage.Size),
-					},
-				},
-			},
+			Spec: claimSpec,
 		}
 
-		if storage.StorageClass != "" {
-			sc := storage.StorageClass
-			pvc.Spec.StorageClassName = &sc
+		if _, err := kubeClient.CoreV1().PersistentVolumeClaims(namespace).Create(ctx, pvc, metav1.CreateOptions{DryRun: []string{metav1.DryRunAll}}); err != nil {
+			return fmt.Errorf("storage %q: claimSpec rejected by API server (dry-run): %w", name, err)
 		}
 
 		if _, err := kubeClient.CoreV1().PersistentVolumeClaims(namespace).Create(ctx, pvc, metav1.CreateOptions{}); err != nil {

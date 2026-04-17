@@ -58,6 +58,11 @@ func NewServer(configFile string, appVersion string, commit string) (*Server, er
 		Dir:         blueprintDir,
 		EnableWatch: true,
 		Strategies: blueprint.MergeStrategies{
+			// claimSpec.accessModes: child replaces parent entirely — appending access modes makes no sense.
+			// Using the full path avoids colliding with any other "accessModes" key elsewhere in the tree.
+			"claimSpec.accessModes": func(_, child []interface{}) []interface{} {
+				return child
+			},
 			// initScripts: child entries with a matching name replace the parent entry;
 			// entries with unique names are appended.
 			"initScripts": func(parent, child []interface{}) []interface{} {

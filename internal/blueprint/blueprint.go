@@ -19,6 +19,7 @@ import (
 	"github.com/k8shell-io/yaml-cel/pkg/yamlcel"
 	"github.com/rs/zerolog"
 	"gopkg.in/yaml.v3"
+	corev1 "k8s.io/api/core/v1"
 )
 
 // RawBlueprint represents an unprocessed blueprint with CEL expressions intact.
@@ -196,14 +197,52 @@ func (bm *BlueprintManager) validateAllBlueprints() []error {
 		bp, err := bm.GetBlueprint(name, validationScope)
 		if err != nil {
 			allErrors = append(allErrors, fmt.Errorf("blueprint '%s': %w", name, err))
+			continue
 		}
 		v := bp.Validate()
 		if v != nil {
 			allErrors = append(allErrors, fmt.Errorf("blueprint '%s': %v", name, v))
 		}
+		for _, e := range validateClaimSpecs(bp) {
+			allErrors = append(allErrors, fmt.Errorf("blueprint '%s': %w", name, e))
+		}
 	}
 
 	return allErrors
+}
+
+// validateClaimSpecs decodes each storage claimSpec into corev1.PersistentVolumeClaimSpec
+// to catch structural errors early, before any Kubernetes API call is made.
+func validateClaimSpecs(bp *models.Blueprint) []error {
+	type namedStorage struct {
+		name    string
+		storage models.Storage
+	}
+
+	var all []namedStorage
+	for name, s := range bp.Storages {
+		all = append(all, namedStorage{name, s})
+	}
+	for name, s := range bp.Podman.Storages {
+		all = append(all, namedStorage{"podman." + name, s})
+	}
+
+	var errs []error
+	for _, ns := range all {
+		if ns.storage.ClaimSpec == nil {
+			continue
+		}
+		raw, err := yaml.Marshal(ns.storage.ClaimSpec)
+		if err != nil {
+			errs = append(errs, fmt.Errorf("storage %q: failed to marshal claimSpec: %w", ns.name, err))
+			continue
+		}
+		var spec corev1.PersistentVolumeClaimSpec
+		if err := yaml.Unmarshal(raw, &spec); err != nil {
+			errs = append(errs, fmt.Errorf("storage %q: invalid claimSpec: %w", ns.name, err))
+		}
+	}
+	return errs
 }
 
 // GetBlueprint evaluates CEL expressions for a specific blueprint with given scope.

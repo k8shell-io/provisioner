@@ -25,12 +25,12 @@ blueprints:
 
     storages:
       home:
-        annotations:
+        claimSpecAnnotations:
           zfs-csi.k8shell.io/volume-name: !cel "workspaceName"
           zfs-csi.k8shell.io/retain-on-delete: "false"
       shared:
         readonly: false
-        annotations:
+        claimSpecAnnotations:
           zfs-csi.k8shell.io/volume-name: !cel "metadata.repoOwner + '/shared'"
 
     initScripts:

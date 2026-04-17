@@ -100,23 +100,16 @@ kind: PersistentVolumeClaim
 metadata:
   name: "pvc-{{ .ctx.Values.__workspace__ }}-{{ .pvcPrefix }}{{ .name }}"
   namespace: {{ .ctx.Release.Namespace }} 
-  {{- if .storage.annotations }}
+  {{- if .storage.claimSpecAnnotations }}
   annotations:
-  {{- range $key, $value := .storage.annotations }}
+  {{- range $key, $value := .storage.claimSpecAnnotations }}
     {{ $key | quote }}: {{ $value | quote }}
   {{- end }}
   {{- end }}
   labels:
     {{ include "workspace.labels" .ctx | nindent 4 }}
 spec:
-  {{ if .storage.storageClass }}
-  storageClassName: {{ .storage.storageClass }}
-  {{ end }}
-  accessModes:
-    - ReadWriteMany
-  resources:
-    requests:
-      storage: {{ .storage.size }}
+  {{- toYaml .storage.claimSpec | nindent 2 }}
 {{- end }}
 
 {{/*
