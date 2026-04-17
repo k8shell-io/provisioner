@@ -13,8 +13,11 @@ import (
 	"sync"
 	"time"
 
+	"encoding/json"
+
 	"github.com/k8shell-io/common/pkg/config"
 	log "github.com/k8shell-io/common/pkg/logger"
+
 	"github.com/k8shell-io/common/pkg/models"
 	"github.com/k8shell-io/yaml-cel/pkg/yamlcel"
 	"github.com/rs/zerolog"
@@ -231,13 +234,13 @@ func validateClaimSpecs(bp *models.Blueprint) []error {
 		if ns.storage.ClaimSpec == nil {
 			continue
 		}
-		raw, err := yaml.Marshal(ns.storage.ClaimSpec)
+		jsonRaw, err := json.Marshal(ns.storage.ClaimSpec)
 		if err != nil {
 			errs = append(errs, fmt.Errorf("storage %q: failed to marshal claimSpec: %w", ns.name, err))
 			continue
 		}
 		var spec corev1.PersistentVolumeClaimSpec
-		if err := yaml.Unmarshal(raw, &spec); err != nil {
+		if err := json.Unmarshal(jsonRaw, &spec); err != nil {
 			errs = append(errs, fmt.Errorf("storage %q: invalid claimSpec: %w", ns.name, err))
 		}
 	}

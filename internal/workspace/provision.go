@@ -8,9 +8,10 @@ import (
 	"sync"
 	"time"
 
+	"encoding/json"
+
 	"github.com/k8shell-io/common/pkg/models"
 	"github.com/k8shell-io/provisioner/internal/helm"
-	"gopkg.in/yaml.v3"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -293,11 +294,11 @@ func (w *Workspace) ensureSharedStorages(ctx context.Context) error {
 
 		var claimSpec corev1.PersistentVolumeClaimSpec
 		if storage.ClaimSpec != nil {
-			raw, err := yaml.Marshal(storage.ClaimSpec)
+			jsonRaw, err := json.Marshal(storage.ClaimSpec)
 			if err != nil {
 				return fmt.Errorf("storage %q: failed to marshal claimSpec: %w", name, err)
 			}
-			if err := yaml.Unmarshal(raw, &claimSpec); err != nil {
+			if err := json.Unmarshal(jsonRaw, &claimSpec); err != nil {
 				return fmt.Errorf("storage %q: invalid claimSpec: %w", name, err)
 			}
 		}
