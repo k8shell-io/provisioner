@@ -21,9 +21,6 @@ blueprints:
       ignoreOrphans:
         - .*JetBrains.*
 
-    portForwarding:
-      - localnetworks:0
-
     network:
       networkPolicy: system
 

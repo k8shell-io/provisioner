@@ -363,18 +363,33 @@ func (w *Workspace) Values() (map[string]interface{}, error) {
 	values["__identity__"] = w.user.Source
 	values["__userstr__"] = userstrB64
 	values["__jobid__"] = w.JobId
-	values["__apiserver__"] = map[string]interface{}{
-		"enabled": w.config.K8shellCapabilities.APIServerEnabled,
-	}
-	values["__jwtVerifier__"] = map[string]interface{}{ // #nosec G101 -- these are file paths, not credentials
-		"tokenPath":     "/run/secrets/identity-token/token",
-		"publicKeyPath": "/run/secrets/jwt-verifier/public-key.pem",
-		"signingMethod": w.config.JWTVerifier.SigningMethod,
-	}
 
-	blueprintYAML, err := yaml.Marshal(w.blueprint)
+	configYAML, err := w.buildConfigYAML()
+	if err != nil {
+		return nil, fmt.Errorf("failed to build config YAML: %w", err)
+	}
+	values["__configyaml__"] = configYAML
+
+	rawBpYAML, err := yaml.Marshal(w.blueprint)
 	if err != nil {
 		return nil, fmt.Errorf("failed to marshal blueprint to YAML: %w", err)
+	}
+	var bpMap map[string]interface{}
+	if err := yaml.Unmarshal(rawBpYAML, &bpMap); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal blueprint map: %w", err)
+	}
+	metadata := bpMap["metadata"]
+	delete(bpMap, "metadata")
+	fileContent := struct {
+		Metadata  interface{} `yaml:"metadata"`
+		Blueprint interface{} `yaml:"blueprint"`
+	}{
+		Metadata:  metadata,
+		Blueprint: bpMap,
+	}
+	blueprintYAML, err := yaml.Marshal(fileContent)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal blueprint file YAML: %w", err)
 	}
 	if len(w.blueprintChain) > 0 {
 		comment := "# inheritance: " + strings.Join(w.blueprintChain, " -> ") + "\n"
