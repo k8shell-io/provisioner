@@ -151,7 +151,6 @@ func (bm *BlueprintManager) loadAndValidateBlueprints() (err error) {
 
 	defer func() {
 		if err != nil {
-			bm.log.Error().Err(err).Msg("Failed to load and validate blueprints")
 			bm.mu.Lock()
 			bm.rawBlueprints = originalBlueprints
 			bm.mu.Unlock()
