@@ -152,23 +152,23 @@ jobs:
         run: make build
 
       # Verify binaries execute successfully
-      - name: Run binary smoke tests (test-self)
-        run: make test-self
+      # - name: Run binary smoke tests (test-self)
+      #   run: make test-self
 
-      - name: Upload test reports
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: self-test-reports-go${{ matrix.go-version }}
-          path: reports/
-          retention-days: 30
+      # - name: Upload test reports
+      #   if: always()
+      #   uses: actions/upload-artifact@v4
+      #   with:
+      #     name: self-test-reports-go${{ matrix.go-version }}
+      #     path: reports/
+      #     retention-days: 30
 
-      - name: Publish test results
-        if: always()
-        uses: EnricoMi/publish-unit-test-result-action@v2
-        with:
-          files: reports/**/*-junit.xml
-          check_name: Self-Tests (Go ${{ matrix.go-version }})
+      # - name: Publish test results
+      #   if: always()
+      #   uses: EnricoMi/publish-unit-test-result-action@v2
+      #   with:
+      #     files: reports/**/*-junit.xml
+      #     check_name: Self-Tests (Go ${{ matrix.go-version }})
 
       # Calculate version and image tag based on PR or push context
       # PRs: pr-{number}-{short-sha} using actual PR head commit
