@@ -209,6 +209,9 @@ func (bm *BlueprintManager) validateAllBlueprints() []error {
 		for _, e := range validateClaimSpecs(bp) {
 			allErrors = append(allErrors, fmt.Errorf("blueprint '%s': %w", name, e))
 		}
+		for _, e := range validateSecurityContexts(bp) {
+			allErrors = append(allErrors, fmt.Errorf("blueprint '%s': %w", name, e))
+		}
 	}
 
 	return allErrors
@@ -245,6 +248,50 @@ func validateClaimSpecs(bp *models.Blueprint) []error {
 			errs = append(errs, fmt.Errorf("storage %q: invalid claimSpec: %w", ns.name, err))
 		}
 	}
+	return errs
+}
+
+// validateSecurityContexts decodes Blueprint.SecurityContext and Podman.SecurityContext
+// into corev1.SecurityContext to catch structural errors early, before any Kubernetes API call is made.
+// It also enforces that runAsUser and runAsGroup must be 0 for the main container (k8shelld requirement).
+func validateSecurityContexts(bp *models.Blueprint) []error {
+	var errs []error
+
+	// Validate main container security context
+	if len(bp.SecurityContext) > 0 {
+		jsonRaw, err := json.Marshal(bp.SecurityContext)
+		if err != nil {
+			errs = append(errs, fmt.Errorf("securityContext: failed to marshal: %w", err))
+		} else {
+			var spec corev1.SecurityContext
+			if err := json.Unmarshal(jsonRaw, &spec); err != nil {
+				errs = append(errs, fmt.Errorf("securityContext: invalid: %w", err))
+			} else {
+				// k8shelld requires running as root (UID 0, GID 0)
+				// If not set, they will default to 0 in the template
+				if spec.RunAsUser != nil && *spec.RunAsUser != 0 {
+					errs = append(errs, fmt.Errorf("securityContext: runAsUser must be 0 (required by k8shelld), got %d", *spec.RunAsUser))
+				}
+				if spec.RunAsGroup != nil && *spec.RunAsGroup != 0 {
+					errs = append(errs, fmt.Errorf("securityContext: runAsGroup must be 0 (required by k8shelld), got %d", *spec.RunAsGroup))
+				}
+			}
+		}
+	}
+
+	// Validate podman sidecar security context
+	if len(bp.Podman.SecurityContext) > 0 {
+		jsonRaw, err := json.Marshal(bp.Podman.SecurityContext)
+		if err != nil {
+			errs = append(errs, fmt.Errorf("podman.securityContext: failed to marshal: %w", err))
+		} else {
+			var spec corev1.SecurityContext
+			if err := json.Unmarshal(jsonRaw, &spec); err != nil {
+				errs = append(errs, fmt.Errorf("podman.securityContext: invalid: %w", err))
+			}
+		}
+	}
+
 	return errs
 }
 

@@ -1,4 +1,6 @@
 {{- $podman := .Values.podman | default dict -}}
+{{- $defaultSecurityContext := dict "runAsUser" 0 "runAsGroup" 0 -}}
+{{- $securityContext := merge (dict) (.Values.securityContext | default dict) $defaultSecurityContext -}}
 
 apiVersion: v1
 kind: Pod
@@ -53,12 +55,7 @@ spec:
     - name: k8shell-main
       image: {{ include "workspace.mainImage" . }}
       securityContext:
-        runAsUser: 0
-        runAsGroup: 0
-        {{- if .Values.capabilities }}
-        capabilities:
-          add: {{ toYaml .Values.capabilities | nindent 12 }}
-        {{- end }}
+        {{- toYaml $securityContext | nindent 8 }}
       command: ["/usr/local/bin/k8shelld"] 
       imagePullPolicy: {{ .Values.imagePullPolicy }}
       resizePolicy:
@@ -175,11 +172,16 @@ spec:
       - unix:///var/run/podman/podman.sock
         
       # see https://docs.k8shell.io/concepts/overview/security#least-privileged-workspace-containers
+      {{- if $podman.securityContext }}
+      securityContext:
+        {{- toYaml $podman.securityContext | nindent 8 }}
+      {{- else }}
       securityContext:
         runAsUser: 1000
         runAsGroup: 1000
         appArmorProfile:
           type: Unconfined
+      {{- end }}
 
       volumeMounts:
         - name: podman-sock
