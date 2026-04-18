@@ -275,6 +275,31 @@ func validateSecurityContexts(bp *models.Blueprint) []error {
 				if spec.RunAsGroup != nil && *spec.RunAsGroup != 0 {
 					errs = append(errs, fmt.Errorf("securityContext: runAsGroup must be 0 (required by k8shelld), got %d", *spec.RunAsGroup))
 				}
+
+				// k8shelld requires root privileges for user management and file operations
+				if spec.RunAsNonRoot != nil && *spec.RunAsNonRoot {
+					errs = append(errs, fmt.Errorf("securityContext: runAsNonRoot cannot be true (k8shelld requires root for user management)"))
+				}
+				if spec.ReadOnlyRootFilesystem != nil && *spec.ReadOnlyRootFilesystem {
+					errs = append(errs, fmt.Errorf("securityContext: readOnlyRootFilesystem cannot be true (k8shelld must write to /etc/passwd, /etc/group, /etc/sudoers.d)"))
+				}
+				if spec.AllowPrivilegeEscalation != nil && !*spec.AllowPrivilegeEscalation {
+					errs = append(errs, fmt.Errorf("securityContext: allowPrivilegeEscalation cannot be false (sudo requires privilege escalation)"))
+				}
+
+				// Check for dropped capabilities that k8shelld requires
+				if spec.Capabilities != nil && len(spec.Capabilities.Drop) > 0 {
+					for _, cap := range spec.Capabilities.Drop {
+						switch cap {
+						case "CHOWN":
+							errs = append(errs, fmt.Errorf("securityContext: cannot drop CHOWN capability (required for home directory and podman socket ownership)"))
+						case "SETUID", "SETGID":
+							errs = append(errs, fmt.Errorf("securityContext: cannot drop %s capability (required for init scripts and file operations)", cap))
+						case "DAC_OVERRIDE":
+							errs = append(errs, fmt.Errorf("securityContext: cannot drop DAC_OVERRIDE capability (required for useradd/groupadd and sudoers writes)"))
+						}
+					}
+				}
 			}
 		}
 	}
