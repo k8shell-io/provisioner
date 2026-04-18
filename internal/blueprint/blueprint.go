@@ -287,16 +287,38 @@ func validateSecurityContexts(bp *models.Blueprint) []error {
 					errs = append(errs, fmt.Errorf("securityContext: allowPrivilegeEscalation cannot be false (sudo requires privilege escalation)"))
 				}
 
-				// Check for dropped capabilities that k8shelld requires
-				if spec.Capabilities != nil && len(spec.Capabilities.Drop) > 0 {
+				if spec.Capabilities != nil {
+					requiredCaps := []corev1.Capability{"CHOWN", "SETUID", "SETGID", "DAC_OVERRIDE"}
+
+					droppedAll := false
 					for _, cap := range spec.Capabilities.Drop {
-						switch cap {
-						case "CHOWN":
-							errs = append(errs, fmt.Errorf("securityContext: cannot drop CHOWN capability (required for home directory and podman socket ownership)"))
-						case "SETUID", "SETGID":
-							errs = append(errs, fmt.Errorf("securityContext: cannot drop %s capability (required for init scripts and file operations)", cap))
-						case "DAC_OVERRIDE":
-							errs = append(errs, fmt.Errorf("securityContext: cannot drop DAC_OVERRIDE capability (required for useradd/groupadd and sudoers writes)"))
+						if cap == "ALL" {
+							droppedAll = true
+							break
+						}
+					}
+
+					if droppedAll {
+						addedCaps := make(map[corev1.Capability]bool)
+						for _, cap := range spec.Capabilities.Add {
+							addedCaps[cap] = true
+						}
+
+						for _, reqCap := range requiredCaps {
+							if !addedCaps[reqCap] {
+								errs = append(errs, fmt.Errorf("securityContext: %s capability is required by k8shelld but dropped with ALL (must be explicitly added back)", reqCap))
+							}
+						}
+					} else {
+						for _, cap := range spec.Capabilities.Drop {
+							switch cap {
+							case "CHOWN":
+								errs = append(errs, fmt.Errorf("securityContext: cannot drop CHOWN capability (required for home directory and podman socket ownership)"))
+							case "SETUID", "SETGID":
+								errs = append(errs, fmt.Errorf("securityContext: cannot drop %s capability (required for init scripts and file operations)", cap))
+							case "DAC_OVERRIDE":
+								errs = append(errs, fmt.Errorf("securityContext: cannot drop DAC_OVERRIDE capability (required for useradd/groupadd and sudoers writes)"))
+							}
 						}
 					}
 				}
@@ -304,7 +326,6 @@ func validateSecurityContexts(bp *models.Blueprint) []error {
 		}
 	}
 
-	// Validate podman sidecar security context
 	if len(bp.Podman.SecurityContext) > 0 {
 		jsonRaw, err := json.Marshal(bp.Podman.SecurityContext)
 		if err != nil {
