@@ -235,7 +235,7 @@ func workspacePodStatus(pod *corev1.Pod) models.WorkspaceStatusMessage {
 
 // workspacePodMessage returns a single message consistent with workspacePodStatus
 func workspacePodMessage(pod *corev1.Pod) string {
-	return analyzePodStatus(pod).String()
+	return analyzePodStatus(pod).message
 }
 
 // podTopReason returns the "best" actionable reason/message from init containers first,
@@ -284,12 +284,14 @@ func podTopReason(pod *corev1.Pod) (reason string, message string) {
 		if cs.RestartCount > 0 && cs.LastTerminationState.Terminated != nil {
 			term := cs.LastTerminationState.Terminated
 			if term.ExitCode != 0 {
-				// Container is in restart loop
-				if term.Reason != "" {
+				// Container is in restart loop - provide exit code and restart count
+				if term.Reason != "" && term.Reason != "Error" {
+					// Use the termination reason (e.g., "OOMKilled")
 					return "CrashLoopBackOff", fmt.Sprintf("%s (exit code %d, %d restarts)",
-						term.Message, term.ExitCode, cs.RestartCount)
+						term.Reason, term.ExitCode, cs.RestartCount)
 				}
-				return "CrashLoopBackOff", fmt.Sprintf("Container crashed with exit code %d (%d restarts)",
+				// Generic crash - include exit code and restart count
+				return "CrashLoopBackOff", fmt.Sprintf("Container failed with exit code %d (%d restarts)",
 					term.ExitCode, cs.RestartCount)
 			}
 		}
