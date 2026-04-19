@@ -257,7 +257,6 @@ func validateClaimSpecs(bp *models.Blueprint) []error {
 func validateSecurityContexts(bp *models.Blueprint) []error {
 	var errs []error
 
-	// Validate main container security context
 	if len(bp.SecurityContext) > 0 {
 		jsonRaw, err := json.Marshal(bp.SecurityContext)
 		if err != nil {
@@ -267,8 +266,6 @@ func validateSecurityContexts(bp *models.Blueprint) []error {
 			if err := json.Unmarshal(jsonRaw, &spec); err != nil {
 				errs = append(errs, fmt.Errorf("securityContext: invalid: %w", err))
 			} else {
-				// k8shelld requires running as root (UID 0, GID 0)
-				// If not set, they will default to 0 in the template
 				if spec.RunAsUser != nil && *spec.RunAsUser != 0 {
 					errs = append(errs, fmt.Errorf("securityContext: runAsUser must be 0 (required by k8shelld), got %d", *spec.RunAsUser))
 				}
@@ -276,7 +273,6 @@ func validateSecurityContexts(bp *models.Blueprint) []error {
 					errs = append(errs, fmt.Errorf("securityContext: runAsGroup must be 0 (required by k8shelld), got %d", *spec.RunAsGroup))
 				}
 
-				// k8shelld requires root privileges for user management and file operations
 				if spec.RunAsNonRoot != nil && *spec.RunAsNonRoot {
 					errs = append(errs, fmt.Errorf("securityContext: runAsNonRoot cannot be true (k8shelld requires root for user management)"))
 				}
