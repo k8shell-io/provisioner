@@ -111,16 +111,22 @@ func analyzePodStatus(pod *corev1.Pod) podStatusInfo {
 		if isTransientErrorReason(containerReason) {
 			info.status = models.WorkspaceStatusProvisioning
 			if containerMsg != "" {
-				info.message = formatStatusMessage(info.phase, "Starting", containerMsg)
+				info.message = containerMsg
 			} else {
-				info.message = formatStatusMessage(info.phase, "Starting", "Container is starting")
+				info.message = "Container is starting"
 			}
+			info.reason = "" // Don't use transient "Error" as the reason
 			return info
 		}
 		if isProvisioningReason(containerReason) {
 			if podAnyContainerImagePending(pod) {
 				info.status = models.WorkspaceStatusPulling
-				info.message = formatStatusMessage(info.phase, "Pulling", "Downloading container images")
+				// Use K8s reason, provide image download context in message
+				if containerMsg != "" {
+					info.message = formatStatusMessage(info.phase, containerReason, containerMsg)
+				} else {
+					info.message = formatStatusMessage(info.phase, containerReason, "Downloading container images")
+				}
 			} else {
 				info.status = models.WorkspaceStatusProvisioning
 				info.message = formatStatusMessage(info.phase, containerReason, containerMsg)
@@ -134,14 +140,19 @@ func analyzePodStatus(pod *corev1.Pod) podStatusInfo {
 	case corev1.PodPending:
 		if podAnyContainerImagePending(pod) {
 			info.status = models.WorkspaceStatusPulling
-			info.message = formatStatusMessage(info.phase, "Pulling", "Downloading container images")
+			// Check for K8s reason, don't use custom "Pulling" reason
+			if pod.Status.Reason != "" {
+				info.message = formatStatusMessage(info.phase, pod.Status.Reason, pod.Status.Message)
+			} else {
+				info.message = "Downloading container images"
+			}
 		} else {
 			info.status = models.WorkspaceStatusProvisioning
 			// Check for scheduling issues
 			if pod.Status.Reason != "" {
 				info.message = formatStatusMessage(info.phase, pod.Status.Reason, pod.Status.Message)
 			} else {
-				info.message = formatStatusMessage(info.phase, "Pending", "Waiting for resources")
+				info.message = "Waiting for resources"
 			}
 		}
 
@@ -161,22 +172,28 @@ func analyzePodStatus(pod *corev1.Pod) podStatusInfo {
 					info.message = formatStatusMessage(info.phase, notReadyReason, notReadyMsg)
 				}
 			} else {
-				// Generic "not ready"
+				// Generic "not ready" - no K8s reason available
 				info.status = models.WorkspaceStatusProvisioning
-				info.message = formatStatusMessage(info.phase, "Starting", "Containers are starting")
+				info.message = "Containers are starting"
 			}
 		}
 
 	case corev1.PodSucceeded:
 		info.status = models.WorkspaceStatusStopped
-		info.message = formatStatusMessage(info.phase, "Succeeded", "Workspace completed")
+		if pod.Status.Reason != "" {
+			info.message = formatStatusMessage(info.phase, pod.Status.Reason, pod.Status.Message)
+		} else {
+			info.message = "Workspace completed"
+		}
 
 	case corev1.PodFailed:
 		info.status = models.WorkspaceStatusFailing
 		if pod.Status.Reason != "" {
 			info.message = formatStatusMessage(info.phase, pod.Status.Reason, pod.Status.Message)
+		} else if pod.Status.Message != "" {
+			info.message = pod.Status.Message
 		} else {
-			info.message = formatStatusMessage(info.phase, "Failed", pod.Status.Message)
+			info.message = "Pod failed"
 		}
 
 	default:
@@ -229,10 +246,16 @@ func podTopReason(pod *corev1.Pod) (reason string, message string) {
 			return cs.State.Waiting.Reason, cs.State.Waiting.Message
 		}
 		if cs.State.Terminated != nil && cs.State.Terminated.ExitCode != 0 {
+			// Use K8s reason if available, otherwise just return empty reason with message
 			if cs.State.Terminated.Reason != "" {
 				return cs.State.Terminated.Reason, cs.State.Terminated.Message
 			}
-			return "InitContainerError", cs.State.Terminated.Message
+			// No K8s reason available, return empty reason with message
+			msg := cs.State.Terminated.Message
+			if msg == "" {
+				msg = fmt.Sprintf("Init container exited with code %d", cs.State.Terminated.ExitCode)
+			}
+			return "", msg
 		}
 	}
 
@@ -244,10 +267,16 @@ func podTopReason(pod *corev1.Pod) (reason string, message string) {
 
 		// Current terminated state
 		if cs.State.Terminated != nil && cs.State.Terminated.ExitCode != 0 {
+			// Use K8s reason if available, otherwise just return empty reason with message
 			if cs.State.Terminated.Reason != "" {
 				return cs.State.Terminated.Reason, cs.State.Terminated.Message
 			}
-			return "ContainerError", cs.State.Terminated.Message
+			// No K8s reason available, return empty reason with message
+			msg := cs.State.Terminated.Message
+			if msg == "" {
+				msg = fmt.Sprintf("Container %s exited with code %d", cs.Name, cs.State.Terminated.ExitCode)
+			}
+			return "", msg
 		}
 
 		// Check last termination state for containers with restarts
@@ -293,7 +322,8 @@ func podNotReadyReason(pod *corev1.Pod) (reason, message string) {
 			}
 			if cs.State.Running != nil {
 				// Container is running but not ready (failing readiness probes?)
-				return "NotReady", fmt.Sprintf("Container %s is running but not passing readiness checks", cs.Name)
+				// No K8s reason for this, just return message
+				return "", fmt.Sprintf("Container %s is running but not passing readiness checks", cs.Name)
 			}
 		}
 	}
