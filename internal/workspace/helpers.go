@@ -190,7 +190,8 @@ func workspacePodStatus(pod *corev1.Pod) models.WorkspaceStatusMessage {
 
 // workspacePodMessage returns a single message consistent with workspacePodStatus
 func workspacePodMessage(pod *corev1.Pod) string {
-	return analyzePodStatus(pod).message
+	s := analyzePodStatus(pod)
+	return fmt.Sprintf("%s (phase=%s, reason=%s)", s.message, s.phase, s.reason)
 }
 
 // podTopReason returns the "best" actionable reason/message from init containers first,
