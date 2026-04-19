@@ -286,38 +286,38 @@ func validateSecurityContexts(bp *models.Blueprint) []error {
 					errs = append(errs, fmt.Errorf("securityContext: allowPrivilegeEscalation cannot be false"))
 				}
 
-				if spec.Capabilities != nil {
-					droppedAll := false
-					for _, cap := range spec.Capabilities.Drop {
-						if cap == "ALL" {
-							droppedAll = true
-							break
-						}
-					}
+				// if spec.Capabilities != nil {
+				// 	droppedAll := false
+				// 	for _, cap := range spec.Capabilities.Drop {
+				// 		if cap == "ALL" {
+				// 			droppedAll = true
+				// 			break
+				// 		}
+				// 	}
 
-					if droppedAll {
-						addedCaps := make(map[corev1.Capability]bool)
-						for _, cap := range spec.Capabilities.Add {
-							addedCaps[cap] = true
-						}
+				// 	if droppedAll {
+				// 		addedCaps := make(map[corev1.Capability]bool)
+				// 		for _, cap := range spec.Capabilities.Add {
+				// 			addedCaps[cap] = true
+				// 		}
 
-						for _, reqCap := range requiredCaps {
-							if !addedCaps[reqCap] {
-								errs = append(errs,
-									fmt.Errorf("securityContext: %s capability is required by k8shelld but dropped with ALL", reqCap))
-							}
-						}
-					} else {
-						for _, cap := range spec.Capabilities.Drop {
-							for _, reqCap := range requiredCaps {
-								if cap == reqCap {
-									errs = append(errs,
-										fmt.Errorf("securityContext: cannot drop %s capability", cap))
-								}
-							}
-						}
-					}
-				}
+				// 		for _, reqCap := range requiredCaps {
+				// 			if !addedCaps[reqCap] {
+				// 				errs = append(errs,
+				// 					fmt.Errorf("securityContext: %s capability is required by k8shelld but dropped with ALL", reqCap))
+				// 			}
+				// 		}
+				// 	} else {
+				// 		for _, cap := range spec.Capabilities.Drop {
+				// 			for _, reqCap := range requiredCaps {
+				// 				if cap == reqCap {
+				// 					errs = append(errs,
+				// 						fmt.Errorf("securityContext: cannot drop %s capability", cap))
+				// 				}
+				// 			}
+				// 		}
+				// 	}
+				// }
 			}
 		}
 	}
