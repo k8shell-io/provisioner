@@ -459,8 +459,8 @@ func (w *Workspace) waitForPodRunning(ctx context.Context, startTime time.Time,
 				return status, nil
 
 			case models.WorkspaceStatusFailing, models.WorkspaceStatusStopped:
-				return status, fmt.Errorf("workspace %s is in final state: %s - %s",
-					podName, status.Status, status.Message)
+				return status, fmt.Errorf("workspace %s failed to start: %s",
+					podName, status.Message)
 
 			case models.WorkspaceStatusPulling:
 				if !pullingReported && pullReportSince >= pullReportDelay {
