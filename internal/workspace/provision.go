@@ -672,7 +672,7 @@ func (w *Workspace) isCriticalError(message string) error {
 	}
 
 	patterns := []errorPattern{
-		// Image errors
+		// Image errors - these are critical and should stop provisioning
 		{"failed to pull image", 1, "image"},
 		{"imagepullbackoff", 2, "image"},
 		{"errimagepull", 3, "image"},
@@ -680,17 +680,20 @@ func (w *Workspace) isCriticalError(message string) error {
 		{"image not found", 5, "image"},
 		{"authentication required", 6, "image"},
 
-		// Resource errors
+		// Resource errors - only truly critical ones
 		{"insufficient memory", 7, "resources"},
 		{"insufficient cpu", 8, "resources"},
-		{"no nodes available", 9, "resources"},
 
-		// Storage errors
-		{"unbound immediate persistentvolumeclaims", 10, "storage"},
+		// NOTE: PVC/scheduling errors are NOT critical - they may resolve as PVCs provision
+		// These are visible in the event stream but don't stop provisioning
+		// "unbound immediate persistentvolumeclaims" - REMOVED (temporary during PVC provisioning)
+		// "failed scheduling" - REMOVED (temporary during PVC provisioning)
+		// "failedbinding" - kept as it indicates a real problem
 		{"failedbinding", 11, "storage"},
+
+		// Storage provisioning failures - these indicate real problems
 		{"failed to provision volume", 12, "storage"},
 		{"provisioningfailed", 13, "storage"},
-		{"failed scheduling", 14, "scheduling"},
 	}
 
 	for _, pattern := range patterns {

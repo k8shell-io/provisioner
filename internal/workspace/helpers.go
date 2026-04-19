@@ -106,6 +106,17 @@ func analyzePodStatus(pod *corev1.Pod) podStatusInfo {
 			info.message = formatStatusMessage(info.phase, containerReason, containerMsg)
 			return info
 		}
+		// Transient errors (like "Error") are treated as provisioning, not failing
+		// They often appear briefly before CrashLoopBackOff
+		if isTransientErrorReason(containerReason) {
+			info.status = models.WorkspaceStatusProvisioning
+			if containerMsg != "" {
+				info.message = formatStatusMessage(info.phase, "Starting", containerMsg)
+			} else {
+				info.message = formatStatusMessage(info.phase, "Starting", "Container is starting")
+			}
+			return info
+		}
 		if isProvisioningReason(containerReason) {
 			if podAnyContainerImagePending(pod) {
 				info.status = models.WorkspaceStatusPulling
@@ -299,9 +310,19 @@ func isFailingReason(reason string) bool {
 		"RunContainerError",
 		"ContainerError",
 		"OOMKilled",
-		"Error",
 		"InvalidImageName",
 		"RegistryUnavailable":
+		return true
+	default:
+		return false
+	}
+}
+
+// isTransientErrorReason returns true for error reasons that may be temporary
+// during container startup (like "Error" which appears briefly before CrashLoopBackOff)
+func isTransientErrorReason(reason string) bool {
+	switch reason {
+	case "Error":
 		return true
 	default:
 		return false
