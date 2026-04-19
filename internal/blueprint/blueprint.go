@@ -58,6 +58,9 @@ func (bs *BlueprintScope) ToMap() (map[string]any, error) {
 
 var ErrBlueprintNotFound = errors.New("blueprint not found")
 
+// requiredCaps are the capabilities that k8shelld requires to function properly.
+var requiredCaps = []corev1.Capability{"CHOWN", "SETUID", "SETGID"}
+
 // MergeStrategies allow custom list merging strategies per dotted path.
 type MergeStrategies map[string]func(dst, src []interface{}) []interface{}
 
@@ -267,57 +270,54 @@ func validateSecurityContexts(bp *models.Blueprint) []error {
 				errs = append(errs, fmt.Errorf("securityContext: invalid: %w", err))
 			} else {
 				if spec.RunAsUser != nil && *spec.RunAsUser != 0 {
-					errs = append(errs, fmt.Errorf("securityContext: runAsUser must be 0 (required by k8shelld), got %d", *spec.RunAsUser))
+					errs = append(errs, fmt.Errorf("securityContext: runAsUser must be 0, got %d", *spec.RunAsUser))
 				}
 				if spec.RunAsGroup != nil && *spec.RunAsGroup != 0 {
-					errs = append(errs, fmt.Errorf("securityContext: runAsGroup must be 0 (required by k8shelld), got %d", *spec.RunAsGroup))
+					errs = append(errs, fmt.Errorf("securityContext: runAsGroup must be 0, got %d", *spec.RunAsGroup))
 				}
 
 				if spec.RunAsNonRoot != nil && *spec.RunAsNonRoot {
-					errs = append(errs, fmt.Errorf("securityContext: runAsNonRoot cannot be true (k8shelld requires root for user management)"))
+					errs = append(errs, fmt.Errorf("securityContext: runAsNonRoot cannot be true"))
 				}
 				if spec.ReadOnlyRootFilesystem != nil && *spec.ReadOnlyRootFilesystem {
-					errs = append(errs, fmt.Errorf("securityContext: readOnlyRootFilesystem cannot be true (k8shelld must write to /etc/passwd, /etc/group, /etc/sudoers.d)"))
+					errs = append(errs, fmt.Errorf("securityContext: readOnlyRootFilesystem cannot be true"))
 				}
 				if spec.AllowPrivilegeEscalation != nil && !*spec.AllowPrivilegeEscalation {
-					errs = append(errs, fmt.Errorf("securityContext: allowPrivilegeEscalation cannot be false (sudo requires privilege escalation)"))
+					errs = append(errs, fmt.Errorf("securityContext: allowPrivilegeEscalation cannot be false"))
 				}
 
-				// if spec.Capabilities != nil {
-				// 	requiredCaps := []corev1.Capability{"CHOWN", "SETUID", "SETGID", "DAC_OVERRIDE"}
+				if spec.Capabilities != nil {
+					droppedAll := false
+					for _, cap := range spec.Capabilities.Drop {
+						if cap == "ALL" {
+							droppedAll = true
+							break
+						}
+					}
 
-				// 	droppedAll := false
-				// 	for _, cap := range spec.Capabilities.Drop {
-				// 		if cap == "ALL" {
-				// 			droppedAll = true
-				// 			break
-				// 		}
-				// 	}
+					if droppedAll {
+						addedCaps := make(map[corev1.Capability]bool)
+						for _, cap := range spec.Capabilities.Add {
+							addedCaps[cap] = true
+						}
 
-				// 	if droppedAll {
-				// 		addedCaps := make(map[corev1.Capability]bool)
-				// 		for _, cap := range spec.Capabilities.Add {
-				// 			addedCaps[cap] = true
-				// 		}
-
-				// 		for _, reqCap := range requiredCaps {
-				// 			if !addedCaps[reqCap] {
-				// 				errs = append(errs, fmt.Errorf("securityContext: %s capability is required by k8shelld but dropped with ALL (must be explicitly added back)", reqCap))
-				// 			}
-				// 		}
-				// 	} else {
-				// 		for _, cap := range spec.Capabilities.Drop {
-				// 			switch cap {
-				// 			case "CHOWN":
-				// 				errs = append(errs, fmt.Errorf("securityContext: cannot drop CHOWN capability (required for home directory and podman socket ownership)"))
-				// 			case "SETUID", "SETGID":
-				// 				errs = append(errs, fmt.Errorf("securityContext: cannot drop %s capability (required for init scripts and file operations)", cap))
-				// 			case "DAC_OVERRIDE":
-				// 				errs = append(errs, fmt.Errorf("securityContext: cannot drop DAC_OVERRIDE capability (required for useradd/groupadd and sudoers writes)"))
-				// 			}
-				// 		}
-				// 	}
-				// }
+						for _, reqCap := range requiredCaps {
+							if !addedCaps[reqCap] {
+								errs = append(errs,
+									fmt.Errorf("securityContext: %s capability is required by k8shelld but dropped with ALL", reqCap))
+							}
+						}
+					} else {
+						for _, cap := range spec.Capabilities.Drop {
+							for _, reqCap := range requiredCaps {
+								if cap == reqCap {
+									errs = append(errs,
+										fmt.Errorf("securityContext: cannot drop %s capability", cap))
+								}
+							}
+						}
+					}
+				}
 			}
 		}
 	}
