@@ -256,7 +256,7 @@ func validateClaimSpecs(bp *models.Blueprint) []error {
 
 // validateSecurityContexts decodes Blueprint.SecurityContext and Podman.SecurityContext
 // into corev1.SecurityContext to catch structural errors early, before any Kubernetes API call is made.
-// It also enforces that runAsUser and runAsGroup must be 0 for the main container (k8shelld requirement).
+// It ensures the resulting security context is compatible with k8shelld's requirements.
 func validateSecurityContexts(bp *models.Blueprint) []error {
 	var errs []error
 
