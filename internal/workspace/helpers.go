@@ -71,6 +71,10 @@ type podStatusInfo struct {
 	detailedMessage string
 }
 
+func (s podStatusInfo) String() string {
+	return fmt.Sprintf("Status: %s, Message: %s (phase=%s, reason=%s, detailedMessage=%s)", s.status, s.message, s.phase, s.reason, s.detailedMessage)
+}
+
 func analyzePodStatus(pod *corev1.Pod) podStatusInfo {
 	if pod == nil {
 		return podStatusInfo{
@@ -135,8 +139,21 @@ func analyzePodStatus(pod *corev1.Pod) podStatusInfo {
 			info.status = models.WorkspaceStatusRunning
 			info.message = "Workspace is ready"
 		} else {
-			info.status = models.WorkspaceStatusProvisioning
-			info.message = formatStatusMessage(info.phase, "Starting", "Initializing containers")
+			// NOT all ready - find out why
+			notReadyReason, notReadyMsg := podNotReadyReason(pod)
+			if notReadyReason != "" {
+				if isFailingReason(notReadyReason) {
+					info.status = models.WorkspaceStatusFailing
+					info.message = formatStatusMessage(info.phase, notReadyReason, notReadyMsg)
+				} else {
+					info.status = models.WorkspaceStatusProvisioning
+					info.message = formatStatusMessage(info.phase, notReadyReason, notReadyMsg)
+				}
+			} else {
+				// Generic "not ready"
+				info.status = models.WorkspaceStatusProvisioning
+				info.message = formatStatusMessage(info.phase, "Starting", "Containers are starting")
+			}
 		}
 
 	case corev1.PodSucceeded:
@@ -190,8 +207,7 @@ func workspacePodStatus(pod *corev1.Pod) models.WorkspaceStatusMessage {
 
 // workspacePodMessage returns a single message consistent with workspacePodStatus
 func workspacePodMessage(pod *corev1.Pod) string {
-	s := analyzePodStatus(pod)
-	return fmt.Sprintf("%s (phase=%s, reason=%s)", s.message, s.phase, s.reason)
+	return analyzePodStatus(pod).String()
 }
 
 // podTopReason returns the "best" actionable reason/message from init containers first,
@@ -210,14 +226,32 @@ func podTopReason(pod *corev1.Pod) (reason string, message string) {
 	}
 
 	for _, cs := range pod.Status.ContainerStatuses {
+		// Current waiting state (e.g., CrashLoopBackOff, ImagePullBackOff)
 		if cs.State.Waiting != nil && cs.State.Waiting.Reason != "" {
 			return cs.State.Waiting.Reason, cs.State.Waiting.Message
 		}
+
+		// Current terminated state
 		if cs.State.Terminated != nil && cs.State.Terminated.ExitCode != 0 {
 			if cs.State.Terminated.Reason != "" {
 				return cs.State.Terminated.Reason, cs.State.Terminated.Message
 			}
 			return "ContainerError", cs.State.Terminated.Message
+		}
+
+		// Check last termination state for containers with restarts
+		// This catches containers that crashed and are in restart loops
+		if cs.RestartCount > 0 && cs.LastTerminationState.Terminated != nil {
+			term := cs.LastTerminationState.Terminated
+			if term.ExitCode != 0 {
+				// Container is in restart loop
+				if term.Reason != "" {
+					return "CrashLoopBackOff", fmt.Sprintf("%s (exit code %d, %d restarts)",
+						term.Message, term.ExitCode, cs.RestartCount)
+				}
+				return "CrashLoopBackOff", fmt.Sprintf("Container crashed with exit code %d (%d restarts)",
+					term.ExitCode, cs.RestartCount)
+			}
 		}
 	}
 
@@ -239,6 +273,22 @@ func podAllContainersReady(pod *corev1.Pod) bool {
 	return true
 }
 
+// podNotReadyReason returns why a pod in Running phase has containers not ready
+func podNotReadyReason(pod *corev1.Pod) (reason, message string) {
+	for _, cs := range pod.Status.ContainerStatuses {
+		if !cs.Ready {
+			if cs.State.Waiting != nil && cs.State.Waiting.Reason != "" {
+				return cs.State.Waiting.Reason, cs.State.Waiting.Message
+			}
+			if cs.State.Running != nil {
+				// Container is running but not ready (failing readiness probes?)
+				return "NotReady", fmt.Sprintf("Container %s is running but not passing readiness checks", cs.Name)
+			}
+		}
+	}
+	return "", ""
+}
+
 func isFailingReason(reason string) bool {
 	switch reason {
 	case "CrashLoopBackOff",
@@ -248,7 +298,10 @@ func isFailingReason(reason string) bool {
 		"CreateContainerError",
 		"RunContainerError",
 		"ContainerError",
-		"OOMKilled":
+		"OOMKilled",
+		"Error",
+		"InvalidImageName",
+		"RegistryUnavailable":
 		return true
 	default:
 		return false

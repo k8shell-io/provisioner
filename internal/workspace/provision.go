@@ -662,44 +662,78 @@ func (w *Workspace) watchEvents(ctx context.Context, podName string,
 
 // isCriticalError determines if an event message indicates a critical error and returns a user-friendly error
 func (w *Workspace) isCriticalError(message string) error {
-	criticalErrors := map[string]string{
-		// workspace image pull errors
-		"Failed to pull image":    "Unable to download the workspace image (code 1).",
-		"ImagePullBackOff":        "Unable to download the workspace image (code 2).",
-		"ErrImagePull":            "Unable to download the workspace image (code 3).",
-		"InvalidImageName":        "The workspace image name is invalid (code 4).",
-		"image not found":         "The workspace image was not found in the registry (code 5).",
-		"authentication required": "Authentication failed when accessing the workspace image (code 6).",
+	messageLower := strings.ToLower(message)
 
-		// resource issues
-		"insufficient memory": "Not enough memory available to run the workspace (code 7).",
-		"insufficient cpu":    "Not enough CPU resources available to run the workspace (code 8).",
-		"no nodes available":  "No suitable servers are available to run the workspace (code 9).",
-
-		// storage issues
-		"unbound immediate persistentvolumeclaims": "Workspace is waiting for storage (code 10).",
-		// (PVCs are unbound). Check StorageClass/provisioner and PV availability.
-
-		"failedbinding": "Workspace storage could not be provisioned (code 11).",
-		//  Check PV capacity/access modes and StorageClass.
-
-		"failed to provision volume": "Workspace storage could not be provisioned (code 12).",
-		// Check CSI controller logs and StorageClass.
-
-		"provisioningfailed": "Workspace storage provisioning error (code 13).",
-		// Check CSI controller logs and StorageClass.
-
-		"failed scheduling": "Workspace could not be scheduled (code 14).",
-		// often due to unbound PVCs or insufficient resources
+	// Check for critical error patterns
+	type errorPattern struct {
+		keyword  string
+		code     int
+		category string
 	}
 
-	messageLower := strings.ToLower(message)
-	for criticalError, userMessage := range criticalErrors {
-		if strings.Contains(messageLower, strings.ToLower(criticalError)) {
+	patterns := []errorPattern{
+		// Image errors
+		{"failed to pull image", 1, "image"},
+		{"imagepullbackoff", 2, "image"},
+		{"errimagepull", 3, "image"},
+		{"invalidimagename", 4, "image"},
+		{"image not found", 5, "image"},
+		{"authentication required", 6, "image"},
+
+		// Resource errors
+		{"insufficient memory", 7, "resources"},
+		{"insufficient cpu", 8, "resources"},
+		{"no nodes available", 9, "resources"},
+
+		// Storage errors
+		{"unbound immediate persistentvolumeclaims", 10, "storage"},
+		{"failedbinding", 11, "storage"},
+		{"failed to provision volume", 12, "storage"},
+		{"provisioningfailed", 13, "storage"},
+		{"failed scheduling", 14, "scheduling"},
+	}
+
+	for _, pattern := range patterns {
+		if strings.Contains(messageLower, pattern.keyword) {
 			w.log.Error().Msgf("Provisioning error detected: %s", message)
-			provError := fmt.Sprintf("Provisioning error: %s", userMessage)
-			return fmt.Errorf("%s", provError)
+
+			// Extract key details from the message
+			cleanMsg := extractKeyDetails(message, pattern.category)
+
+			return fmt.Errorf("Provisioning error: %s (code %d)", cleanMsg, pattern.code)
 		}
 	}
+
 	return nil
+}
+
+// extractKeyDetails extracts the most relevant part of the error message
+func extractKeyDetails(message, category string) string {
+	switch category {
+	case "storage":
+		// For storage errors, include the full scheduling message
+		if strings.Contains(strings.ToLower(message), "failedscheduling") {
+			// Keep the full message for scheduling/PVC issues
+			return message
+		}
+		if strings.Contains(strings.ToLower(message), "unbound") {
+			return "Workspace storage is not available. " + message
+		}
+		return "Storage error: " + message
+
+	case "image":
+		// For image errors, extract image name if present
+		return "Image error: " + message
+
+	case "resources":
+		// For resource errors, include the constraint details
+		return "Resource constraint: " + message
+
+	case "scheduling":
+		// For scheduling errors, include full details
+		return message
+
+	default:
+		return message
+	}
 }
