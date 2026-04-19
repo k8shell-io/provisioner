@@ -246,11 +246,9 @@ func podTopReason(pod *corev1.Pod) (reason string, message string) {
 			return cs.State.Waiting.Reason, cs.State.Waiting.Message
 		}
 		if cs.State.Terminated != nil && cs.State.Terminated.ExitCode != 0 {
-			// Use K8s reason if available, otherwise just return empty reason with message
 			if cs.State.Terminated.Reason != "" {
 				return cs.State.Terminated.Reason, cs.State.Terminated.Message
 			}
-			// No K8s reason available, return empty reason with message
 			msg := cs.State.Terminated.Message
 			if msg == "" {
 				msg = fmt.Sprintf("Init container exited with code %d", cs.State.Terminated.ExitCode)
@@ -260,18 +258,14 @@ func podTopReason(pod *corev1.Pod) (reason string, message string) {
 	}
 
 	for _, cs := range pod.Status.ContainerStatuses {
-		// Current waiting state (e.g., CrashLoopBackOff, ImagePullBackOff)
 		if cs.State.Waiting != nil && cs.State.Waiting.Reason != "" {
 			return cs.State.Waiting.Reason, cs.State.Waiting.Message
 		}
 
-		// Current terminated state
 		if cs.State.Terminated != nil && cs.State.Terminated.ExitCode != 0 {
-			// Use K8s reason if available, otherwise just return empty reason with message
 			if cs.State.Terminated.Reason != "" {
 				return cs.State.Terminated.Reason, cs.State.Terminated.Message
 			}
-			// No K8s reason available, return empty reason with message
 			msg := cs.State.Terminated.Message
 			if msg == "" {
 				msg = fmt.Sprintf("Container %s exited with code %d", cs.Name, cs.State.Terminated.ExitCode)
@@ -279,20 +273,15 @@ func podTopReason(pod *corev1.Pod) (reason string, message string) {
 			return "", msg
 		}
 
-		// Check last termination state for containers with restarts
-		// This catches containers that crashed and are in restart loops
 		if cs.RestartCount > 0 && cs.LastTerminationState.Terminated != nil {
 			term := cs.LastTerminationState.Terminated
 			if term.ExitCode != 0 {
-				// Container is in restart loop - provide exit code and restart count
 				if term.Reason != "" && term.Reason != "Error" {
-					// Use the termination reason (e.g., "OOMKilled")
-					return "CrashLoopBackOff", fmt.Sprintf("%s (exit code %d, %d restarts)",
-						term.Reason, term.ExitCode, cs.RestartCount)
+					return "CrashLoopBackOff", fmt.Sprintf("%s (exit code %d)",
+						term.Reason, term.ExitCode)
 				}
-				// Generic crash - include exit code and restart count
-				return "CrashLoopBackOff", fmt.Sprintf("Container failed with exit code %d (%d restarts)",
-					term.ExitCode, cs.RestartCount)
+				return "CrashLoopBackOff", fmt.Sprintf("Container failed with exit code %d",
+					term.ExitCode)
 			}
 		}
 	}
