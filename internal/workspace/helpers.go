@@ -62,99 +62,135 @@ func podMountsSecret(pod *corev1.Pod, secretName string) bool {
 	return false
 }
 
-// workspacePodStatus returns a small set of UI-friendly statuses
-func workspacePodStatus(pod *corev1.Pod) models.WorkspaceStatusMessage {
+// podStatusAndMessage analyzes a pod and returns both the workspace status and a corresponding message.
+type podStatusInfo struct {
+	status          models.WorkspaceStatusMessage
+	message         string
+	phase           corev1.PodPhase
+	reason          string
+	detailedMessage string
+}
+
+func analyzePodStatus(pod *corev1.Pod) podStatusInfo {
 	if pod == nil {
-		return models.WorkspaceStatusUnknown
-	}
-
-	// Pod is being deleted — report Terminating
-	if pod.DeletionTimestamp != nil {
-		return models.WorkspaceStatusTerminating
-	}
-
-	// a concrete reason from init/containers
-	reason, _ := podTopReason(pod)
-	if reason != "" {
-		switch {
-		case isFailingReason(reason):
-			return models.WorkspaceStatusFailing
-		case isProvisioningReason(reason):
-			if podAnyContainerImagePending(pod) {
-				return models.WorkspaceStatusPulling
-			}
-			return models.WorkspaceStatusProvisioning
+		return podStatusInfo{
+			status:  models.WorkspaceStatusUnknown,
+			message: "Pod information not available",
 		}
 	}
 
-	// decide by phase + readiness
+	info := podStatusInfo{
+		phase: pod.Status.Phase,
+	}
+
+	// Pod is being deleted
+	if pod.DeletionTimestamp != nil {
+		info.status = models.WorkspaceStatusTerminating
+		info.message = "Workspace is terminating"
+		return info
+	}
+
+	// Check container states for specific reasons (init containers first, then regular containers)
+	containerReason, containerMsg := podTopReason(pod)
+	info.reason = containerReason
+	info.detailedMessage = containerMsg
+
+	// Determine status and message based on container reason and pod phase
+	if containerReason != "" {
+		if isFailingReason(containerReason) {
+			info.status = models.WorkspaceStatusFailing
+			info.message = formatStatusMessage(info.phase, containerReason, containerMsg)
+			return info
+		}
+		if isProvisioningReason(containerReason) {
+			if podAnyContainerImagePending(pod) {
+				info.status = models.WorkspaceStatusPulling
+				info.message = formatStatusMessage(info.phase, "Pulling", "Downloading container images")
+			} else {
+				info.status = models.WorkspaceStatusProvisioning
+				info.message = formatStatusMessage(info.phase, containerReason, containerMsg)
+			}
+			return info
+		}
+	}
+
+	// Fall back to pod phase analysis
 	switch pod.Status.Phase {
 	case corev1.PodPending:
 		if podAnyContainerImagePending(pod) {
-			return models.WorkspaceStatusPulling
+			info.status = models.WorkspaceStatusPulling
+			info.message = formatStatusMessage(info.phase, "Pulling", "Downloading container images")
+		} else {
+			info.status = models.WorkspaceStatusProvisioning
+			// Check for scheduling issues
+			if pod.Status.Reason != "" {
+				info.message = formatStatusMessage(info.phase, pod.Status.Reason, pod.Status.Message)
+			} else {
+				info.message = formatStatusMessage(info.phase, "Pending", "Waiting for resources")
+			}
 		}
-		return models.WorkspaceStatusProvisioning
+
 	case corev1.PodRunning:
 		if podAllContainersReady(pod) {
-			return models.WorkspaceStatusRunning
+			info.status = models.WorkspaceStatusRunning
+			info.message = "Workspace is ready"
+		} else {
+			info.status = models.WorkspaceStatusProvisioning
+			info.message = formatStatusMessage(info.phase, "Starting", "Initializing containers")
 		}
-		return models.WorkspaceStatusProvisioning
+
 	case corev1.PodSucceeded:
-		return models.WorkspaceStatusStopped
+		info.status = models.WorkspaceStatusStopped
+		info.message = formatStatusMessage(info.phase, "Succeeded", "Workspace completed")
+
 	case corev1.PodFailed:
-		return models.WorkspaceStatusFailing
+		info.status = models.WorkspaceStatusFailing
+		if pod.Status.Reason != "" {
+			info.message = formatStatusMessage(info.phase, pod.Status.Reason, pod.Status.Message)
+		} else {
+			info.message = formatStatusMessage(info.phase, "Failed", pod.Status.Message)
+		}
+
 	default:
-		return models.WorkspaceStatusUnknown
+		info.status = models.WorkspaceStatusUnknown
+		if pod.Status.Reason != "" {
+			info.message = formatStatusMessage(info.phase, pod.Status.Reason, pod.Status.Message)
+		} else {
+			info.message = fmt.Sprintf("Phase: %s", info.phase)
+		}
 	}
+
+	return info
 }
 
-// workspacePodMessage returns a single message consistent with workspacePodStatus
-func workspacePodMessage(pod *corev1.Pod) string {
-	if pod == nil {
-		return ""
-	}
+// formatStatusMessage creates a consistent, informative message from phase, reason, and details
+func formatStatusMessage(phase corev1.PodPhase, reason, detailedMessage string) string {
+	reason = strings.TrimSpace(reason)
+	detailedMessage = strings.TrimSpace(detailedMessage)
 
-	// Prefer the most actionable reason/message from init/containers
-	reason, msg := podTopReason(pod)
+	// For user-friendly messages, we don't need to show the phase if reason is clear
 	if reason != "" {
-		if msg != "" {
-			return fmt.Sprintf("%s: %s", reason, msg)
+		if detailedMessage != "" {
+			return fmt.Sprintf("%s: %s", reason, detailedMessage)
 		}
 		return reason
 	}
 
-	// Otherwise provide a short message based on phase/readiness.
-	switch pod.Status.Phase {
-	case corev1.PodPending:
-		// Surface scheduling reason/message if present.
-		if pod.Status.Reason != "" && pod.Status.Message != "" {
-			return fmt.Sprintf("%s: %s", pod.Status.Reason, pod.Status.Message)
-		}
-		if pod.Status.Reason != "" {
-			return pod.Status.Reason
-		}
-		return "Pending"
-	case corev1.PodRunning:
-		if podAllContainersReady(pod) {
-			return "Workspace is ready"
-		}
-		return "Starting"
-	case corev1.PodSucceeded:
-		return "Completed"
-	case corev1.PodFailed:
-		if pod.Status.Reason != "" && pod.Status.Message != "" {
-			return fmt.Sprintf("%s: %s", pod.Status.Reason, pod.Status.Message)
-		}
-		if pod.Status.Message != "" {
-			return pod.Status.Message
-		}
-		return "Failed"
-	default:
-		if pod.Status.Reason != "" {
-			return pod.Status.Reason
-		}
-		return "Unknown"
+	// Fallback: include phase
+	if detailedMessage != "" {
+		return fmt.Sprintf("Phase %s: %s", phase, detailedMessage)
 	}
+	return fmt.Sprintf("Phase: %s", phase)
+}
+
+// workspacePodStatus returns a small set of UI-friendly statuses
+func workspacePodStatus(pod *corev1.Pod) models.WorkspaceStatusMessage {
+	return analyzePodStatus(pod).status
+}
+
+// workspacePodMessage returns a single message consistent with workspacePodStatus
+func workspacePodMessage(pod *corev1.Pod) string {
+	return analyzePodStatus(pod).message
 }
 
 // podTopReason returns the "best" actionable reason/message from init containers first,
