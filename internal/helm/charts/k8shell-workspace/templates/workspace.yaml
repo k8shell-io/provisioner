@@ -175,12 +175,6 @@ spec:
       {{- if $podman.securityContext }}
       securityContext:
         {{- toYaml $podman.securityContext | nindent 8 }}
-      {{- else }}
-      securityContext:
-        runAsUser: 1000
-        runAsGroup: 1000
-        appArmorProfile:
-          type: Unconfined
       {{- end }}
 
       volumeMounts:
