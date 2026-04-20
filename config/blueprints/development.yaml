@@ -1,16 +1,12 @@
 blueprints:
   - name: development
-    description: A parent blueprint for github-based development workspaces. 
-    template: default
+    template: base
     isTemplate: true
     image: workspaces/dev:1.12
 
     capabilities:
       - NET_ADMIN
       - NET_RAW
-
-    portForwarding:
-      - 0.0.0.0:0
 
     docker:
       enabled: true
@@ -26,12 +22,12 @@ blueprints:
 
     storages:
       home:
-        annotations:
+        claimSpecAnnotations:
           zfs-csi.k8shell.io/volume-name: !cel "workspaceName"
           zfs-csi.k8shell.io/retain-on-delete: "false"
       shared:
         readonly: false
-        annotations:
+        claimSpecAnnotations:
           zfs-csi.k8shell.io/volume-name: !cel "metadata.repoOwner + '/shared'"
 
     initScripts:
@@ -45,25 +41,3 @@ blueprints:
              git clone "$REPO_URL"
           fi
 
-  - name: dvps
-    template: default
-    image: workspaces/dev:1.12
-
-    network:
-      networkPolicy: system
-  
-    apps:
-      jupyter:
-        enabled: true
-      mlflow:
-        enabled: true
-        listen: 5000
-        installAsRoot: true
-        binary: "/usr/local/bin/mlflow"
-        versionCmd: ["/usr/local/bin/mlflow", "--version"]
-        versionRegex: ".*([0-9]+\\.[0-9]+\\.[0-9]+)$"
-        install: ""
-        start: ["/usr/local/bin/mlflow", "server", "--host", "0.0.0.0", "--port", "5000", "--allowed-hosts", "*", "--cors-allowed-origins", "*", "--x-frame-options", "NONE", "--backend-store-uri", "sqlite:///mlflow.db", "--artifacts-destination", "mlflow-artifacts"]
-        restartPolicy: always
-        autoStart: true
-        protocol: "http"

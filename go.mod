@@ -7,18 +7,15 @@ require github.com/rs/zerolog v1.34.0 // direct
 require (
 	github.com/fsnotify/fsnotify v1.9.0
 	github.com/google/uuid v1.6.0
-	github.com/k8shell-io/common v0.12.151
-	github.com/k8shell-io/identity/pkg/api v0.1.15
-	github.com/k8shell-io/provisioner/pkg/api v0.0.0-00010101000000-000000000000
+	github.com/k8shell-io/common v0.17.8
 	github.com/k8shell-io/yaml-cel v0.2.6
-	github.com/stretchr/testify v1.11.1
-	go.uber.org/automaxprocs v1.6.0
 	google.golang.org/grpc v1.76.0
 	gopkg.in/yaml.v3 v3.0.1
 	helm.sh/helm/v3 v3.19.0
 	k8s.io/api v0.34.1
 	k8s.io/apimachinery v0.34.1
 	k8s.io/client-go v0.34.1
+	sigs.k8s.io/yaml v1.6.0
 )
 
 require (
@@ -72,7 +69,7 @@ require (
 	github.com/go-playground/validator/v10 v10.28.0 // indirect
 	github.com/gobwas/glob v0.2.3 // indirect
 	github.com/gogo/protobuf v1.3.2 // indirect
-	github.com/golang/protobuf v1.5.4 // indirect
+	github.com/golang-jwt/jwt/v5 v5.3.1 // indirect
 	github.com/google/btree v1.1.3 // indirect
 	github.com/google/cel-go v0.26.1 // indirect
 	github.com/google/gnostic-models v0.7.0 // indirect
@@ -154,7 +151,4 @@ require (
 	sigs.k8s.io/kustomize/kyaml v0.20.1 // indirect
 	sigs.k8s.io/randfill v1.0.0 // indirect
 	sigs.k8s.io/structured-merge-diff/v6 v6.3.0 // indirect
-	sigs.k8s.io/yaml v1.6.0 // indirect
 )
-
-replace github.com/k8shell-io/provisioner/pkg/api => ./pkg/api

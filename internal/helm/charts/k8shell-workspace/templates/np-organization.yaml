@@ -23,8 +23,8 @@ spec:
               k8shell.io/organization: {{ .Values.__organization__ }}
 {{ include "default.ingress" . | nindent 4 }}  
   egress:
-{{- if .Values.network.allowEgress }}
-{{- range $cidr := .Values.network.allowEgress }}
+{{- if .Values.network.allowEgressToCIDRs }}
+{{- range $cidr := .Values.network.allowEgressToCIDRs }}
     - to:
         - ipBlock:
             cidr: {{ $cidr }}
@@ -35,6 +35,5 @@ spec:
             matchLabels:
               k8shell.io/app: k8shell-workspace
               k8shell.io/organization: {{ .Values.__organization__ }}
-              k8shell.io/blueprint: {{ .Values.__blueprint__ }}
 {{ include "default.egress" . | nindent 4 }}  
 {{- end }}

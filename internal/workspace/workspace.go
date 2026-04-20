@@ -8,11 +8,11 @@ import (
 	"strings"
 	"time"
 
+	"github.com/k8shell-io/common/pkg/api/client/identity"
+	identityv1 "github.com/k8shell-io/common/pkg/api/gen/go/identity/v1"
 	"github.com/k8shell-io/common/pkg/gapi"
 	log "github.com/k8shell-io/common/pkg/logger"
 	"github.com/k8shell-io/common/pkg/models"
-	identity "github.com/k8shell-io/identity/pkg/api"
-	"github.com/k8shell-io/identity/pkg/api/identitypb"
 	"github.com/k8shell-io/provisioner/internal/config"
 	"github.com/k8shell-io/provisioner/internal/helm"
 	"github.com/rs/zerolog"
@@ -30,15 +30,16 @@ const WORKSPACE_DEFAULT_PAGE_SIZE = 20
 type Workspace struct {
 	config   *config.Config
 	client   *helm.Client
-	identify *identity.Client
+	identify *identity.IdentityClient
 
-	Name          string
-	JobId         string
-	log           *zerolog.Logger
-	blueprint     *models.Blueprint
-	user          *models.User
-	userStr       *models.CanonicalUserStr
-	workspaceLock *WorkspaceLock
+	Name           string
+	JobId          string
+	log            *zerolog.Logger
+	blueprint      *models.Blueprint
+	blueprintChain []string // ordered inheritance chain from root ancestor to this blueprint
+	user           *models.User
+	userStr        *models.CanonicalUserStr
+	workspaceLock  *WorkspaceLock
 }
 
 type Values struct {
@@ -231,7 +232,7 @@ func NewWorkspace(
 	user *models.User,
 	userStr *models.CanonicalUserStr,
 	helmClient *helm.Client,
-	identityClient *identity.Client,
+	identityClient *identity.IdentityClient,
 	config *config.Config,
 ) (*Workspace, error) {
 
@@ -249,7 +250,7 @@ func NewWorkspace(
 
 // NewWorkspaceFromHelmRelease creates a workspace instance from an existing Helm release
 func NewWorkspaceFromHelmRelease(ctx context.Context, name string, helmClient *helm.Client,
-	identityClient *identity.Client, config *config.Config) (*Workspace, error) {
+	identityClient *identity.IdentityClient, config *config.Config) (*Workspace, error) {
 
 	release, err := FindWorkspaceHelmRelease(ctx, helmClient, name)
 	if err != nil {
@@ -258,7 +259,7 @@ func NewWorkspaceFromHelmRelease(ctx context.Context, name string, helmClient *h
 	username := release.Labels["k8shell.io/username"]
 	blueprintName := release.Labels["k8shell.io/blueprint"]
 
-	userpb, err := identityClient.FindUser(ctx, &identitypb.FindUserRequest{Username: username})
+	userpb, err := identityClient.FindUser(ctx, &identityv1.FindUserRequest{Username: username})
 	if err != nil {
 		return nil, fmt.Errorf("failed to get user %s: %w", username, err)
 	}
@@ -290,6 +291,11 @@ func NewWorkspaceFromHelmRelease(ctx context.Context, name string, helmClient *h
 
 func (w *Workspace) SetJobId(jobId string) {
 	w.JobId = jobId
+}
+
+// SetBlueprintChain stores the inheritance chain for this workspace's blueprint.
+func (w *Workspace) SetBlueprintChain(chain []string) {
+	w.blueprintChain = chain
 }
 
 func (w *Workspace) CreateLock() *WorkspaceLock {
@@ -357,9 +363,40 @@ func (w *Workspace) Values() (map[string]interface{}, error) {
 	values["__identity__"] = w.user.Source
 	values["__userstr__"] = userstrB64
 	values["__jobid__"] = w.JobId
-	values["__apiserver__"] = map[string]interface{}{
-		"enabled": w.config.K8shellCapabilities.APIServerEnabled,
+
+	configYAML, err := w.buildConfigYAML()
+	if err != nil {
+		return nil, fmt.Errorf("failed to build config YAML: %w", err)
 	}
+	values["__configyaml__"] = configYAML
+
+	rawBpYAML, err := marshalYAMLAllFields(w.blueprint)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal blueprint to YAML: %w", err)
+	}
+	var bpMap map[string]interface{}
+	if err := yaml.Unmarshal(rawBpYAML, &bpMap); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal blueprint map: %w", err)
+	}
+	metadata := bpMap["metadata"]
+	delete(bpMap, "metadata")
+	fileContent := struct {
+		Metadata  interface{} `yaml:"metadata"`
+		Blueprint interface{} `yaml:"blueprint"`
+	}{
+		Metadata:  metadata,
+		Blueprint: bpMap,
+	}
+	blueprintYAML, err := marshalYAML2(fileContent)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal blueprint file YAML: %w", err)
+	}
+	if len(w.blueprintChain) > 0 {
+		comment := "# inheritance: " + strings.Join(w.blueprintChain, " -> ") + "\n"
+		blueprintYAML = append([]byte(comment), blueprintYAML...)
+	}
+	values["__blueprintyaml__"] = string(blueprintYAML)
+
 	return values, nil
 }
 
@@ -393,7 +430,7 @@ func (w *Workspace) TemplateHash(ctx context.Context) (string, error) {
 	return fmt.Sprintf("%x", h.Sum(nil)), nil
 }
 
-func (w *Workspace) GetPodStatus(ctx context.Context) (*models.PodStatus, error) {
+func (w *Workspace) GetPodStatus(ctx context.Context) (*models.WorkspaceStatus, error) {
 	v1 := w.client.KubeClient().CoreV1()
 	pod, err := v1.Pods(w.client.TargetNamespace()).Get(ctx, w.Name, metav1.GetOptions{})
 	if err != nil {
@@ -402,7 +439,7 @@ func (w *Workspace) GetPodStatus(ctx context.Context) (*models.PodStatus, error)
 		}
 		return nil, fmt.Errorf("failed to get workspace pod status %s: %w", w.Name, err)
 	}
-	return &models.PodStatus{
+	return &models.WorkspaceStatus{
 		Created:         pod.CreationTimestamp.Time,
 		Status:          workspacePodStatus(pod),
 		Message:         workspacePodMessage(pod),
@@ -437,6 +474,19 @@ func (w *Workspace) Uninstall(ctx context.Context, timeout time.Duration, wait b
 
 	if err := w.client.Uninstall(w.Name, int(timeout.Seconds()), wait); err != nil {
 		return fmt.Errorf("failed to uninstall workspace: %w", err)
+	}
+	return nil
+}
+
+// StopPod deletes only the workspace pod, leaving the Helm release and all
+// other resources (PVCs, secrets, ConfigMaps) intact.
+func (w *Workspace) StopPod(ctx context.Context) error {
+	err := w.client.KubeClient().CoreV1().Pods(w.client.TargetNamespace()).Delete(ctx, w.Name, metav1.DeleteOptions{})
+	if err != nil {
+		if k8sErrors.IsNotFound(err) {
+			return nil
+		}
+		return fmt.Errorf("failed to stop workspace pod %s: %w", w.Name, err)
 	}
 	return nil
 }
@@ -476,7 +526,7 @@ func WorkspaceDetailsFromPod(pod *corev1.Pod) *models.WorkspaceDetails {
 	memory := pod.Spec.Containers[0].Resources.Limits.Memory().String()
 
 	wsDetails := &models.WorkspaceDetails{
-		PodStatus: models.PodStatus{
+		WorkspaceStatus: models.WorkspaceStatus{
 			Created:         pod.CreationTimestamp.Time,
 			Status:          workspacePodStatus(pod),
 			Message:         workspacePodMessage(pod),

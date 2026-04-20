@@ -19,23 +19,28 @@ import (
 	"helm.sh/helm/v3/pkg/cli"
 	"helm.sh/helm/v3/pkg/release"
 	"helm.sh/helm/v3/pkg/storage/driver"
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
+	sigsyaml "sigs.k8s.io/yaml"
 )
 
 const (
-	WORKSPACE_CHART_NAME      = "k8shell-workspace"
-	BASE_WORKSPACE_CHART_NAME = "base-workspace"
+	WORKSPACE_CHART_NAME = "k8shell-workspace"
 )
 
 type Client struct {
-	settings        *cli.EnvSettings
-	log             *zerolog.Logger
-	kubeClient      kubernetes.Interface
-	targetNamespace string
-	charts          map[string]*chart.Chart
-	Registry        config.DefaultRegistry
+	settings             *cli.EnvSettings
+	log                  *zerolog.Logger
+	kubeClient           kubernetes.Interface
+	targetNamespace      string
+	charts               map[string]*chart.Chart
+	Registry             config.DefaultRegistry
+	JWTVerifierPublicKey string
+	AppVersion           string
+	Commit               string
 }
 
 type InstallOptions struct {
@@ -49,7 +54,6 @@ type InstallOptions struct {
 	AppVersion      string
 }
 
-// NewClient creates a new Helm client
 func NewClient(targetNamespace string, registry config.DefaultRegistry) (*Client, error) {
 	settings := cli.New()
 
@@ -72,11 +76,6 @@ func NewClient(targetNamespace string, registry config.DefaultRegistry) (*Client
 		return nil, fmt.Errorf("failed to load workspace chart: %w", err)
 	}
 
-	charts[BASE_WORKSPACE_CHART_NAME], err = LoadChartFromMemory(BASE_WORKSPACE_CHART_NAME)
-	if err != nil {
-		return nil, fmt.Errorf("failed to load base workspace chart: %w", err)
-	}
-
 	return &Client{
 		log:             log.NewLogger("helm"),
 		settings:        settings,
@@ -96,43 +95,111 @@ func (c *Client) TargetNamespace() string {
 	return c.targetNamespace
 }
 
-// EnsureBase ensures that the target namespace is configured and exists
+// EnsureBase ensures the base namespace resources are present and up to date.
+// Resources are applied directly via the Kubernetes API rather than through Helm
 func (c *Client) EnsureBase(ctx context.Context) error {
 	if c.targetNamespace == "" {
 		return fmt.Errorf("target namespace is not set")
 	}
 
-	r, err := c.ListWithSelector(c.targetNamespace, "app.kubernetes.io/name="+BASE_WORKSPACE_CHART_NAME)
+	labels := map[string]string{
+		"app.kubernetes.io/version":     c.AppVersion,
+		"app.kubernetes.io/managed-by":  "k8shell-provisioner",
+		"io.k8shell.provisioner/commit": c.Commit,
+	}
+
+	if err := c.applySecret(ctx, "jwt-verifier", labels, corev1.SecretTypeOpaque, map[string][]byte{
+		"public-key.pem": []byte(c.JWTVerifierPublicKey),
+	}); err != nil {
+		return fmt.Errorf("failed to apply jwt-verifier secret: %w", err)
+	}
+
+	registryValues := c.Registry.ToValues()
+
+	if dockerConfigJson, ok := registryValues["dockerConfigJson"].(string); ok && dockerConfigJson != "" {
+		regcredName, _ := registryValues["regcred"].(string)
+		if regcredName == "" {
+			regcredName = "regcred"
+		}
+		if err := c.applySecret(ctx, regcredName, labels, corev1.SecretTypeDockerConfigJson, map[string][]byte{
+			".dockerconfigjson": []byte(dockerConfigJson),
+		}); err != nil {
+			return fmt.Errorf("failed to apply %s secret: %w", regcredName, err)
+		}
+	}
+
+	if certCA, ok := registryValues["certCA"].(string); ok && certCA != "" {
+		if err := c.applyConfigMap(ctx, "registryca", labels, map[string]string{
+			"registry-ca.pem": certCA,
+		}); err != nil {
+			return fmt.Errorf("failed to apply registryca configmap: %w", err)
+		}
+	}
+
+	return nil
+}
+
+// applyConfigMap creates or updates a ConfigMap in the target namespace.
+func (c *Client) applyConfigMap(ctx context.Context, name string, labels map[string]string, data map[string]string) error {
+	cm := &corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      name,
+			Namespace: c.targetNamespace,
+			Labels:    labels,
+		},
+		Data: data,
+	}
+
+	existing, err := c.kubeClient.CoreV1().ConfigMaps(c.targetNamespace).Get(ctx, name, metav1.GetOptions{})
 	if err != nil {
 		if !errors.IsNotFound(err) {
-			return fmt.Errorf("failed to list releases in namespace %s: %w", c.targetNamespace, err)
+			return fmt.Errorf("failed to get configmap %s: %w", name, err)
 		}
-	} else if len(r) > 0 {
+		if _, err = c.kubeClient.CoreV1().ConfigMaps(c.targetNamespace).Create(ctx, cm, metav1.CreateOptions{}); err != nil {
+			return fmt.Errorf("failed to create configmap %s: %w", name, err)
+		}
+		c.log.Info().Msgf("Created configmap %s in namespace %s", name, c.targetNamespace)
 		return nil
 	}
 
-	labels := map[string]string{
-		"app.kubernetes.io/name":       BASE_WORKSPACE_CHART_NAME,
-		"app.kubernetes.io/instance":   BASE_WORKSPACE_CHART_NAME,
-		"app.kubernetes.io/version":    "1.0.0",
-		"app.kubernetes.io/managed-by": "k8shell-provisioner",
-		"k8shell.io/app":               BASE_WORKSPACE_CHART_NAME,
+	cm.ResourceVersion = existing.ResourceVersion
+	if _, err = c.kubeClient.CoreV1().ConfigMaps(c.targetNamespace).Update(ctx, cm, metav1.UpdateOptions{}); err != nil {
+		return fmt.Errorf("failed to update configmap %s: %w", name, err)
+	}
+	c.log.Info().Msgf("Updated configmap %s in namespace %s", name, c.targetNamespace)
+	return nil
+}
+
+// applySecret creates or updates a Secret in the target namespace.
+func (c *Client) applySecret(ctx context.Context, name string, labels map[string]string, secretType corev1.SecretType, data map[string][]byte) error {
+	secret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      name,
+			Namespace: c.targetNamespace,
+			Labels:    labels,
+		},
+		Type: secretType,
+		Data: data,
 	}
 
-	values := map[string]interface{}{
-		"__registry__": c.Registry.ToValues(),
+	existing, err := c.kubeClient.CoreV1().Secrets(c.targetNamespace).Get(ctx, name, metav1.GetOptions{})
+	if err != nil {
+		if !errors.IsNotFound(err) {
+			return fmt.Errorf("failed to get secret %s: %w", name, err)
+		}
+		if _, err = c.kubeClient.CoreV1().Secrets(c.targetNamespace).Create(ctx, secret, metav1.CreateOptions{}); err != nil {
+			return fmt.Errorf("failed to create secret %s: %w", name, err)
+		}
+		c.log.Info().Msgf("Created secret %s in namespace %s", name, c.targetNamespace)
+		return nil
 	}
 
-	err = c.Install(ctx, BASE_WORKSPACE_CHART_NAME, InstallOptions{
-		ReleaseName:     BASE_WORKSPACE_CHART_NAME,
-		ChartName:       BASE_WORKSPACE_CHART_NAME,
-		CreateNamespace: false,
-		Values:          values,
-		Wait:            true,
-		Labels:          labels,
-	})
-
-	return err
+	secret.ResourceVersion = existing.ResourceVersion
+	if _, err = c.kubeClient.CoreV1().Secrets(c.targetNamespace).Update(ctx, secret, metav1.UpdateOptions{}); err != nil {
+		return fmt.Errorf("failed to update secret %s: %w", name, err)
+	}
+	c.log.Info().Msgf("Updated secret %s in namespace %s", name, c.targetNamespace)
+	return nil
 }
 
 func (c *Client) Template(ctx context.Context, chartName string, opts InstallOptions) (string, error) {
@@ -257,6 +324,34 @@ func (c *Client) ListAllNamespaces() ([]*release.Release, error) {
 		return nil, fmt.Errorf("failed to list releases across all namespaces: %w", err)
 	}
 	return releases, nil
+}
+
+// PodFromRelease extracts the Pod object from the stored Helm release manifest.
+// This allows re-creating only the pod without a full Helm upgrade cycle.
+func (c *Client) PodFromRelease(releaseName string) (*corev1.Pod, error) {
+	rel, err := c.GetRelease(releaseName)
+	if err != nil {
+		return nil, err
+	}
+
+	for _, doc := range strings.Split(rel.Manifest, "\n---") {
+		doc = strings.TrimSpace(doc)
+		if doc == "" || !strings.Contains(doc, "kind: Pod") {
+			continue
+		}
+		var pod corev1.Pod
+		if err := sigsyaml.Unmarshal([]byte(doc), &pod); err != nil {
+			return nil, fmt.Errorf("failed to decode pod manifest from release %s: %w", releaseName, err)
+		}
+		if pod.Kind == "Pod" {
+			pod.ResourceVersion = ""
+			pod.UID = ""
+			pod.CreationTimestamp = metav1.Time{}
+			pod.Status = corev1.PodStatus{}
+			return &pod, nil
+		}
+	}
+	return nil, fmt.Errorf("pod not found in release %s manifest", releaseName)
 }
 
 // GetRelease gets information about a specific release in a namespace

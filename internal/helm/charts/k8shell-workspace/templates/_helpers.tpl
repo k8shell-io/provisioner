@@ -21,7 +21,6 @@ k8shell.io/repo-ref: "{{ .Values.__reporef__ }}"
 {{- end }}
 k8shell.io/username: "{{ .Values.__username__ }}"
 k8shell.io/organization: "{{ .Values.__organization__ }}"
-k8shell.io/identity: "{{ .Values.__identity__ }}"
 k8shell.io/userstr: "{{ .Values.__userstr__ }}"
 k8shell.io/network-policy: "{{ .Values.network.networkPolicy }}"
 {{- if and .Values.subdomain .Values.hostname }}
@@ -64,9 +63,14 @@ k8shell.io/job-id: "{{ .Values.__jobid__ }}"
       podSelector:
         matchLabels:
           k8shell.io/app: api-server
-    - podSelector:
+    {{- range .Values.network.allowEgressToPods }}
+    - namespaceSelector: {}
+      podSelector:
         matchLabels:
-          type: backend
+          {{- range $k, $v := . }}
+          {{ $k }}: {{ $v | quote }}
+          {{- end }}
+    {{- end }}
     - ipBlock:
         cidr: 0.0.0.0/0
         except:
@@ -80,6 +84,13 @@ k8shell.io/job-id: "{{ .Values.__jobid__ }}"
       podSelector:
         matchLabels:
           k8s-app: kube-dns
+{{- /* kube-apiserver ClusterIP lives in the service CIDR (default 10.96.0.0/12 for kubeadm)
+     which is inside 10.0.0.0/8 and therefore excluded by the ipBlock rule above.
+     This explicit carve-out restores reachability for kubectl and k8s client calls.
+     Adjust if your cluster uses a non-default --service-cluster-ip-range. */}}
+- to:
+    - ipBlock:
+        cidr: 10.96.0.0/12
 {{- end -}}
 
 {{/* pvc template */}}
@@ -89,23 +100,16 @@ kind: PersistentVolumeClaim
 metadata:
   name: "pvc-{{ .ctx.Values.__workspace__ }}-{{ .pvcPrefix }}{{ .name }}"
   namespace: {{ .ctx.Release.Namespace }} 
-  {{- if .storage.annotations }}
+  {{- if .storage.claimSpecAnnotations }}
   annotations:
-  {{- range $key, $value := .storage.annotations }}
+  {{- range $key, $value := .storage.claimSpecAnnotations }}
     {{ $key | quote }}: {{ $value | quote }}
   {{- end }}
   {{- end }}
   labels:
     {{ include "workspace.labels" .ctx | nindent 4 }}
 spec:
-  {{ if .storage.storageClass }}
-  storageClassName: {{ .storage.storageClass }}
-  {{ end }}
-  accessModes:
-    - ReadWriteMany
-  resources:
-    requests:
-      storage: {{ .storage.size }}
+  {{- toYaml .storage.claimSpec | nindent 2 }}
 {{- end }}
 
 {{/*
@@ -120,9 +124,12 @@ Uses regex to detect registry hostname in image name
 {{- if regexMatch "^[^/]*[.:].*/" $image -}}
   {{/* Image already has a registry */}}
   {{- $image -}}
-{{- else -}}
+{{- else if $registry -}}
   {{/* No registry detected, prepend the provided registry */}}
   {{- $registry -}}/{{- $image -}}
+{{- else -}}
+  {{/* No registry configured, use image as-is */}}
+  {{- $image -}}
 {{- end -}}
 {{- end }}
 
@@ -148,10 +155,10 @@ Usage:
 */ -}}
 {{- define "workspace.storages" -}}
 {{- $storages := list -}}
-{{- range $name, $s := .storages }}
-  {{- if $s.enabled }}
+{{- range $name, $s := (.storages | default dict) }}
+  {{- if and $s (kindIs "map" $s) ($s.enabled | default false) }}
     {{- $ro := false -}}
-    {{- if hasKey $s "readonly" -}}
+    {{- if and (kindIs "map" $s) (hasKey $s "readonly") -}}
       {{- $ro = ($s.readonly | default false) -}}
     {{- end -}}
     {{- $storages = append $storages (dict
@@ -163,4 +170,42 @@ Usage:
   {{- end }}
 {{- end }}
 {{- toYaml $storages -}}
+{{- end -}}
+
+{{/*
+Emit chown shell commands for storages that have fsOwnerUid or fsOwnerGid set.
+Expects: dict "storages" <storages-map>
+*/}}
+{{- define "workspace.storage.chownCommands" -}}
+{{- range $name, $s := .storages -}}
+{{- if and $s (kindIs "map" $s) ($s.enabled | default false) -}}
+{{- $uid := $s.fsOwnerUid | default 0 | int -}}
+{{- $gid := $s.fsOwnerGid | default 0 | int -}}
+{{- if and (ne $uid 0) (ne $gid 0) }}
+chown {{ $uid }}:{{ $gid }} {{ $s.path }}
+{{- else if ne $uid 0 }}
+chown {{ $uid }} {{ $s.path }}
+{{- else if ne $gid 0 }}
+chown :{{ $gid }} {{ $s.path }}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+
+{{/*
+Emit volumeMount entries for storages that have fsOwnerUid or fsOwnerGid set.
+Expects: dict "storages" <storages-map> "prefix" <volume-name-prefix>
+*/}}
+{{- define "workspace.storage.chownVolumeMounts" -}}
+{{- $prefix := .prefix -}}
+{{- range $name, $s := .storages -}}
+{{- if and $s (kindIs "map" $s) ($s.enabled | default false) -}}
+{{- $uid := $s.fsOwnerUid | default 0 | int -}}
+{{- $gid := $s.fsOwnerGid | default 0 | int -}}
+{{- if or (ne $uid 0) (ne $gid 0) }}
+- name: storage-{{ $prefix }}{{ $name }}
+  mountPath: {{ $s.path }}
+{{- end -}}
+{{- end -}}
+{{- end -}}
 {{- end -}}

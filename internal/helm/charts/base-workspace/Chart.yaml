@@ -1,5 +1,0 @@
-apiVersion: v2
-name: base-workspace
-description: Base workspace chart to initialize workspace namespace
-version: 1.0.0
-appVersion: 1.0.0 

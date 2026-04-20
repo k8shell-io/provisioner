@@ -26,6 +26,9 @@ type Watcher struct {
 	mu          sync.Mutex
 	watchedDirs map[string]struct{}
 	reinitOnce  bool
+	closed      bool
+
+	reloadWg sync.WaitGroup // tracks in-flight onReload calls
 
 	onReload func() error
 }
@@ -43,22 +46,34 @@ func NewWatcher(watchDir string, reloadDelay time.Duration, onReload func() erro
 
 // Setup initializes fsnotify and starts the event loop.
 func (w *Watcher) Setup() error {
-	if w.stopChan == nil {
+	w.mu.Lock()
+	if w.stopChan != nil {
+		// drain any previous stop signal before reuse
+		select {
+		case <-w.stopChan:
+		default:
+		}
+	} else {
 		w.stopChan = make(chan struct{})
 	}
+	w.mu.Unlock()
+
 	fsW, err := fsnotify.NewWatcher()
 	if err != nil {
 		return err
 	}
+
+	w.mu.Lock()
 	w.watcher = fsW
 	w.watchedDirs = make(map[string]struct{})
+	w.mu.Unlock()
 
 	if err := w.addInitialWatches(); err != nil {
-		_ = w.watcher.Close()
+		_ = fsW.Close()
 		return err
 	}
 
-	go w.watchLoop()
+	go w.watchLoop(fsW, w.stopChan)
 	return nil
 }
 
@@ -112,10 +127,10 @@ func (w *Watcher) addInitialWatches() error {
 	})
 }
 
-func (w *Watcher) watchLoop() {
+func (w *Watcher) watchLoop(fsW *fsnotify.Watcher, stop chan struct{}) {
 	for {
 		select {
-		case event, ok := <-w.watcher.Events:
+		case event, ok := <-fsW.Events:
 			if !ok {
 				return
 			}
@@ -164,13 +179,13 @@ func (w *Watcher) watchLoop() {
 				w.scheduleReload()
 			}
 
-		case err, ok := <-w.watcher.Errors:
+		case err, ok := <-fsW.Errors:
 			if !ok {
 				return
 			}
 			w.log.Error().Err(err).Msg("Watcher error")
 
-		case <-w.stopChan:
+		case <-stop:
 			return
 		}
 	}
@@ -194,6 +209,9 @@ func (w *Watcher) scheduleReinit() {
 			w.watcher = nil
 			w.watchedDirs = nil
 		}
+		// Allocate a fresh stop channel so the new watchLoop goroutine
+		// is independent of any previous one.
+		w.stopChan = make(chan struct{})
 		w.reinitOnce = false
 		w.mu.Unlock()
 
@@ -213,6 +231,15 @@ func (w *Watcher) scheduleReload() {
 		w.reloadTimer.Stop()
 	}
 	w.reloadTimer = time.AfterFunc(w.reloadDelay, func() {
+		w.mu.Lock()
+		if w.closed {
+			w.mu.Unlock()
+			return
+		}
+		w.reloadWg.Add(1)
+		w.mu.Unlock()
+
+		defer w.reloadWg.Done()
 		w.log.Info().Msg("Reloading due to file changes")
 		if w.onReload != nil {
 			if err := w.onReload(); err != nil {
@@ -225,10 +252,9 @@ func (w *Watcher) scheduleReload() {
 }
 
 func (w *Watcher) Close() error {
-	if w.stopChan != nil {
-		close(w.stopChan)
-	}
 	w.mu.Lock()
+	w.closed = true
+	stop := w.stopChan
 	if w.reloadTimer != nil {
 		w.reloadTimer.Stop()
 	}
@@ -236,6 +262,13 @@ func (w *Watcher) Close() error {
 	w.watcher = nil
 	w.watchedDirs = nil
 	w.mu.Unlock()
+
+	if stop != nil {
+		close(stop)
+	}
+
+	// Wait for any in-flight reload callback to finish before releasing resources.
+	w.reloadWg.Wait()
 
 	if fw != nil {
 		return fw.Close()

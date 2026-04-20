@@ -13,21 +13,27 @@ import (
 	"sync"
 	"time"
 
+	"encoding/json"
+
 	"github.com/k8shell-io/common/pkg/config"
 	log "github.com/k8shell-io/common/pkg/logger"
+
 	"github.com/k8shell-io/common/pkg/models"
 	"github.com/k8shell-io/yaml-cel/pkg/yamlcel"
 	"github.com/rs/zerolog"
 	"gopkg.in/yaml.v3"
+	corev1 "k8s.io/api/core/v1"
 )
 
 // RawBlueprint represents an unprocessed blueprint with CEL expressions intact.
 type RawBlueprint struct {
-	Name        string
-	Description string
-	Template    string
-	IsTemplate  bool
-	Node        *yaml.Node
+	Name             string
+	Description      string
+	Template         string
+	IsTemplate       bool
+	SourceFile       string
+	Node             *yaml.Node
+	InheritanceChain []string // ordered list of blueprint names from root ancestor to this blueprint
 }
 
 type BlueprintScope struct {
@@ -51,6 +57,9 @@ func (bs *BlueprintScope) ToMap() (map[string]any, error) {
 }
 
 var ErrBlueprintNotFound = errors.New("blueprint not found")
+
+// requiredCaps are the capabilities that k8shelld requires to function properly.
+var requiredCaps = []corev1.Capability{"CHOWN", "SETUID", "SETGID"}
 
 // MergeStrategies allow custom list merging strategies per dotted path.
 type MergeStrategies map[string]func(dst, src []interface{}) []interface{}
@@ -80,27 +89,24 @@ func TestScope() *BlueprintScope {
 			Name:        "testblueprint",
 			RepoName:    "testrepo",
 			RepoOwner:   "testowner",
+			RepoRef:     "testref",
 			RepoAddress: "testaddress",
 		},
 		User: &models.User{
-			Username:     "testuser",
-			IsValid:      true,
-			ExpiresAt:    time.Now().Add(24 * time.Hour),
-			UID:          1000,
-			GID:          1000,
-			Fullname:     "Test User",
-			AccessToken:  "testtoken",
-			Email:        "testuser@example.com",
-			Password:     "testpassword",
-			Auths:        []string{models.AuthMethodPublicKey, models.AuthMethodPassword},
-			AuthKeys:     []string{"ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQC3..."},
-			Locked:       false,
-			FailedLogins: 0,
-			Channels:     []string{models.ChannelShell, models.ChannelSFTP},
-			Envs:         []string{},
-			Roles:        []string{"role1", "role2"},
-			Blueprints:   []string{"testblueprint"},
-			Source:       "testsource",
+			Username:   "testuser",
+			IsValid:    true,
+			ExpiresAt:  time.Now().Add(24 * time.Hour),
+			UID:        1000,
+			GID:        1000,
+			Fullname:   "Test User",
+			Email:      "testuser@example.com",
+			Password:   "testpassword",
+			Auths:      []string{models.AuthMethodPublicKey, models.AuthMethodPassword},
+			AuthKeys:   []string{"ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQC3..."},
+			Locked:     false,
+			Roles:      []models.Role{"role1", "role2"},
+			Blueprints: []string{"testblueprint"},
+			Source:     "testsource",
 		},
 	}
 }
@@ -152,7 +158,6 @@ func (bm *BlueprintManager) loadAndValidateBlueprints() (err error) {
 
 	defer func() {
 		if err != nil {
-			bm.log.Error().Err(err).Msg("Failed to load and validate blueprints")
 			bm.mu.Lock()
 			bm.rawBlueprints = originalBlueprints
 			bm.mu.Unlock()
@@ -198,14 +203,138 @@ func (bm *BlueprintManager) validateAllBlueprints() []error {
 		bp, err := bm.GetBlueprint(name, validationScope)
 		if err != nil {
 			allErrors = append(allErrors, fmt.Errorf("blueprint '%s': %w", name, err))
+			continue
 		}
 		v := bp.Validate()
 		if v != nil {
 			allErrors = append(allErrors, fmt.Errorf("blueprint '%s': %v", name, v))
 		}
+		for _, e := range validateClaimSpecs(bp) {
+			allErrors = append(allErrors, fmt.Errorf("blueprint '%s': %w", name, e))
+		}
+		for _, e := range validateSecurityContexts(bp) {
+			allErrors = append(allErrors, fmt.Errorf("blueprint '%s': %w", name, e))
+		}
 	}
 
 	return allErrors
+}
+
+// validateClaimSpecs decodes each storage claimSpec into corev1.PersistentVolumeClaimSpec
+// to catch structural errors early, before any Kubernetes API call is made.
+func validateClaimSpecs(bp *models.Blueprint) []error {
+	type namedStorage struct {
+		name    string
+		storage models.Storage
+	}
+
+	var all []namedStorage
+	for name, s := range bp.Storages {
+		all = append(all, namedStorage{name, s})
+	}
+	for name, s := range bp.Podman.Storages {
+		all = append(all, namedStorage{"podman." + name, s})
+	}
+
+	var errs []error
+	for _, ns := range all {
+		if ns.storage.ClaimSpec == nil {
+			continue
+		}
+		jsonRaw, err := json.Marshal(ns.storage.ClaimSpec)
+		if err != nil {
+			errs = append(errs, fmt.Errorf("storage %q: failed to marshal claimSpec: %w", ns.name, err))
+			continue
+		}
+		var spec corev1.PersistentVolumeClaimSpec
+		if err := json.Unmarshal(jsonRaw, &spec); err != nil {
+			errs = append(errs, fmt.Errorf("storage %q: invalid claimSpec: %w", ns.name, err))
+		}
+	}
+	return errs
+}
+
+// validateSecurityContexts decodes Blueprint.SecurityContext and Podman.SecurityContext
+// into corev1.SecurityContext to catch structural errors early, before any Kubernetes API call is made.
+// It ensures the resulting security context is compatible with k8shelld's requirements.
+func validateSecurityContexts(bp *models.Blueprint) []error {
+	var errs []error
+
+	if len(bp.SecurityContext) > 0 {
+		jsonRaw, err := json.Marshal(bp.SecurityContext)
+		if err != nil {
+			errs = append(errs, fmt.Errorf("securityContext: failed to marshal: %w", err))
+		} else {
+			var spec corev1.SecurityContext
+			if err := json.Unmarshal(jsonRaw, &spec); err != nil {
+				errs = append(errs, fmt.Errorf("securityContext: invalid: %w", err))
+			} else {
+				if spec.RunAsUser != nil && *spec.RunAsUser != 0 {
+					errs = append(errs, fmt.Errorf("securityContext: runAsUser must be 0, got %d", *spec.RunAsUser))
+				}
+				if spec.RunAsGroup != nil && *spec.RunAsGroup != 0 {
+					errs = append(errs, fmt.Errorf("securityContext: runAsGroup must be 0, got %d", *spec.RunAsGroup))
+				}
+
+				if spec.RunAsNonRoot != nil && *spec.RunAsNonRoot {
+					errs = append(errs, fmt.Errorf("securityContext: runAsNonRoot cannot be true"))
+				}
+				if spec.ReadOnlyRootFilesystem != nil && *spec.ReadOnlyRootFilesystem {
+					errs = append(errs, fmt.Errorf("securityContext: readOnlyRootFilesystem cannot be true"))
+				}
+				if spec.AllowPrivilegeEscalation != nil && !*spec.AllowPrivilegeEscalation {
+					errs = append(errs, fmt.Errorf("securityContext: allowPrivilegeEscalation cannot be false"))
+				}
+
+				if spec.Capabilities != nil {
+					droppedAll := false
+					for _, cap := range spec.Capabilities.Drop {
+						if cap == "ALL" {
+							droppedAll = true
+							break
+						}
+					}
+
+					if droppedAll {
+						addedCaps := make(map[corev1.Capability]bool)
+						for _, cap := range spec.Capabilities.Add {
+							addedCaps[cap] = true
+						}
+
+						for _, reqCap := range requiredCaps {
+							if !addedCaps[reqCap] {
+								errs = append(errs,
+									fmt.Errorf("securityContext: %s capability is required by k8shelld but dropped with ALL", reqCap))
+							}
+						}
+					} else {
+						for _, cap := range spec.Capabilities.Drop {
+							for _, reqCap := range requiredCaps {
+								if cap == reqCap {
+									errs = append(errs,
+										fmt.Errorf("securityContext: cannot drop %s capability", cap))
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+
+	if len(bp.Podman.SecurityContext) > 0 {
+		jsonRaw, err := json.Marshal(bp.Podman.SecurityContext)
+		if err != nil {
+			errs = append(errs, fmt.Errorf("podman.securityContext: failed to marshal: %w", err))
+		} else {
+			var spec corev1.SecurityContext
+			if err := json.Unmarshal(jsonRaw, &spec); err != nil {
+				errs = append(errs, fmt.Errorf("podman.securityContext: invalid: %w", err))
+			}
+		}
+	}
+
+	return errs
 }
 
 // GetBlueprint evaluates CEL expressions for a specific blueprint with given scope.
@@ -247,6 +376,19 @@ func (bm *BlueprintManager) GetBlueprint(name string, scope *BlueprintScope) (*m
 	}
 
 	return &bp, nil
+}
+
+// GetBlueprintChain returns the inheritance chain for the given blueprint name.
+// The chain is an ordered slice from the root ancestor to the blueprint itself, e.g. ["base", "git-dev", "dev"].
+// Returns nil if the blueprint is not found.
+func (bm *BlueprintManager) GetBlueprintChain(name string) []string {
+	bm.mu.RLock()
+	defer bm.mu.RUnlock()
+	rawBp, exists := bm.rawBlueprints[name]
+	if !exists {
+		return nil
+	}
+	return rawBp.InheritanceChain
 }
 
 // GetBlueprintsSummary returns a summary of all available blueprints without evaluating CEL expressions.
@@ -350,6 +492,15 @@ func (bm *BlueprintManager) loadRawBlueprints(dir string) error {
 		if err != nil {
 			return err
 		}
+		// Skip Kubernetes ConfigMap internal directories (e.g. ..2024_01_01_12_00_00.000000000)
+		// which contain the real files that are symlinked from the mount root.
+		// Walking both would cause duplicate blueprint names.
+		if strings.HasPrefix(d.Name(), "..") {
+			if d.IsDir() {
+				return fs.SkipDir
+			}
+			return nil
+		}
 		if d.IsDir() {
 			return nil
 		}
@@ -427,7 +578,7 @@ func (bm *BlueprintManager) extractFromSequence(root *yaml.Node, path string) er
 }
 
 // extractSingleRawBlueprint extracts a single raw blueprint.
-func (bm *BlueprintManager) extractSingleRawBlueprint(node *yaml.Node, _ string) error {
+func (bm *BlueprintManager) extractSingleRawBlueprint(node *yaml.Node, path string) error {
 	var bpData map[string]interface{}
 	if err := node.Decode(&bpData); err != nil {
 		bpData = make(map[string]interface{})
@@ -451,11 +602,16 @@ func (bm *BlueprintManager) extractSingleRawBlueprint(node *yaml.Node, _ string)
 		isTemplate = t
 	}
 
+	if existing, exists := bm.rawBlueprints[name]; exists {
+		return fmt.Errorf("duplicate blueprint name %q: already defined in %s", name, existing.SourceFile)
+	}
+
 	bm.rawBlueprints[name] = &RawBlueprint{
 		Name:        name,
 		Description: descr,
 		Template:    template,
 		IsTemplate:  isTemplate,
+		SourceFile:  path,
 		Node:        node,
 	}
 
@@ -492,11 +648,16 @@ func (bm *BlueprintManager) extractMultipleRawBlueprints(node *yaml.Node, path s
 		descr, _ := item["description"].(string)
 		descr = strings.Join(strings.Fields(descr), " ")
 
+		if existing, exists := bm.rawBlueprints[name]; exists {
+			return fmt.Errorf("duplicate blueprint name %q: already defined in %s", name, existing.SourceFile)
+		}
+
 		bm.rawBlueprints[name] = &RawBlueprint{
 			Name:        name,
 			Description: descr,
 			Template:    template,
 			IsTemplate:  isTemplate,
+			SourceFile:  path,
 			Node:        childNode,
 		}
 	}

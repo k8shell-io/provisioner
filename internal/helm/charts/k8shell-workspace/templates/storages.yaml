@@ -1,12 +1,21 @@
+{{- $podman := .Values.podman | default dict -}}
+
+{{- if .Values.storages }}
 {{- range $storageName, $storage := .Values.storages }}
-{{- if and $storage.enabled (not $storage.memory) }}
+{{- if and $storage ($storage.enabled | default false) (not ($storage.memory | default false)) (ne ($storage.type | default "local") "shared") }}
 ---
   {{- include "pvc-template" (dict "name" $storageName "storage" $storage "pvcPrefix" "" "ctx" $ ) }}
 {{- end }}
 {{- end }}
-{{- range $storageName, $storage := .Values.docker.storages }}
-{{- if $storage.enabled }}
+{{- end }}
+
+{{- if ($podman.enabled | default false) }}
+{{- if $podman.storages }}
+{{- range $storageName, $storage := $podman.storages }}
+{{- if and $storage ($storage.enabled | default false) }}
 ---
-  {{- include "pvc-template" (dict "name" $storageName "storage" $storage "pvcPrefix" "docker-" "ctx" $ ) }}
+  {{- include "pvc-template" (dict "name" $storageName "storage" $storage "pvcPrefix" "podman-" "ctx" $ ) }}
+{{- end }}
+{{- end }}
 {{- end }}
 {{- end }}

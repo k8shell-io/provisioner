@@ -30,8 +30,8 @@ spec:
               k8shell.io/network-policy: system
 {{ include "default.ingress" . | nindent 4 }}  
   egress:
-{{- if .Values.network.allowEgress }}
-{{- range $cidr := .Values.network.allowEgress }}
+{{- if .Values.network.allowEgressToCIDRs }}
+{{- range $cidr := .Values.network.allowEgressToCIDRs }}
     - to:
         - ipBlock:
             cidr: {{ $cidr }}

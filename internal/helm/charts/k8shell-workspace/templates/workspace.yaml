@@ -1,3 +1,7 @@
+{{- $podman := .Values.podman | default dict -}}
+{{- $defaultSecurityContext := dict "runAsUser" 0 "runAsGroup" 0 -}}
+{{- $securityContext := merge (dict) (.Values.securityContext | default dict) $defaultSecurityContext -}}
+
 apiVersion: v1
 kind: Pod
 metadata:
@@ -8,6 +12,9 @@ metadata:
     workspace.k8shell.io/splash: {{ .Values.splash | b64enc | quote }}
     {{- end }}
     k8shell.io/manifest-hash: {{ .Values.__manifesthash__ | quote }}
+    {{- if .Values.__identity__ }}
+    k8shell.io/identity: {{ .Values.__identity__ | quote }}
+    {{- end }}
   labels:
     {{- include "workspace.workspaceLabels" . | nindent 4 }} 
 spec:
@@ -16,6 +23,7 @@ spec:
   - name: {{ .Values.__registry__.regcred }}
   {{ end }}  
   serviceAccountName: {{ .Values.__workspace__ }}-sa
+  restartPolicy: OnFailure
   {{- if and .Values.subdomain .Values.hostname }}
   hostname: {{ .Values.hostname }}
   subdomain: {{ .Values.subdomain }}
@@ -29,22 +37,25 @@ spec:
       securityContext:
         runAsUser: 0
         runAsGroup: 0
-      command: ["/bin/sh", "-c", "/k8shell/dist/scripts/init-base" ]
+      command:
+        - /bin/sh
+        - -c
+        - |
+          /k8shell/dist/scripts/init-base
+          {{- include "workspace.storage.chownCommands" (dict "storages" .Values.storages) | nindent 10 }}
+          {{- include "workspace.storage.chownCommands" (dict "storages" $podman.storages) | nindent 10 }}
       volumeMounts:
         - name: bin-volume
           mountPath: /usr/local/bin
+        {{- include "workspace.storage.chownVolumeMounts" (dict "storages" .Values.storages "prefix" "") | nindent 8 }}
+        {{- include "workspace.storage.chownVolumeMounts" (dict "storages" $podman.storages "prefix" "podman-") | nindent 8 }}
 
   containers:
     #### main container
     - name: k8shell-main
       image: {{ include "workspace.mainImage" . }}
       securityContext:
-        runAsUser: 0
-        runAsGroup: 0
-        {{- if .Values.capabilities }}
-        capabilities:
-          add: {{ toYaml .Values.capabilities | nindent 12 }}
-        {{- end }}
+        {{- toYaml $securityContext | nindent 8 }}
       command: ["/usr/local/bin/k8shelld"] 
       imagePullPolicy: {{ .Values.imagePullPolicy }}
       resizePolicy:
@@ -106,11 +117,13 @@ spec:
       - name: main-volume
         mountPath: /usr/local/k8shell/system
         readOnly: true
+      {{- if .Values.storages }}
       {{- range $storageName, $storage := .Values.storages }}
-      {{- if $storage.enabled }}
+      {{- if and $storage (kindIs "map" $storage) ($storage.enabled | default false) }}
       - name: storage-{{ $storageName }}
         mountPath: {{ $storage.path }}
-        readOnly: {{ $storage.readonly }}
+        readOnly: {{ $storage.readonly | default false }}
+      {{- end }}
       {{- end }}
       {{- end }}
       {{- if .Values.extFiles }}
@@ -120,57 +133,80 @@ spec:
         subPath: {{ $path | replace "/" "__" }}
       {{- end }}
       {{- end }}
-      {{- if .Values.docker.enabled }}
-      - name: docker-sock
-        mountPath: /var/run/docker
+      {{- if ($podman.enabled | default false) }}
+      - name: podman-sock
+        mountPath: /var/run/podman
+        # readOnly: true
       {{- end }}
       {{- if .Values.__certmanager__.enabled }}
       - name: {{ .Values.__workspace__ }}-cert
         mountPath: /etc/tls/k8shelld
         readOnly: true
       {{- end }}
+      - name: identity-token-volume
+        mountPath: /run/secrets/identity-token
+        readOnly: true
+      - name: jwt-verifier-volume
+        mountPath: /run/secrets/jwt-verifier
+        readOnly: true
 
-    #### docker container
-    {{- if .Values.docker.enabled }}
-    - name: k8shell-docker
-      image: {{ .Values.docker.image }}
-      securityContext:
-        privileged: true
+    #### podman engine container
+    {{- if ($podman.enabled | default false) }}
+    - name: k8shell-podman
+      image: {{ $podman.image }}
+      # command: ["/bin/sh"]
+      # args:
+      # - -c
+      # - |
+      #   trap '' TERM INT
+      #   while true; do
+      #     sleep 86400
+      #   done
+
+      command:
+      - podman
       args:
-        - dockerd
-        - --host=unix:///var/run/docker/docker.sock
-        - --group=$(DOCKER_GROUP_GID)
-      env:
-        - name: DOCKER_GROUP_GID
-          value: "{{ .Values.docker.groupId }}"
+      - system
+      - service
+      - --time=0
+      - unix:///var/run/podman/podman.sock
+        
+      # see https://docs.k8shell.io/concepts/overview/security#least-privileged-workspace-containers
+      {{- if $podman.securityContext }}
+      securityContext:
+        {{- toYaml $podman.securityContext | nindent 8 }}
+      {{- end }}
+
       volumeMounts:
-        - name: docker-sock
-          mountPath: /var/run/docker
+        - name: podman-sock
+          mountPath: /var/run/podman
       {{- if .Values.__registry__.certCA }}
-        - name: docker-ca-cert
+        - name: podman-ca-cert
           mountPath: /etc/ssl/certs/registry-ca.pem
           subPath: registry-ca.pem
       {{- end }}
 
-      {{- if .Values.docker.parentStorages }}    
+      {{- if and ($podman.parentStorages | default false) .Values.storages }}    
       {{- range $storageName, $storage := .Values.storages }}
-      {{- if $storage.enabled }}
+      {{- if and $storage (kindIs "map" $storage) ($storage.enabled | default false) }}
         - name: storage-{{ $storageName }}
           mountPath: {{ $storage.path }}
-          readOnly: {{ $storage.readonly }}
+          readOnly: {{ $storage.readonly | default false }}
       {{- end }}
       {{- end }}
       {{- end }}
-      {{- range $storageName, $storage := .Values.docker.storages }}
-      {{- if $storage.enabled }}
-        - name: storage-docker-{{ $storageName }}
+      {{- if $podman.storages }}
+      {{- range $storageName, $storage := $podman.storages }}
+      {{- if and $storage (kindIs "map" $storage) ($storage.enabled | default false) }}
+        - name: storage-podman-{{ $storageName }}
           mountPath: {{ $storage.path }}
-          readOnly: {{ $storage.readonly }}
+          readOnly: {{ $storage.readonly | default false }}
       {{- end }}
       {{- end }}
-      {{- if .Values.docker.extFiles }}
-      {{- range $path, $content := .Values.docker.extFiles }}
-        - name: docker-ext-files-volume
+      {{- end }}
+      {{- if $podman.extFiles }}
+      {{- range $path, $content := $podman.extFiles }}
+        - name: podman-ext-files-volume
           mountPath: {{ $path }}
           subPath: {{ $path | replace "/" "__" }}
       {{- end }}
@@ -187,37 +223,44 @@ spec:
       items:
       - key: config.yaml
         path: config.yaml
+      - key: blueprint.yaml
+        path: blueprint.yaml
   - name: main-volume
     configMap:
       name: {{ .Values.__workspace__ }}-files
-      defaultMode: 0777
+      defaultMode: 0755
       items:
       - key: README
         path: README
         {{- range $index, $script := .Values.initScripts }}
-          {{- range $key, $value := $script }}
-      - key: __init_{{ printf "%02d" (add $index 1) }}_{{ $key | replace "&" "__bg" | replace "@" "__flag" }}
-        path: __init_{{ printf "%02d" (add $index 1) }}_{{ $key | replace "&" "__bg" | replace "@" "__flag" }}
-          {{- end }}
+      - key: __init_{{ printf "%02d" (add $index 1) }}_{{ $script.name }}
+        path: __init_{{ printf "%02d" (add $index 1) }}_{{ $script.name }}
         {{- end }}
+  {{- if .Values.storages }}
   {{- range $storageName, $storage := .Values.storages }}
-  {{- if $storage.enabled }}
+  {{- if and $storage (kindIs "map" $storage) ($storage.enabled | default false) }}
   - name: storage-{{ $storageName }}
-    {{- if $storage.memory }}
+    {{- if ($storage.memory | default false) }}
     emptyDir:
       medium: Memory
       sizeLimit: {{ $storage.size }}
+    {{- else if eq ($storage.type | default "local") "shared" }}
+    persistentVolumeClaim:
+      claimName: pvc-{{ $storageName }}{{- if $storage.id }}-{{ $storage.id }}{{- end }}
     {{- else }}
     persistentVolumeClaim:
       claimName: pvc-{{ $.Values.__workspace__ }}-{{ $storageName }}
     {{- end }}
   {{- end }}
   {{- end }}
-  {{- range $storageName, $storage := .Values.docker.storages }}
-  {{- if $storage.enabled }}
-  - name: storage-docker-{{ $storageName }}
+  {{- end }}
+  {{- if $podman.storages }}
+  {{- range $storageName, $storage := $podman.storages }}
+  {{- if and $storage (kindIs "map" $storage) ($storage.enabled | default false) }}
+  - name: storage-podman-{{ $storageName }}
     persistentVolumeClaim:
-      claimName: pvc-{{ $.Values.__workspace__ }}-docker-{{ $storageName }}
+      claimName: pvc-{{ $.Values.__workspace__ }}-podman-{{ $storageName }}
+  {{- end }}
   {{- end }}
   {{- end }}
   {{- if .Values.extFiles }}
@@ -230,22 +273,22 @@ spec:
           path: {{ $path | replace "/" "__" }}
         {{- end }}
   {{- end }}
-  {{- if .Values.docker.enabled }}
-  - name: docker-sock
-    emptyDir: {}  
-  {{- if .Values.docker.extFiles }}
-  - name: dockker-ext-files-volume
+  {{- if ($podman.enabled | default false) }}
+  - name: podman-sock
+    emptyDir: {}
+  {{- if $podman.extFiles }}
+  - name: podman-ext-files-volume
     configMap:
-      name: {{ .Values.__workspace__ }}-docker-ext-files
+      name: {{ .Values.__workspace__ }}-podman-ext-files
       items:
-        {{- range $path, $content := .Values.docker.extFiles }}
+        {{- range $path, $content := $podman.extFiles }}
         - key: {{ $path | replace "/" "__" | quote }}
           path: {{ $path | replace "/" "__" }}
         {{- end }}
   {{- end }}
   {{- end }}
   {{- if .Values.__registry__.certCA }}
-  - name: docker-ca-cert
+  - name: podman-ca-cert
     configMap:
       name: registryca
       items:
@@ -257,6 +300,12 @@ spec:
     secret:
       secretName: {{ .Values.__workspace__ }}-tls
   {{- end }}
+  - name: identity-token-volume
+    secret:
+      secretName: identity-token-{{ .Values.__username__ }}
+  - name: jwt-verifier-volume
+    secret:
+      secretName: jwt-verifier
 
   {{- if .Values.affinity }}
   affinity:

@@ -11,8 +11,6 @@ data:
     # k8shell system files
     # This directory contains the system files for the k8shell workspace.
   {{- range $index, $script := .Values.initScripts }}
-    {{- range $key, $value := $script }}
-  __init_{{ printf "%02d" (add $index 1) }}_{{ $key | replace "&" "__bg" | replace "@" "__flag" }}: |
-{{ $value | indent 4 }}
-    {{- end }}
+  __init_{{ printf "%02d" (add $index 1) }}_{{ $script.name }}: |
+{{ $script.script | indent 4 }}
   {{- end }}

@@ -8,16 +8,16 @@ import (
 	"path/filepath"
 	"syscall"
 
+	"github.com/k8shell-io/common/pkg/api/client/identity"
+	provisionerv1 "github.com/k8shell-io/common/pkg/api/gen/go/provisioner/v1"
+	"github.com/k8shell-io/common/pkg/authz"
 	"github.com/k8shell-io/common/pkg/gapi"
 	log "github.com/k8shell-io/common/pkg/logger"
 	"github.com/k8shell-io/common/pkg/models"
 	natsc "github.com/k8shell-io/common/pkg/nats"
-	identity "github.com/k8shell-io/identity/pkg/api"
 	"github.com/k8shell-io/provisioner/internal/blueprint"
 	"github.com/k8shell-io/provisioner/internal/config"
 	"github.com/k8shell-io/provisioner/internal/helm"
-	"github.com/k8shell-io/provisioner/internal/workspace"
-	"github.com/k8shell-io/provisioner/pkg/api/provisionerpb"
 	"github.com/rs/zerolog"
 	"google.golang.org/grpc"
 )
@@ -26,14 +26,15 @@ type Server struct {
 	config          *config.Config
 	log             *zerolog.Logger
 	nats            *natsc.NATSClient
-	Identity        *identity.Client
+	Identity        *identity.IdentityClient
+	tokenVerifier   *authz.JWTVerifier
 	grpc            *gapi.Server
 	bpManager       *blueprint.BlueprintManager
 	helm            *helm.Client
 	provisionJobsKV *natsc.JetStreamKV
 }
 
-func NewServer(configFile string) (*Server, error) {
+func NewServer(configFile string, appVersion string, commit string) (*Server, error) {
 	server := &Server{
 		log: log.NewLogger("server"),
 	}
@@ -56,6 +57,49 @@ func NewServer(configFile string) (*Server, error) {
 	server.bpManager, err = blueprint.NewBlueprintManager(blueprint.LoadOptions{
 		Dir:         blueprintDir,
 		EnableWatch: true,
+		Strategies: blueprint.MergeStrategies{
+			// claimSpec.accessModes: child replaces parent entirely — appending access modes makes no sense.
+			// Using the full path avoids colliding with any other "accessModes" key elsewhere in the tree.
+			"claimSpec.accessModes": func(_, child []interface{}) []interface{} {
+				return child
+			},
+			// initScripts: child entries with a matching name replace the parent entry;
+			// entries with unique names are appended.
+			"initScripts": func(parent, child []interface{}) []interface{} {
+				result := make([]interface{}, 0, len(parent))
+				childByName := make(map[string]interface{})
+				for _, item := range child {
+					if m, ok := item.(map[string]interface{}); ok {
+						if name, ok := m["name"].(string); ok && name != "" {
+							childByName[name] = item
+						}
+					}
+				}
+				for _, item := range parent {
+					if m, ok := item.(map[string]interface{}); ok {
+						if name, ok := m["name"].(string); ok {
+							if override, exists := childByName[name]; exists {
+								result = append(result, override)
+								delete(childByName, name)
+								continue
+							}
+						}
+					}
+					result = append(result, item)
+				}
+				// append any child scripts that didn't exist in parent
+				for _, item := range child {
+					if m, ok := item.(map[string]interface{}); ok {
+						if name, ok := m["name"].(string); ok && name != "" {
+							if _, remaining := childByName[name]; remaining {
+								result = append(result, item)
+							}
+						}
+					}
+				}
+				return result
+			},
+		},
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to create blueprint manager: %w", err)
@@ -79,9 +123,14 @@ func NewServer(configFile string) (*Server, error) {
 		}
 	}
 
-	server.Identity, err = identity.NewClient(server.config.Identity)
+	server.Identity, err = identity.NewIdentityClient(server.config.Identity)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create identity client: %w", err)
+	}
+
+	server.tokenVerifier, err = authz.NewJWTVerifier(server.config.JWTVerifier)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create identity token verifier: %w", err)
 	}
 
 	server.log.Info().Msg("Creating Helm client")
@@ -90,6 +139,14 @@ func NewServer(configFile string) (*Server, error) {
 		return nil, fmt.Errorf("failed to create Helm client: %w", err)
 	}
 
+	pk, err := server.config.JWTVerifier.GetPublicKey()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get public key for JWT verifier: %w", err)
+	}
+	server.helm.JWTVerifierPublicKey = pk
+	server.helm.AppVersion = appVersion
+	server.helm.Commit = commit
+
 	server.log.Info().Msg("Creating gRPC service")
 	server.grpc, err = gapi.NewServer(&server.config.GrpcConfig, true)
 	if err != nil {
@@ -97,7 +154,7 @@ func NewServer(configFile string) (*Server, error) {
 	}
 
 	err = server.grpc.RegisterService(func(s *grpc.Server) error {
-		provisionerpb.RegisterProvisionerServiceServer(s, NewProvisionerService(server))
+		provisionerv1.RegisterProvisionerServiceServer(s, NewProvisionerService(server))
 		return nil
 	})
 	if err != nil {
@@ -106,28 +163,9 @@ func NewServer(configFile string) (*Server, error) {
 
 	models.SetRefResolver(server)
 
-	lock := workspace.NewWorkspaceLock(server.helm.KubeClient(), server.config.TargetNamespace, "init")
-	ok, err := lock.TryAcquire(context.Background())
-	if !ok || err == workspace.ErrLockAlreadyHeld {
-		server.log.Info().Msg("Workspace lock is already held by another process, proceeding without initialization")
-	} else if err != nil {
-		return nil, fmt.Errorf("failed to acquire workspace lock: %w", err)
-	}
-	if ok {
-		defer func() {
-			err := lock.Release(context.Background())
-			if err != nil {
-				server.log.Error().Err(err).Msg("Failed to release workspace lock")
-			} else {
-				server.log.Info().Msg("Workspace lock released successfully")
-			}
-		}()
-
-		server.log.Info().Msgf("Ensuring workspace base, namespace %s", server.config.TargetNamespace)
-		err = server.helm.EnsureBase(context.Background())
-		if err != nil {
-			return nil, fmt.Errorf("failed to ensure base namespace: %w", err)
-		}
+	server.log.Info().Msgf("Ensuring workspace base, namespace %s", server.config.TargetNamespace)
+	if err := server.helm.EnsureBase(context.Background()); err != nil {
+		return nil, fmt.Errorf("failed to ensure base namespace: %w", err)
 	}
 
 	return server, nil

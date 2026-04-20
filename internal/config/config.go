@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/k8shell-io/common/pkg/authz"
 	"github.com/k8shell-io/common/pkg/config"
 	"github.com/k8shell-io/common/pkg/gapi"
 	natsc "github.com/k8shell-io/common/pkg/nats"
@@ -12,16 +13,17 @@ import (
 
 // Config represents the server configuration
 type Config struct {
-	TargetNamespace     string                `yaml:"targetNamespace"`
-	ClusterDomain       string                `yaml:"clusterDomain"`
-	DefaultRegistry     DefaultRegistry       `yaml:"defaultRegistry"`
-	K8shellCapabilities K8shellCapabilities   `yaml:"k8shellCapabilities"`
-	CertManager         CertManagerConfig     `yaml:"certManager"`
-	GrpcConfig          gapi.ServerConfig     `yaml:"grpc"`
-	Nats                ProvisionerNatsConfig `yaml:"nats"`
-	Identity            gapi.ClientConfig     `yaml:"identity"`
-	Blueprints          BlueprintsFileConfig  `yaml:"blueprints"`
-	BaseDir             string                `yaml:"baseDir"`
+	TargetNamespace     string                  `yaml:"targetNamespace"`
+	ClusterDomain       string                  `yaml:"clusterDomain"`
+	DefaultRegistry     DefaultRegistry         `yaml:"defaultRegistry"`
+	K8shellCapabilities K8shellCapabilities     `yaml:"k8shellCapabilities"`
+	CertManager         CertManagerConfig       `yaml:"certManager"`
+	GrpcConfig          gapi.ServerConfig       `yaml:"grpc"`
+	Nats                ProvisionerNatsConfig   `yaml:"nats"`
+	Identity            gapi.ClientConfig       `yaml:"identity"`
+	JWTVerifier         authz.JWTVerifierConfig `yaml:"jwtVerifier"`
+	Blueprints          BlueprintsFileConfig    `yaml:"blueprints"`
+	BaseDir             string                  `yaml:"baseDir"`
 }
 
 // ProvisionerNatsConfig represents the NATS configuration for the provisioner
@@ -123,5 +125,17 @@ func NewConfig(configFile string) (*Config, error) {
 	ClusterDomain = cfg.ClusterDomain
 
 	cfg.BaseDir = filepath.Dir(configFile)
+
+	method := cfg.JWTVerifier.SigningMethod
+	if method == "" {
+		return nil, fmt.Errorf("jwtVerifier.signingMethod is required and must be es256 or rs256")
+	}
+	if method != "es256" && method != "rs256" {
+		return nil, fmt.Errorf("jwtVerifier.signingMethod %q is not supported; must be es256 or rs256", method)
+	}
+	if cfg.JWTVerifier.PublicKeyFile == "" && cfg.JWTVerifier.PrivateKeyFile == "" {
+		return nil, fmt.Errorf("jwtVerifier: publicKeyFile or privateKeyFile is required")
+	}
+
 	return &cfg, nil
 }

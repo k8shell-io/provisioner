@@ -8,13 +8,13 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	commonv1 "github.com/k8shell-io/common/pkg/api/gen/go/common/v1"
+	identityv1 "github.com/k8shell-io/common/pkg/api/gen/go/identity/v1"
+	provisionerv1 "github.com/k8shell-io/common/pkg/api/gen/go/provisioner/v1"
 	"github.com/k8shell-io/common/pkg/gapi"
-	"github.com/k8shell-io/common/pkg/gapi/commonpb"
 	"github.com/k8shell-io/common/pkg/models"
 	natsc "github.com/k8shell-io/common/pkg/nats"
-	"github.com/k8shell-io/identity/pkg/api/identitypb"
 	ws "github.com/k8shell-io/provisioner/internal/workspace"
-	"github.com/k8shell-io/provisioner/pkg/api/provisionerpb"
 	"github.com/rs/zerolog"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -53,13 +53,13 @@ func NewProvisionJob(WorkspaceName string, username string, kv *natsc.JetStreamK
 	return p
 }
 
-func (j *ProvisionJobServer) AddEvent(ev *provisionerpb.ProvisionEvent) {
+func (j *ProvisionJobServer) AddEvent(ev *provisionerv1.ProvisionEvent) {
 	event := models.WorkspaceStreamEvent{
 		Id:        j.NextEventId,
 		Type:      models.WorkspaceStreamEventType(ev.Type),
 		Timestamp: ev.Timestamp,
 		Message:   ev.Message,
-		Status:    models.WorkspacePodStatus(ev.Status),
+		Status:    models.WorkspaceStatusMessage(ev.Status),
 	}
 	j.Events = append(j.Events, event)
 	j.NextEventId++
@@ -93,7 +93,7 @@ func (j *ProvisionJobServer) update() {
 type ProvisionerService struct {
 	server *Server
 	log    *zerolog.Logger
-	provisionerpb.UnimplementedProvisionerServiceServer
+	provisionerv1.UnimplementedProvisionerServiceServer
 }
 
 // NewProvisionerService creates a new instance of the ProvisionerService
@@ -106,7 +106,7 @@ func NewProvisionerService(server *Server) *ProvisionerService {
 
 // FindWorkspace retrieves the details of a specific workspace
 func (p *ProvisionerService) FindWorkspace(ctx context.Context,
-	req *provisionerpb.FindWorkspaceRequest) (*commonpb.WorkspaceDetails, error) {
+	req *provisionerv1.FindWorkspaceRequest) (*commonv1.WorkspaceDetails, error) {
 	s, _, err := ws.FindWorkspace(ctx, p.server.helm, req.Workspace)
 	if err != nil {
 		if errors.Is(err, models.ErrWorkspaceNotFound) {
@@ -120,8 +120,8 @@ func (p *ProvisionerService) FindWorkspace(ctx context.Context,
 // GetWorkspaces lists all workspaces, optionally filtered by user and/or blueprint
 func (p *ProvisionerService) GetWorkspaces(
 	ctx context.Context,
-	req *provisionerpb.GetWorkspacesRequest,
-) (*provisionerpb.GetWorkspacesResponse, error) {
+	req *provisionerv1.GetWorkspacesRequest,
+) (*provisionerv1.GetWorkspacesResponse, error) {
 
 	workspaces, err := ws.GetWorkspaces(ctx, p.server.helm,
 		ws.GetWorkspacesOptions{
@@ -137,21 +137,21 @@ func (p *ProvisionerService) GetWorkspaces(
 		return nil, status.Errorf(codes.Internal, "Failed to list workspaces: %v", err)
 	}
 
-	var protoWorkspaces []*commonpb.WorkspaceDetails
+	var protoWorkspaces []*commonv1.WorkspaceDetails
 	for _, w := range workspaces.Workspaces {
 		protoWorkspaces = append(protoWorkspaces, gapi.WorkspaceDetailsToProto(w))
 	}
 
-	return &provisionerpb.GetWorkspacesResponse{
+	return &provisionerv1.GetWorkspacesResponse{
 		Workspaces: protoWorkspaces,
 	}, nil
 }
 
 func (p *ProvisionerService) GetUserBlueprints(ctx context.Context,
-	req *provisionerpb.GetUserBlueprintsRequest,
-) (*provisionerpb.GetUserBlueprintsResponse, error) {
+	req *provisionerv1.GetUserBlueprintsRequest,
+) (*provisionerv1.GetUserBlueprintsResponse, error) {
 
-	userpb, err := p.server.Identity.FindUser(ctx, &identitypb.FindUserRequest{Username: req.Username})
+	userpb, err := p.server.Identity.FindUser(ctx, &identityv1.FindUserRequest{Username: req.Username})
 	if err != nil {
 		return nil, status.Errorf(codes.NotFound, "Failed to get user: %v", err)
 	}
@@ -165,19 +165,19 @@ func (p *ProvisionerService) GetUserBlueprints(ctx context.Context,
 		}
 	}
 
-	var protoBlueprints []*commonpb.BlueprintSummary
+	var protoBlueprints []*commonv1.BlueprintSummary
 	for _, b := range blueprints {
 		protoBlueprints = append(protoBlueprints, gapi.BlueprintSummaryToProto(b))
 	}
 
-	return &provisionerpb.GetUserBlueprintsResponse{
+	return &provisionerv1.GetUserBlueprintsResponse{
 		Blueprints: protoBlueprints,
 	}, nil
 }
 
 func (p *ProvisionerService) CanUpgradeWorkspace(ctx context.Context,
-	req *provisionerpb.CanUpgradeWorkspaceRequest,
-) (*provisionerpb.CanUpgradeWorkspaceResponse, error) {
+	req *provisionerv1.CanUpgradeWorkspaceRequest,
+) (*provisionerv1.CanUpgradeWorkspaceResponse, error) {
 	name := req.Workspace
 	if name == "" {
 		return nil, status.Errorf(codes.InvalidArgument, "workspace name is required")
@@ -204,19 +204,19 @@ func (p *ProvisionerService) CanUpgradeWorkspace(ctx context.Context,
 		message = "Workspace is up to date."
 	}
 
-	return &provisionerpb.CanUpgradeWorkspaceResponse{
+	return &provisionerv1.CanUpgradeWorkspaceResponse{
 		CanUpgrade: canUpgrade,
 		Message:    message,
 	}, nil
 }
 
 func (p *ProvisionerService) sendProvisionEvent(
-	stream provisionerpb.ProvisionerService_ProvisionWorkspaceStreamServer,
+	stream provisionerv1.ProvisionerService_ProvisionWorkspaceStreamServer,
 	job *ProvisionJobServer,
-	event *provisionerpb.ProvisionEvent,
+	event *provisionerv1.ProvisionEvent,
 ) error {
-	err := stream.Send(&provisionerpb.ProvisionWorkspaceResponse{
-		Data: &provisionerpb.ProvisionWorkspaceResponse_Event{
+	err := stream.Send(&provisionerv1.ProvisionWorkspaceResponse{
+		Data: &provisionerv1.ProvisionWorkspaceResponse_Event{
 			Event: event,
 		},
 	})
@@ -230,12 +230,12 @@ func (p *ProvisionerService) sendProvisionEvent(
 }
 
 func (p *ProvisionerService) sendProvisionHandshakeErr(
-	stream provisionerpb.ProvisionerService_ProvisionWorkspaceStreamServer,
+	stream provisionerv1.ProvisionerService_ProvisionWorkspaceStreamServer,
 	workspaceName string, err error,
 ) error {
-	errx := stream.Send(&provisionerpb.ProvisionWorkspaceResponse{
-		Data: &provisionerpb.ProvisionWorkspaceResponse_Handshake{
-			Handshake: &provisionerpb.HandshakeResponse{
+	errx := stream.Send(&provisionerv1.ProvisionWorkspaceResponse{
+		Data: &provisionerv1.ProvisionWorkspaceResponse_Handshake{
+			Handshake: &provisionerv1.HandshakeResponse{
 				Workspace: workspaceName,
 				Error:     err.Error(),
 			},
@@ -249,8 +249,8 @@ func (p *ProvisionerService) sendProvisionHandshakeErr(
 
 // ProvisionWorkspaceStream provisions a new workspace with streaming updates
 func (p *ProvisionerService) ProvisionWorkspaceStream(
-	req *provisionerpb.ProvisionWorkspaceRequest,
-	stream provisionerpb.ProvisionerService_ProvisionWorkspaceStreamServer,
+	req *provisionerv1.ProvisionWorkspaceRequest,
+	stream provisionerv1.ProvisionerService_ProvisionWorkspaceStreamServer,
 ) error {
 
 	var job *ProvisionJobServer
@@ -278,6 +278,18 @@ func (p *ProvisionerService) ProvisionWorkspaceStream(
 		return p.sendProvisionHandshakeErr(stream, "", err)
 	}
 
+	tokenResp, err := p.server.Identity.GetUserAccessToken(ctx, &identityv1.GetUserAccessTokenRequest{
+		Username: canUserStr.Identity.Username,
+	})
+	if err != nil {
+		return p.sendProvisionHandshakeErr(stream, workspace.Name, status.Errorf(codes.Unauthenticated,
+			"failed to retrieve identity token for user %s: %v", canUserStr.Identity.Username, err))
+	}
+	if _, err := p.server.tokenVerifier.VerifyToken(tokenResp.AccessToken); err != nil {
+		return p.sendProvisionHandshakeErr(stream, workspace.Name, status.Errorf(codes.Unauthenticated,
+			"identity token for user %s is invalid: %v", canUserStr.Identity.Username, err))
+	}
+
 	exists, st, err := workspace.ExistsAndRunning(ctx)
 	if err != nil {
 		return p.sendProvisionHandshakeErr(stream, workspace.Name, status.Errorf(codes.Internal,
@@ -289,17 +301,18 @@ func (p *ProvisionerService) ProvisionWorkspaceStream(
 	}
 
 	if st != nil {
-		if st.Status == models.WorkspaceStatusTerminating || st.Status == models.WorkspaceStatusStopped {
-			p.log.Debug().Msgf("Workspace %s is in %s state, waiting for it to be deleted before provisioning",
-				workspace.Name, st.Status)
+		if st.Status == models.WorkspaceStatusTerminating {
+			// Pod is actively being deleted — wait for it to disappear before reprovisioning.
+			p.log.Debug().Msgf("Workspace %s is terminating, waiting for pod to be gone", workspace.Name)
 			waitDur := time.Duration(timeout) * time.Second
 			if err := p.waitForWorkspacePodGone(ctx, workspace.Name, waitDur); err != nil {
 				return p.sendProvisionHandshakeErr(stream, workspace.Name, status.Errorf(codes.DeadlineExceeded,
 					"Workspace %s is still being deleted; please retry: %v", workspace.Name, err))
-			} else {
-				p.log.Debug().Msgf("Workspace %s deletion detected, proceeding with provisioning", workspace.Name)
 			}
+			p.log.Debug().Msgf("Workspace %s deletion detected, proceeding with provisioning", workspace.Name)
 		}
+		// WorkspaceStatusStopped (PodSucceeded) is a final state — the pod will never self-delete.
+		// Provision() handles it by recycling the pod directly via doStart().
 	}
 
 	if p.server.provisionJobsKV != nil {
@@ -308,9 +321,9 @@ func (p *ProvisionerService) ProvisionWorkspaceStream(
 		job.SetStatus(models.ProvisionJobRunning)
 	}
 
-	err = stream.Send(&provisionerpb.ProvisionWorkspaceResponse{
-		Data: &provisionerpb.ProvisionWorkspaceResponse_Handshake{
-			Handshake: &provisionerpb.HandshakeResponse{
+	err = stream.Send(&provisionerv1.ProvisionWorkspaceResponse{
+		Data: &provisionerv1.ProvisionWorkspaceResponse_Handshake{
+			Handshake: &provisionerv1.HandshakeResponse{
 				Workspace: workspace.Name,
 				Jobid:     workspace.JobId,
 			},
@@ -321,10 +334,11 @@ func (p *ProvisionerService) ProvisionWorkspaceStream(
 	}
 
 	messages := make(chan models.WorkspaceStreamEvent, 100)
-	done := make(chan *models.PodStatus)
+	done := make(chan *models.WorkspaceStatus)
 	errorChan := make(chan error)
 	progress := 0
 	percent := 0
+	// isPullingImage := false
 
 	go func() {
 		defer close(done)
@@ -352,8 +366,20 @@ func (p *ProvisionerService) ProvisionWorkspaceStream(
 			if !ok {
 				continue
 			}
+			if msg.Status == models.WorkspaceStatusPulling {
+				if err := p.sendProvisionEvent(stream, job, &provisionerv1.ProvisionEvent{
+					Type:       string(models.WorkspaceStreamEventTypeStatus),
+					Timestamp:  msg.Timestamp,
+					ObjectName: msg.ObjectName,
+					Status:     string(msg.Status),
+					Message:    msg.Message,
+				}); err != nil {
+					p.log.Error().Err(err).Msg("Failed to send provision event message")
+				}
+			}
+
 			if req.SendEvents {
-				if err := p.sendProvisionEvent(stream, job, &provisionerpb.ProvisionEvent{
+				if err := p.sendProvisionEvent(stream, job, &provisionerv1.ProvisionEvent{
 					Type:       string(models.WorkspaceStreamEventTypeEvent),
 					Timestamp:  msg.Timestamp,
 					ObjectName: msg.ObjectName,
@@ -368,7 +394,7 @@ func (p *ProvisionerService) ProvisionWorkspaceStream(
 				newPerc := min((progress*100)/TOTAL_PROVISION_EVENTS, 100)
 				if newPerc > percent {
 					percent = newPerc
-					if err := p.sendProvisionEvent(stream, job, &provisionerpb.ProvisionEvent{
+					if err := p.sendProvisionEvent(stream, job, &provisionerv1.ProvisionEvent{
 						Type:       string(models.WorkspaceStreamEventTypeProgress),
 						Timestamp:  time.Now().Format("2006-01-02 15:04:05"),
 						ObjectName: workspace.Name,
@@ -381,16 +407,20 @@ func (p *ProvisionerService) ProvisionWorkspaceStream(
 			}
 
 		case status := <-done:
+			st := models.WorkspaceStatusUnknown
 			if status != nil {
-				if err := p.sendProvisionEvent(stream, job, &provisionerpb.ProvisionEvent{
-					Type:       string(models.WorkspaceStreamEventTypeStatus),
-					Timestamp:  time.Now().Format("2006-01-02 15:04:05"),
-					ObjectName: workspace.Name,
-					Status:     string(status.Status),
-					Message:    status.Message,
-				}); err != nil {
-					p.log.Error().Err(err).Msg("Failed to send provision status event")
-				}
+				st = status.Status
+			}
+			p.log.Debug().Msgf("Provisioning process completed for workspace %s with final status: %s",
+				workspace.Name, status.Status)
+			if err := p.sendProvisionEvent(stream, job, &provisionerv1.ProvisionEvent{
+				Type:       string(models.WorkspaceStreamEventTypeStatus),
+				Timestamp:  time.Now().Format("2006-01-02 15:04:05"),
+				ObjectName: workspace.Name,
+				Status:     string(st),
+				Message:    status.Message,
+			}); err != nil {
+				p.log.Error().Err(err).Msg("Failed to send provision status event")
 			}
 			if job != nil {
 				job.SetStatus(models.ProvisionJobCompleted)
@@ -398,8 +428,10 @@ func (p *ProvisionerService) ProvisionWorkspaceStream(
 			return nil
 
 		case err := <-errorChan:
+			p.log.Debug().Msgf("Provisioning process completed for workspace %s with error: %v",
+				workspace.Name, err)
 			if err != nil {
-				if err := p.sendProvisionEvent(stream, job, &provisionerpb.ProvisionEvent{
+				if err := p.sendProvisionEvent(stream, job, &provisionerv1.ProvisionEvent{
 					Type:       string(models.WorkspaceStreamEventTypeStatus),
 					Timestamp:  time.Now().Format("2006-01-02 15:04:05"),
 					ObjectName: workspace.Name,
@@ -443,16 +475,17 @@ func (p *ProvisionerService) prepareWorkspaceWithPod(ctx context.Context, pod *c
 func (p *ProvisionerService) prepareWorkspaceWithUserStr(ctx context.Context,
 	userStr *models.CanonicalUserStr) (*ws.Workspace, error) {
 
-	userpb, err := p.server.Identity.FindUser(ctx, &identitypb.FindUserRequest{Username: userStr.Identity.Username})
+	userpb, err := p.server.Identity.FindUser(ctx, &identityv1.FindUserRequest{Username: userStr.Identity.Username})
 	if err != nil {
 		return nil, status.Errorf(codes.NotFound, "Failed to get user: %v", err)
 	}
 	user := gapi.ProtoToUser(userpb)
 
 	var blueprintObj *models.Blueprint
+	var resolvedBpName string
 	switch {
 	case userStr.Identity.BlueprintKind == models.BlueprintKindCustom:
-		blueprintpb, err := p.server.Identity.GetBlueprintByUserStr(ctx, &identitypb.UserStr{Userstr: userStr.CanonicalUserStr})
+		blueprintpb, err := p.server.Identity.GetBlueprintByUserStr(ctx, &identityv1.UserStr{Userstr: userStr.CanonicalUserStr})
 		if err != nil {
 			return nil, status.Errorf(codes.InvalidArgument, "failed to get blueprint by userstr: %v", err)
 		}
@@ -514,6 +547,7 @@ func (p *ProvisionerService) prepareWorkspaceWithUserStr(ctx context.Context,
 			return nil, status.Errorf(codes.InvalidArgument,
 				"Blueprint %s is a template and cannot be used to provision a workspace", userStr.Identity.Blueprint)
 		}
+		resolvedBpName = bpName
 	}
 
 	workspace, err := ws.NewWorkspace(userStr.WorkspaceName, blueprintObj, user, userStr,
@@ -521,12 +555,13 @@ func (p *ProvisionerService) prepareWorkspaceWithUserStr(ctx context.Context,
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "Failed to create workspace: %v", err)
 	}
+	workspace.SetBlueprintChain(p.server.bpManager.GetBlueprintChain(resolvedBpName))
 
 	return workspace, nil
 }
 
 func (p *ProvisionerService) UpgradeWorkspaceResources(ctx context.Context,
-	req *provisionerpb.UpgradeWorkspaceResourcesRequest) (*provisionerpb.UpgradeWorkspaceResourcesResponse, error) {
+	req *provisionerv1.UpgradeWorkspaceResourcesRequest) (*provisionerv1.UpgradeWorkspaceResourcesResponse, error) {
 
 	name := req.Workspace
 	if name == "" {
@@ -550,7 +585,7 @@ func (p *ProvisionerService) UpgradeWorkspaceResources(ctx context.Context,
 		return nil, status.Errorf(codes.Internal, "Failed to parse workspace labels: %v", err)
 	}
 
-	userpb, err := p.server.Identity.FindUser(ctx, &identitypb.FindUserRequest{Username: wl.Username})
+	userpb, err := p.server.Identity.FindUser(ctx, &identityv1.FindUserRequest{Username: wl.Username})
 	if err != nil {
 		return nil, fmt.Errorf("failed to get user %s: %w", wl.Username, err)
 	}
@@ -569,7 +604,7 @@ func (p *ProvisionerService) UpgradeWorkspaceResources(ctx context.Context,
 		return nil, status.Errorf(codes.Internal, "Failed to resize workspace resources: %v", err)
 	}
 
-	return &provisionerpb.UpgradeWorkspaceResourcesResponse{
+	return &provisionerv1.UpgradeWorkspaceResourcesResponse{
 		Status:  "Success",
 		Message: fmt.Sprintf("Workspace %s resources upgraded successfully", name),
 	}, nil
@@ -577,8 +612,8 @@ func (p *ProvisionerService) UpgradeWorkspaceResources(ctx context.Context,
 }
 
 func (p *ProvisionerService) UpgradeWorkspaceStream(
-	req *provisionerpb.UpgradeWorkspaceRequest,
-	stream grpc.ServerStreamingServer[provisionerpb.ProvisionWorkspaceResponse],
+	req *provisionerv1.UpgradeWorkspaceRequest,
+	stream grpc.ServerStreamingServer[provisionerv1.ProvisionWorkspaceResponse],
 ) error {
 	name := req.Workspace
 	if name == "" {
@@ -603,7 +638,7 @@ func (p *ProvisionerService) UpgradeWorkspaceStream(
 			"Failed to parse workspace labels: %v", err))
 	}
 
-	_, err = p.server.Identity.FindUser(ctx, &identitypb.FindUserRequest{Username: wl.Username})
+	_, err = p.server.Identity.FindUser(ctx, &identityv1.FindUserRequest{Username: wl.Username})
 	if err != nil {
 		return p.sendProvisionHandshakeErr(stream, name, status.Errorf(codes.Internal,
 			"Failed to get user %s: %v", wl.Username, err))
@@ -627,7 +662,7 @@ func (p *ProvisionerService) UpgradeWorkspaceStream(
 		}
 	}
 
-	_, err = p.DeleteWorkspace(ctx, &provisionerpb.DeleteWorkspaceRequest{
+	_, err = p.DeleteWorkspace(ctx, &provisionerv1.DeleteWorkspaceRequest{
 		Workspace:    name,
 		DelaySeconds: 0,
 	})
@@ -640,7 +675,7 @@ func (p *ProvisionerService) UpgradeWorkspaceStream(
 	// ensure the workspace is fully deleted before starting provisioning again
 	time.Sleep(time.Duration(2) * time.Second)
 
-	return p.ProvisionWorkspaceStream(&provisionerpb.ProvisionWorkspaceRequest{
+	return p.ProvisionWorkspaceStream(&provisionerv1.ProvisionWorkspaceRequest{
 		Userstr:      wl.UserStr.CanonicalUserStr,
 		Timeout:      req.Timeout,
 		SendEvents:   req.SendEvents,
@@ -650,7 +685,7 @@ func (p *ProvisionerService) UpgradeWorkspaceStream(
 
 // DeleteWorkspace deletes a workspace asynchronously with distributed locking
 func (p *ProvisionerService) DeleteWorkspace(ctx context.Context,
-	req *provisionerpb.DeleteWorkspaceRequest) (*provisionerpb.DeleteWorkspaceResponse, error) {
+	req *provisionerv1.DeleteWorkspaceRequest) (*provisionerv1.DeleteWorkspaceResponse, error) {
 
 	name := req.Workspace
 	if name == "" {
@@ -673,7 +708,7 @@ func (p *ProvisionerService) DeleteWorkspace(ctx context.Context,
 	acquired, err := workspaceLock.TryAcquire(lockCtx)
 	if err != nil {
 		if errors.Is(err, ws.ErrLockAlreadyHeld) {
-			return &provisionerpb.DeleteWorkspaceResponse{
+			return &provisionerv1.DeleteWorkspaceResponse{
 				Message: fmt.Sprintf("Request to delete the workspace %s already exists", name),
 			}, nil
 		}
@@ -682,17 +717,18 @@ func (p *ProvisionerService) DeleteWorkspace(ctx context.Context,
 	}
 
 	if !acquired {
-		return &provisionerpb.DeleteWorkspaceResponse{
+		return &provisionerv1.DeleteWorkspaceResponse{
 			Message: fmt.Sprintf("Request to delete the workspace %s already exists", name),
 		}, nil
 	}
 
 	if req.DelaySeconds > 0 {
 		// asynchronously delete the workspace after the specified delay and release the lock when done
+		// Use WithoutCancel so the goroutine outlives the request context.
+		bgCtx := context.WithoutCancel(ctx)
 		go func() {
 			defer func() {
-				unlockCtx := context.Background()
-				if unlockErr := workspaceLock.Release(unlockCtx); unlockErr != nil {
+				if unlockErr := workspaceLock.Release(bgCtx); unlockErr != nil {
 					p.log.Error().Err(unlockErr).Msgf("Failed to release lock after deleting workspace %s", name)
 				}
 			}()
@@ -700,7 +736,7 @@ func (p *ProvisionerService) DeleteWorkspace(ctx context.Context,
 			time.Sleep(time.Duration(req.DelaySeconds) * time.Second)
 			p.log.Debug().Msgf("Starting async deletion of workspace %s", name)
 
-			err := w.Uninstall(context.Background(), time.Duration(10)*time.Second, false, false)
+			err := w.Uninstall(bgCtx, time.Duration(10)*time.Second, false, false)
 			if err != nil {
 				p.log.Error().Err(err).Msgf("Failed to delete workspace %s", name)
 			} else {
@@ -708,27 +744,108 @@ func (p *ProvisionerService) DeleteWorkspace(ctx context.Context,
 			}
 		}()
 
-		return &provisionerpb.DeleteWorkspaceResponse{
+		return &provisionerv1.DeleteWorkspaceResponse{
 			Message: fmt.Sprintf("Request to delete the workspace %s was submitted", name),
 		}, nil
 	}
 
 	// synchronously delete the workspace and release the lock when done
+	bgCtx := context.WithoutCancel(ctx)
 	defer func() {
-		unlockCtx := context.Background()
-		if unlockErr := workspaceLock.Release(unlockCtx); unlockErr != nil {
+		if unlockErr := workspaceLock.Release(bgCtx); unlockErr != nil {
 			p.log.Error().Err(unlockErr).Msgf("Failed to release lock after deleting workspace %s", name)
 		}
 	}()
 
-	err = w.Uninstall(context.Background(), time.Duration(10)*time.Second, false, false)
+	err = w.Uninstall(bgCtx, time.Duration(10)*time.Second, false, false)
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "Failed to delete workspace %s: %v", name, err)
 	}
 
 	p.log.Info().Msgf("Successfully deleted workspace %s", name)
-	return &provisionerpb.DeleteWorkspaceResponse{
+	return &provisionerv1.DeleteWorkspaceResponse{
 		Message: fmt.Sprintf("Successfully deleted workspace %s", name),
+	}, nil
+}
+
+// StopWorkspace deletes only the workspace pod, leaving the Helm release and all
+// other resources (PVCs, secrets, ConfigMaps) intact for later re-provisioning.
+func (p *ProvisionerService) StopWorkspace(ctx context.Context,
+	req *provisionerv1.StopWorkspaceRequest) (*provisionerv1.StopWorkspaceResponse, error) {
+
+	name := req.Workspace
+	if name == "" {
+		return nil, status.Errorf(codes.InvalidArgument, "workspace name is required")
+	}
+
+	if req.DelaySeconds > 60 {
+		return nil, status.Errorf(codes.InvalidArgument, "delay seconds cannot be greater than 60 seconds")
+	}
+
+	w, err := ws.NewWorkspaceFromHelmRelease(ctx, name, p.server.helm, p.server.Identity, p.server.config)
+	if err != nil {
+		return nil, convertToGRPCError(err)
+	}
+
+	lockCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+
+	workspaceLock := w.CreateLock()
+	acquired, err := workspaceLock.TryAcquire(lockCtx)
+	if err != nil {
+		if errors.Is(err, ws.ErrLockAlreadyHeld) {
+			return &provisionerv1.StopWorkspaceResponse{
+				Message: fmt.Sprintf("Request to stop the workspace %s already exists", name),
+			}, nil
+		}
+		return nil, status.Errorf(codes.Internal,
+			"Failed to acquire lock for workspace %s: %v", name, err)
+	}
+
+	if !acquired {
+		return &provisionerv1.StopWorkspaceResponse{
+			Message: fmt.Sprintf("Request to stop the workspace %s already exists", name),
+		}, nil
+	}
+
+	if req.DelaySeconds > 0 {
+		bgCtx := context.WithoutCancel(ctx)
+		go func() {
+			defer func() {
+				if unlockErr := workspaceLock.Release(bgCtx); unlockErr != nil {
+					p.log.Error().Err(unlockErr).Msgf("Failed to release lock after stopping workspace %s", name)
+				}
+			}()
+
+			time.Sleep(time.Duration(req.DelaySeconds) * time.Second)
+			p.log.Debug().Msgf("Starting async stop of workspace pod %s", name)
+
+			if err := w.StopPod(bgCtx); err != nil {
+				p.log.Error().Err(err).Msgf("Failed to stop workspace pod %s", name)
+			} else {
+				p.log.Info().Msgf("Successfully stopped workspace pod %s", name)
+			}
+		}()
+
+		return &provisionerv1.StopWorkspaceResponse{
+			Message: fmt.Sprintf("Request to stop the workspace %s was submitted", name),
+		}, nil
+	}
+
+	bgCtx := context.WithoutCancel(ctx)
+	defer func() {
+		if unlockErr := workspaceLock.Release(bgCtx); unlockErr != nil {
+			p.log.Error().Err(unlockErr).Msgf("Failed to release lock after stopping workspace %s", name)
+		}
+	}()
+
+	if err := w.StopPod(bgCtx); err != nil {
+		return nil, status.Errorf(codes.Internal, "Failed to stop workspace pod %s: %v", name, err)
+	}
+
+	p.log.Info().Msgf("Successfully stopped workspace pod %s", name)
+	return &provisionerv1.StopWorkspaceResponse{
+		Message: fmt.Sprintf("Successfully stopped workspace %s", name),
 	}, nil
 }
 

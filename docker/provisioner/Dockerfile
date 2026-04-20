@@ -11,7 +11,6 @@ COPY go.mod go.sum ./
 COPY vendor ./vendor
 COPY main.go ./
 COPY internal ./internal
-COPY pkg ./pkg
 
 ENV GOFLAGS="-mod=vendor"
 

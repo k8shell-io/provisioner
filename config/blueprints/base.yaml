@@ -1,0 +1,73 @@
+blueprints:
+  - name: base
+    shell: /bin/sh
+    isTemplate: true
+    sudo: false
+
+    splash: |
+      Welcome to k8shell - cloud-native workspaces on Kubernetes!
+      Connected to k8shelld (version: {{.Version}}-{{.Commit}})
+      For more information, visit https://k8shell.io
+
+    image: <image:tag>
+    imagePullPolicy: IfNotPresent
+
+    subdomain: !cel "user.organization"
+    hostname: !cel "user.username + '-' + metadata.name"
+
+    k8shelld:
+      image: k8shell-base/k8shelld:pr-50-f512f89
+      imagePullPolicy: IfNotPresent
+      ignoreOrphans:
+        - .*JetBrains.*
+
+    network:
+      networkPolicy: system
+
+    resources:
+      cpu: 4
+      memory: 4Gi
+
+    podman:
+      enabled: false
+      image: quay.io/podman/stable:v5.8.2
+
+      resources:
+        cpu: 2
+        memory: 2Gi
+
+      # group owner of podman unix socket
+      groupId: 999
+
+      # use the same volumes as in the main workspace
+      parentStorages: true
+
+      # storages:
+      #   data:
+      #     enabled: false
+      #     path: /home/podman/.local/share/containers
+      #     fsOwnerUid: 1000   # chown path to this uid at pod start (0 = skip)
+      #     fsOwnerGid: 1000   # chown path to this gid at pod start (0 = skip)
+      #     claimSpec:
+      #       storageClassName: ""
+      #       accessModes:
+      #         - ReadWriteMany
+      #       resources:
+      #         requests:
+      #           storage: 10Gi
+
+    # list of storages in the workspace
+    # storages:
+    #   home:
+    #     enabled: false
+    #     path: !cel "'/home/' + user.username"
+    #     readonly: false
+    #     claimSpec:
+    #       storageClassName: ""
+    #       accessModes:
+    #         - ReadWriteMany
+    #       resources:
+    #         requests:
+    #           storage: 10Gi
+
+    enableApps: false

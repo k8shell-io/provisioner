@@ -26,13 +26,15 @@ spec:
         - namespaceSelector: {}
         - ipBlock:
             cidr: 0.0.0.0/0
----
 {{- if .Capabilities.APIVersions.Has "cilium.io/v2/CiliumNetworkPolicy" }}
+---
 apiVersion: cilium.io/v2
 kind: CiliumNetworkPolicy
 metadata:
   name: cilium-np-{{ .Values.__workspace__ }}
-  namespace: {{ .Release.Namespace }} 
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "workspace.labels" . | nindent 4 }}
 spec:
   endpointSelector:
     matchLabels:
@@ -42,8 +44,6 @@ spec:
   egress:
     - toEntities:
         - world
-        - cluster # this allows to access kubernetes control plane services
-  egressDeny:
-    - {}
+        - cluster
 {{- end }}
 {{- end }}

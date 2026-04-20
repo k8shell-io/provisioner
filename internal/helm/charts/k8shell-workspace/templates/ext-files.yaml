@@ -13,18 +13,18 @@ data:
 {{ $content | indent 4 }}
 {{- end }}
 {{- end }}
-{{- if .Values.docker.extFiles }}
+{{- if .Values.podman.extFiles }}
 ---
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: {{ .Values.__workspace__ }}-docker-ext-files
+  name: {{ .Values.__workspace__ }}-podman-ext-files
   namespace: {{ .Release.Namespace }} 
   labels:
     {{ include "workspace.labels" . | nindent 4 }}  
-    type: docker-ext-files
+    type: podman-ext-files
 data:
-{{- range $path, $content := .Values.docker.extFiles }}
+{{- range $path, $content := .Values.podman.extFiles }}
   {{ $path | replace "/" "__" | quote }}: |
 {{ $content | indent 4 }}
 {{- end }}
