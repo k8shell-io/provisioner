@@ -13,6 +13,23 @@ defaultRegistry:
 
 k8shellCapabilities:
   apiServerEnabled: true
+  
+  # Shell session configuration
+  # Controls behavior of PTY shell sessions in k8shelld workspaces
+  shells:
+    # How long a detached PTY shell session is kept alive before automatic termination
+    # Accepts Go duration strings (e.g. "30m", "1h", "24h")
+    # Default: "30m" (set by k8shelld if omitted)
+    # Set to "0s" to disable automatic termination
+    detachedTTL: "30m"
+    
+    # Allow clients to set unlimited TTL for detached sessions
+    # Default: false
+    allowUnlimittedTTL: false
+    
+    # Allow clients to detach from PTY shell sessions
+    # Default: false
+    allowSessionDetach: false
 
 certManager:
   enabled: false

@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/k8shell-io/common/pkg/api/client/k8shelld"
 	"github.com/k8shell-io/common/pkg/authz"
 	"github.com/k8shell-io/common/pkg/config"
 	"github.com/k8shell-io/common/pkg/gapi"
@@ -40,7 +41,8 @@ type JobsKVConfig struct {
 
 // K8shellCapabilities represents the capabilities of the k8shell environment
 type K8shellCapabilities struct {
-	APIServerEnabled bool `yaml:"apiServerEnabled"`
+	APIServerEnabled bool            `yaml:"apiServerEnabled"`
+	Shells           k8shelld.Shells `yaml:"shells,omitempty"`
 }
 
 // CertManagerConfig represents the cert-manager configuration
