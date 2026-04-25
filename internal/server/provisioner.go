@@ -114,6 +114,14 @@ func (p *ProvisionerService) FindWorkspace(ctx context.Context,
 		}
 		return nil, status.Errorf(codes.Internal, "Failed to get workspace details: %v", err)
 	}
+
+	if p.server.provisionJobsKV != nil && s.JobId != "" {
+		_, err := p.server.provisionJobsKV.Get(s.JobId)
+		if err != nil {
+			s.JobId = ""
+		}
+	}
+
 	return gapi.WorkspaceDetailsToProto(s), nil
 }
 
@@ -135,6 +143,17 @@ func (p *ProvisionerService) GetWorkspaces(
 		})
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "Failed to list workspaces: %v", err)
+	}
+
+	if p.server.provisionJobsKV != nil {
+		for _, w := range workspaces.Workspaces {
+			if w.JobId != "" {
+				_, err := p.server.provisionJobsKV.Get(w.JobId)
+				if err != nil {
+					w.JobId = ""
+				}
+			}
+		}
 	}
 
 	var protoWorkspaces []*commonv1.WorkspaceDetails
