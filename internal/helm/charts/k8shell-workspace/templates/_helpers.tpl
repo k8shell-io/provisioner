@@ -12,13 +12,6 @@ k8shell.io/app: k8shell-workspace
 app.kubernetes.io/version: {{ .Values.__appversion__ }}
 k8shell.io/workspace: "{{ .Values.__workspace__ }}"
 k8shell.io/blueprint: "{{ .Values.__blueprint__ }}"
-{{- if and .Values.__repoowner__ .Values.__reponame__ }}
-k8shell.io/repo-owner: "{{ .Values.__repoowner__ }}"
-k8shell.io/repo-name: "{{ .Values.__reponame__ }}"
-{{- end }}
-{{- if .Values.__reporef__ }}
-k8shell.io/repo-ref: "{{ .Values.__reporef__ }}"
-{{- end }}
 k8shell.io/username: "{{ .Values.__username__ }}"
 k8shell.io/organization: "{{ .Values.__organization__ }}"
 k8shell.io/userstr: "{{ .Values.__userstr__ }}"

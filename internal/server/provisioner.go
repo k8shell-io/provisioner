@@ -131,15 +131,16 @@ func (p *ProvisionerService) GetWorkspaces(
 	req *provisionerv1.GetWorkspacesRequest,
 ) (*provisionerv1.GetWorkspacesResponse, error) {
 
+	if req.RepoName != "" || req.RepoOwner != "" || req.RepoRef != "" {
+		return nil, status.Error(codes.Unimplemented, "Filtering by repo details (RepoName, RepoOwner, RepoRef) is not supported")
+	}
+
 	workspaces, err := ws.GetWorkspaces(ctx, p.server.helm,
 		ws.GetWorkspacesOptions{
 			Username:     req.Username,
 			Blueprint:    req.Blueprint,
 			Organization: req.Organization,
 			Workspace:    req.Workspace,
-			RepoName:     req.RepoName,
-			RepoOwner:    req.RepoOwner,
-			RepoRef:      req.RepoRef,
 		})
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "Failed to list workspaces: %v", err)

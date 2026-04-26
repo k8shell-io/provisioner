@@ -8,7 +8,7 @@ require (
 	github.com/fsnotify/fsnotify v1.9.0
 	github.com/google/uuid v1.6.0
 	github.com/k8shell-io/common v0.17.11
-	github.com/k8shell-io/yaml-cel v0.2.6
+	github.com/k8shell-io/yaml-cel v0.2.7
 	google.golang.org/grpc v1.76.0
 	gopkg.in/yaml.v3 v3.0.1
 	helm.sh/helm/v3 v3.19.0

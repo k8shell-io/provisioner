@@ -52,9 +52,6 @@ type GetWorkspacesOptions struct {
 	Organization string
 	Blueprint    string
 	Workspace    string
-	RepoName     string
-	RepoOwner    string
-	RepoRef      string
 }
 
 // GetWorkspacesResult defines the result structure for GetWorkspaces function,
@@ -109,9 +106,9 @@ func ParseWorkspaceLabels(labels map[string]string) (*WorkspaceLabels, error) {
 		Username:     username,
 		Organization: labels["k8shell.io/organization"],
 		Blueprint:    blueprint,
-		RepoOwner:    labels["k8shell.io/repo-owner"],
-		RepoName:     labels["k8shell.io/repo-name"],
-		RepoRef:      labels["k8shell.io/repo-ref"],
+		RepoOwner:    canUser.Identity.RepoOwner,
+		RepoName:     canUser.Identity.RepoName,
+		RepoRef:      canUser.Identity.RepoRef,
 		AppVersion:   labels["app.kubernetes.io/version"],
 		JobId:        labels["k8shell.io/job-id"],
 		UserStr:      canUser,
@@ -156,15 +153,6 @@ func GetWorkspaces(ctx context.Context, helmClient *helm.Client,
 	}
 	if opts.Blueprint != "" {
 		labels["k8shell.io/blueprint"] = opts.Blueprint
-	}
-	if opts.RepoName != "" {
-		labels["k8shell.io/repo-name"] = opts.RepoName
-	}
-	if opts.RepoOwner != "" {
-		labels["k8shell.io/repo-owner"] = opts.RepoOwner
-	}
-	if opts.RepoRef != "" {
-		labels["k8shell.io/repo-ref"] = opts.RepoRef
 	}
 
 	selector := getSelector(labels)
@@ -350,9 +338,6 @@ func (w *Workspace) Values() (map[string]interface{}, error) {
 
 	values["__user__"] = userValues
 	values["__username__"] = w.user.Username
-	values["__repoowner__"] = w.userStr.Identity.RepoOwner
-	values["__reponame__"] = w.userStr.Identity.RepoName
-	values["__reporef__"] = w.userStr.Identity.RepoRef
 	values["__workspace__"] = w.Name
 	values["__blueprint__"] = w.blueprint.Name
 	values["__organization__"] = w.user.Organization
@@ -525,6 +510,16 @@ func WorkspaceDetailsFromPod(pod *corev1.Pod) *models.WorkspaceDetails {
 	cpu := pod.Spec.Containers[0].Resources.Limits.Cpu().String()
 	memory := pod.Spec.Containers[0].Resources.Limits.Memory().String()
 
+	// Parse userstr to get original repo values
+	userstrB64, ok := pod.Labels["k8shell.io/userstr"]
+	if !ok || userstrB64 == "" {
+		return nil // userstr is required
+	}
+	canUser, err := models.NewCanonicalUserStrFromBase64(userstrB64)
+	if err != nil {
+		return nil // failed to parse userstr
+	}
+
 	wsDetails := &models.WorkspaceDetails{
 		WorkspaceStatus: models.WorkspaceStatus{
 			Created:         pod.CreationTimestamp.Time,
@@ -535,9 +530,9 @@ func WorkspaceDetailsFromPod(pod *corev1.Pod) *models.WorkspaceDetails {
 		},
 		Name:         nameLabel,
 		Username:     pod.Labels["k8shell.io/username"],
-		RepoOwner:    pod.Labels["k8shell.io/repo-owner"],
-		RepoName:     pod.Labels["k8shell.io/repo-name"],
-		RepoRef:      pod.Labels["k8shell.io/repo-ref"],
+		RepoOwner:    canUser.Identity.RepoOwner,
+		RepoName:     canUser.Identity.RepoName,
+		RepoRef:      canUser.Identity.RepoRef,
 		Blueprint:    pod.Labels["k8shell.io/blueprint"],
 		Organization: pod.Labels["k8shell.io/organization"],
 		JobId:        pod.Labels["k8shell.io/job-id"],
