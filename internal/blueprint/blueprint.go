@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io/fs"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"sync"
@@ -337,6 +338,28 @@ func validateSecurityContexts(bp *models.Blueprint) []error {
 	return errs
 }
 
+// normalizeDNSLabel normalizes a string to be a valid DNS label / Helm release name:
+// lowercase alphanumeric and hyphens, must start and end with alphanumeric, max 53 chars.
+func normalizeDNSLabel(s string) string {
+	if s == "" {
+		return ""
+	}
+	s = strings.ToLower(s)
+	reg := regexp.MustCompile(`[^a-z0-9-]+`)
+	s = reg.ReplaceAllString(s, "-")
+	reg = regexp.MustCompile(`^[^a-z0-9]+`)
+	s = reg.ReplaceAllString(s, "")
+	reg = regexp.MustCompile(`[^a-z0-9]+$`)
+	s = reg.ReplaceAllString(s, "")
+	reg = regexp.MustCompile(`-+`)
+	s = reg.ReplaceAllString(s, "-")
+	if len(s) > 53 {
+		s = s[:53]
+		s = strings.TrimRight(s, "-")
+	}
+	return s
+}
+
 // GetBlueprint evaluates CEL expressions for a specific blueprint with given scope.
 func (bm *BlueprintManager) GetBlueprint(name string, scope *BlueprintScope) (*models.Blueprint, error) {
 	if scope == nil {
@@ -373,6 +396,10 @@ func (bm *BlueprintManager) GetBlueprint(name string, scope *BlueprintScope) (*m
 	decoder.KnownFields(bm.knownFields)
 	if err := decoder.Decode(&bp); err != nil {
 		return nil, fmt.Errorf("%w", err)
+	}
+
+	if bp.Name != "" {
+		bp.Name = normalizeDNSLabel(bp.Name)
 	}
 
 	return &bp, nil

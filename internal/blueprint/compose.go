@@ -127,6 +127,10 @@ func (bm *BlueprintManager) ComposeWithScope(customBlueprint *models.CustomBluep
 		return nil, fmt.Errorf("%w", err)
 	}
 
+	if bp.Name != "" {
+		bp.Name = normalizeDNSLabel(bp.Name)
+	}
+
 	v := bp.Validate()
 	if !v.IsValid() {
 		return nil, fmt.Errorf("blueprint validation failed: %v", v.Errors())
