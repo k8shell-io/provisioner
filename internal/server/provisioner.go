@@ -472,9 +472,9 @@ func (p *ProvisionerService) ProvisionWorkspaceStream(
 // prepareWorkspaceName prepares the workspace object for provisioning/upgrade based on the workspace name
 func (p *ProvisionerService) prepareWorkspaceWithPod(ctx context.Context, pod *corev1.Pod) (*ws.Workspace, error) {
 
-	userstrb64 := pod.Labels["k8shell.io/userstr"]
+	userstrb64 := pod.Annotations["k8shell.io/userstr"]
 	if userstrb64 == "" {
-		return nil, status.Errorf(codes.Internal, "Workspace pod is missing userstr label")
+		return nil, status.Errorf(codes.Internal, "Workspace pod is missing userstr annotation")
 	}
 
 	userstr, err := models.NewCanonicalUserStrFromBase64(userstrb64)
@@ -600,9 +600,9 @@ func (p *ProvisionerService) UpgradeWorkspaceResources(ctx context.Context,
 		return nil, status.Errorf(codes.Internal, "Failed to find workspace: %v", err)
 	}
 
-	wl, err := ws.ParseWorkspaceLabels(pod.Labels)
+	wl, err := ws.ParseWorkspaceMetadata(pod.Labels, pod.Annotations)
 	if err != nil {
-		return nil, status.Errorf(codes.Internal, "Failed to parse workspace labels: %v", err)
+		return nil, status.Errorf(codes.Internal, "Failed to parse workspace metadata: %v", err)
 	}
 
 	userpb, err := p.server.Identity.FindUser(ctx, &identityv1.FindUserRequest{Username: wl.Username})
@@ -652,10 +652,10 @@ func (p *ProvisionerService) UpgradeWorkspaceStream(
 			"Failed to find workspace: %v", err))
 	}
 
-	wl, err := ws.ParseWorkspaceLabels(pod.Labels)
+	wl, err := ws.ParseWorkspaceMetadata(pod.Labels, pod.Annotations)
 	if err != nil {
 		return p.sendProvisionHandshakeErr(stream, name, status.Errorf(codes.Internal,
-			"Failed to parse workspace labels: %v", err))
+			"Failed to parse workspace metadata: %v", err))
 	}
 
 	_, err = p.server.Identity.FindUser(ctx, &identityv1.FindUserRequest{Username: wl.Username})

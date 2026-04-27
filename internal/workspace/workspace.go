@@ -75,8 +75,8 @@ type WorkspaceLabels struct {
 	JobId        string
 }
 
-// ParseWorkspaceLabels parses the label set attached to a workspace pod
-func ParseWorkspaceLabels(labels map[string]string) (*WorkspaceLabels, error) {
+// ParseWorkspaceMetadata parses the label set and annotations attached to a workspace pod
+func ParseWorkspaceMetadata(labels map[string]string, annotations map[string]string) (*WorkspaceLabels, error) {
 	if labels == nil {
 		return nil, fmt.Errorf("workspace labels are nil")
 	}
@@ -91,9 +91,9 @@ func ParseWorkspaceLabels(labels map[string]string) (*WorkspaceLabels, error) {
 		return nil, fmt.Errorf("missing label k8shell.io/blueprint")
 	}
 
-	userstrB64, ok := labels["k8shell.io/userstr"]
+	userstrB64, ok := annotations["k8shell.io/userstr"]
 	if !ok || userstrB64 == "" {
-		return nil, fmt.Errorf("missing label k8shell.io/userstr")
+		return nil, fmt.Errorf("missing annotation k8shell.io/userstr")
 	}
 
 	canUser, err := models.NewCanonicalUserStrFromBase64(userstrB64)
@@ -511,7 +511,7 @@ func WorkspaceDetailsFromPod(pod *corev1.Pod) *models.WorkspaceDetails {
 	memory := pod.Spec.Containers[0].Resources.Limits.Memory().String()
 
 	// Parse userstr to get original repo values
-	userstrB64, ok := pod.Labels["k8shell.io/userstr"]
+	userstrB64, ok := pod.Annotations["k8shell.io/userstr"]
 	if !ok || userstrB64 == "" {
 		return nil // userstr is required
 	}

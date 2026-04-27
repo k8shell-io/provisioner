@@ -15,6 +15,7 @@ metadata:
     {{- if .Values.__identity__ }}
     k8shell.io/identity: {{ .Values.__identity__ | quote }}
     {{- end }}
+    k8shell.io/userstr: {{ .Values.__userstr__ | quote }}
   labels:
     {{- include "workspace.workspaceLabels" . | nindent 4 }} 
 spec:
