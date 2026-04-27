@@ -338,9 +338,9 @@ func validateSecurityContexts(bp *models.Blueprint) []error {
 	return errs
 }
 
-// normalizeDNSLabel normalizes a string to be a valid DNS label / Helm release name:
+// NormalizeDNSLabel normalizes a string to be a valid DNS label / Helm release name:
 // lowercase alphanumeric and hyphens, must start and end with alphanumeric, max 53 chars.
-func normalizeDNSLabel(s string) string {
+func NormalizeDNSLabel(s string) string {
 	if s == "" {
 		return ""
 	}
@@ -374,7 +374,7 @@ func (bm *BlueprintManager) GetBlueprint(name string, scope *BlueprintScope) (*m
 		return nil, fmt.Errorf("blueprint %s not found: %w", name, ErrBlueprintNotFound)
 	}
 
-	scope.Metadata.Name = rawBp.Name
+	scope.Metadata.Name = NormalizeDNSLabel(rawBp.Name)
 	var tmpl yamlcel.CELTemplate
 	if err := rawBp.Node.Decode(&tmpl); err != nil {
 		return nil, fmt.Errorf("failed to decode CEL template for %s: %w", name, err)
@@ -399,7 +399,7 @@ func (bm *BlueprintManager) GetBlueprint(name string, scope *BlueprintScope) (*m
 	}
 
 	if bp.Name != "" {
-		bp.Name = normalizeDNSLabel(bp.Name)
+		bp.Name = NormalizeDNSLabel(bp.Name)
 	}
 
 	return &bp, nil

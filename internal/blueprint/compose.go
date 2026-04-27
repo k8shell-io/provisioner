@@ -103,7 +103,7 @@ func (bm *BlueprintManager) ComposeWithScope(customBlueprint *models.CustomBluep
 		return nil, err
 	}
 
-	scope.Metadata.Name = rawBp.Name
+	scope.Metadata.Name = NormalizeDNSLabel(rawBp.Name)
 	var tmpl yamlcel.CELTemplate
 	if err := rawBp.Node.Decode(&tmpl); err != nil {
 		return nil, fmt.Errorf("failed to decode CEL template for %s: %w", rawBp.Name, err)
@@ -128,7 +128,7 @@ func (bm *BlueprintManager) ComposeWithScope(customBlueprint *models.CustomBluep
 	}
 
 	if bp.Name != "" {
-		bp.Name = normalizeDNSLabel(bp.Name)
+		bp.Name = NormalizeDNSLabel(bp.Name)
 	}
 
 	v := bp.Validate()
