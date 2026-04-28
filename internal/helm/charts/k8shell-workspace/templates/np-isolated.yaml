@@ -1,4 +1,4 @@
-{{- if eq .Values.network.networkPolicy "isolated" }}
+{{- if eq .Values.network.networkPolicyClass "isolated" }}
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -19,12 +19,5 @@ spec:
   ingress:
 {{ include "default.ingress" . | nindent 4 }}
   egress:
-{{- if .Values.network.allowEgressToCIDRs }}
-{{- range $cidr := .Values.network.allowEgressToCIDRs }}
-    - to:
-        - ipBlock:
-            cidr: {{ $cidr }}
-{{- end }}
-{{- end }}
 {{ include "default.egress" . | nindent 4 }}  
 {{- end }}

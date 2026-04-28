@@ -14,7 +14,7 @@ k8shell.io/workspace: "{{ .Values.__workspace__ }}"
 k8shell.io/blueprint: "{{ .Values.__blueprint__ }}"
 k8shell.io/username: "{{ .Values.__username__ }}"
 k8shell.io/organization: "{{ .Values.__organization__ }}"
-k8shell.io/network-policy: "{{ .Values.__networkpolicy__ }}"
+k8shell.io/network-policy: "{{ .Values.network.networkPolicyClass }}"
 {{- if and .Values.subdomain .Values.hostname }}
 k8shell.io/subdomain: "{{ .Values.subdomain }}"
 {{- end }}
@@ -62,6 +62,10 @@ k8shell.io/job-id: "{{ .Values.__jobid__ }}"
           {{- range $k, $v := . }}
           {{ $k }}: {{ $v | quote }}
           {{- end }}
+    {{- end }}
+    {{- range $cidr := .Values.network.allowEgressToCIDRs }}
+    - ipBlock:
+        cidr: {{ $cidr }}
     {{- end }}
     - ipBlock:
         cidr: 0.0.0.0/0

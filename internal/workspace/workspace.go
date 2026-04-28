@@ -341,6 +341,7 @@ func (w *Workspace) Values() (map[string]interface{}, error) {
 	values["__workspace__"] = w.Name
 	values["__blueprint__"] = w.blueprint.Name
 	values["__organization__"] = w.user.Organization
+	values["__networkpolicy__"] = w.blueprint.Network.NetworkPolicyClass
 	values["__registry__"] = w.client.Registry.ToValues()
 	values["__namespace__"] = getNamespace()
 	values["__certmanager__"] = cmValues

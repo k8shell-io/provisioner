@@ -22,7 +22,7 @@ blueprints:
         - .*JetBrains.*
 
     network:
-      networkPolicy: system
+      networkPolicyClass: system
 
     resources:
       cpu: 4
