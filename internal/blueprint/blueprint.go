@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"os"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -540,6 +541,14 @@ func (bm *BlueprintManager) loadRawBlueprints(dir string) error {
 			return fmt.Errorf("failed to load YAML file '%s': %w", path, err)
 		}
 
+		absPath, err := filepath.Abs(path)
+		if err != nil {
+			return fmt.Errorf("failed to resolve path '%s': %w", path, err)
+		}
+		if err := processIncludes(root, filepath.Dir(absPath), []string{absPath}); err != nil {
+			return fmt.Errorf("failed to process !include in '%s': %w", path, err)
+		}
+
 		return bm.extractRawBlueprints(root, path)
 	})
 }
@@ -730,6 +739,95 @@ func (bm *BlueprintManager) cloneAndProcessCELNodes(node *yaml.Node) *yaml.Node 
 }
 
 //** helper functions **//
+
+// processIncludes walks a YAML node tree and resolves !include tags by loading
+// and inlining the referenced YAML files in-place. This happens before CEL
+// evaluation, so included fragments may themselves contain CEL expressions.
+// baseDir is used to resolve relative paths. stack holds the absolute paths of
+// files currently on the include chain and is used for cycle detection.
+func processIncludes(node *yaml.Node, baseDir string, stack []string) error {
+	switch node.Kind {
+	case yaml.DocumentNode:
+		for _, child := range node.Content {
+			if err := processIncludes(child, baseDir, stack); err != nil {
+				return err
+			}
+		}
+	case yaml.MappingNode:
+		// Content is [key0, val0, key1, val1, ...]; only value nodes (odd indices) are candidates
+		for i := 1; i < len(node.Content); i += 2 {
+			val := node.Content[i]
+			if val.Kind == yaml.ScalarNode && val.Tag == "!include" {
+				if err := resolveInclude(val, baseDir, stack); err != nil {
+					return err
+				}
+			} else {
+				if err := processIncludes(val, baseDir, stack); err != nil {
+					return err
+				}
+			}
+		}
+	case yaml.SequenceNode:
+		for _, child := range node.Content {
+			if child.Kind == yaml.ScalarNode && child.Tag == "!include" {
+				if err := resolveInclude(child, baseDir, stack); err != nil {
+					return err
+				}
+			} else {
+				if err := processIncludes(child, baseDir, stack); err != nil {
+					return err
+				}
+			}
+		}
+	}
+	return nil
+}
+
+// resolveInclude replaces a !include scalar node in-place with the parsed YAML
+// content of the referenced file. Nested !include tags within the included file
+// are resolved recursively using the included file's directory as the base.
+func resolveInclude(node *yaml.Node, baseDir string, stack []string) error {
+	includePath := node.Value
+	if !filepath.IsAbs(includePath) {
+		includePath = filepath.Join(baseDir, includePath)
+	}
+	includePath = filepath.Clean(includePath)
+
+	for _, s := range stack {
+		if s == includePath {
+			return fmt.Errorf("!include cycle detected: %s -> %s", strings.Join(stack, " -> "), includePath)
+		}
+	}
+
+	raw, err := os.ReadFile(includePath)
+	if err != nil {
+		return fmt.Errorf("!include '%s': %w", includePath, err)
+	}
+
+	var doc yaml.Node
+	if err := yaml.Unmarshal(raw, &doc); err != nil {
+		return fmt.Errorf("!include '%s': parse error: %w", includePath, err)
+	}
+	if len(doc.Content) == 0 {
+		return fmt.Errorf("!include '%s': file is empty or invalid", includePath)
+	}
+
+	included := doc.Content[0] // unwrap the DocumentNode wrapper
+
+	includeBaseDir := filepath.Dir(includePath)
+	newStack := append(append([]string{}, stack...), includePath)
+	if err := processIncludes(included, includeBaseDir, newStack); err != nil {
+		return fmt.Errorf("!include '%s': %w", includePath, err)
+	}
+
+	node.Kind = included.Kind
+	node.Tag = included.Tag
+	node.Value = included.Value
+	node.Content = included.Content
+	node.Style = included.Style
+
+	return nil
+}
 
 // generateRandomName creates a random name with the given prefix.
 func generateRandomName(prefix string) string {
