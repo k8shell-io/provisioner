@@ -2,20 +2,16 @@ package workspace
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
-	"strings"
-	"sync"
 	"time"
-
-	"encoding/json"
 
 	"github.com/k8shell-io/common/pkg/models"
 	"github.com/k8shell-io/provisioner/internal/helm"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/watch"
 )
 
 // ProvisionOptions represents the options for provisioning a workspace
@@ -72,7 +68,12 @@ func (w *Workspace) Provision(ctx context.Context, opts *ProvisionOptions) (*mod
 				return preStatus, nil
 			case models.WorkspaceStatusProvisioning, models.WorkspaceStatusPulling:
 				w.log.Info().Msgf("Workspace %s is already being provisioned, observing", w.Name)
-				return w.waitForPodRunning(ctx, preStatus.Created, opts)
+				pw := NewPodWatcher(w.client.KubeClient(), w.client.TargetNamespace(), w.Name, w.log)
+				snap, err := pw.Watch(ctx, opts, true)
+				if err != nil {
+					return nil, err
+				}
+				return snapToWorkspaceStatus(snap), nil
 			}
 		}
 	}
@@ -110,7 +111,12 @@ func (w *Workspace) Provision(ctx context.Context, opts *ProvisionOptions) (*mod
 
 		if status.Status == models.WorkspaceStatusPulling {
 			w.log.Info().Msgf("Workspace %s pod is pulling image, waiting", w.Name)
-			return w.waitForPodRunning(ctx, time.Now(), opts)
+			pw := NewPodWatcher(w.client.KubeClient(), w.client.TargetNamespace(), w.Name, w.log)
+			snap, err := pw.Watch(ctx, opts, true)
+			if err != nil {
+				return nil, err
+			}
+			return snapToWorkspaceStatus(snap), nil
 		}
 
 		if status.Status == models.WorkspaceStatusStopped {
@@ -128,20 +134,6 @@ func (w *Workspace) Provision(ctx context.Context, opts *ProvisionOptions) (*mod
 	}
 
 	return w.doInstallation(ctx, opts)
-}
-
-// sendMessage sends a plain informational message to the client if a Messages
-// channel is configured, and also logs it at debug level.
-func (w *Workspace) sendPodStatusMessage(opts *ProvisionOptions, status models.WorkspaceStatusMessage, msg string) {
-	if opts != nil && opts.Messages != nil {
-		opts.Messages <- models.WorkspaceStreamEvent{
-			Type:       models.WorkspaceStreamEventTypeStatus,
-			Timestamp:  time.Now().Format("2006-01-02 15:04:05"),
-			ObjectName: w.Name,
-			Status:     status,
-			Message:    msg,
-		}
-	}
 }
 
 // Lock acquires a distributed lock for the workspace
@@ -227,11 +219,12 @@ func (w *Workspace) doInstallation(ctx context.Context, opts *ProvisionOptions) 
 		return nil, fmt.Errorf("failed to install workspace: %w", err)
 	}
 
-	status, err := w.waitForPodRunning(ctx, startTime, opts)
+	pw := NewPodWatcher(w.client.KubeClient(), w.client.TargetNamespace(), w.Name, w.log)
+	snap, err := pw.Watch(ctx, opts, true)
 	if err != nil {
 		return nil, err
 	}
-
+	status := snapToWorkspaceStatus(snap)
 	if status.Status == models.WorkspaceStatusRunning {
 		provisionTime := time.Since(startTime)
 		w.log.Info().Msgf("Workspace %s is now running, provisioned in %s", w.Name, provisionTime)
@@ -254,11 +247,12 @@ func (w *Workspace) doStart(ctx context.Context, opts *ProvisionOptions) (*model
 	}
 
 	startTime := time.Now()
-	status, err := w.waitForPodRunning(ctx, startTime, opts)
+	pw := NewPodWatcher(w.client.KubeClient(), w.client.TargetNamespace(), w.Name, w.log)
+	snap, err := pw.Watch(ctx, opts, true)
 	if err != nil {
 		return nil, err
 	}
-
+	status := snapToWorkspaceStatus(snap)
 	if status.Status == models.WorkspaceStatusRunning {
 		w.log.Info().Msgf("Workspace %s pod started in %s", w.Name, time.Since(startTime))
 	}
@@ -402,341 +396,4 @@ func (w *Workspace) createHeadlessService(ctx context.Context, values map[string
 
 	w.log.Info().Msgf("Created headless service %s for subdomain", serviceName)
 	return nil
-}
-
-// waitForPodRunning with quick failure detection
-func (w *Workspace) waitForPodRunning(ctx context.Context, startTime time.Time,
-	opts *ProvisionOptions) (*models.WorkspaceStatus, error) {
-
-	podName := w.Name
-	timeout := time.NewTimer(time.Duration(opts.Timeout) * time.Second)
-	defer timeout.Stop()
-
-	watchCtx, cancelWatch := context.WithCancel(ctx)
-	defer cancelWatch()
-
-	criticalErrorChan := make(chan error, 1)
-	go w.watchEvents(watchCtx, podName, criticalErrorChan, opts)
-
-	ticker := time.NewTicker(1 * time.Second)
-	defer ticker.Stop()
-
-	const pullReportDelay = 8 * time.Second
-	pullingReported := false
-	observationStarted := time.Now()
-
-	for {
-		select {
-		case <-ctx.Done():
-			return nil, ctx.Err()
-
-		case <-timeout.C:
-			if st, err := w.GetPodStatus(ctx); err == nil && st.Status == models.WorkspaceStatusPulling {
-				return nil, fmt.Errorf("timeout waiting for pod %s: image is still being downloaded",
-					podName)
-			}
-			return nil, fmt.Errorf("timeout waiting for pod %s to be running after %v",
-				podName, opts.Timeout)
-
-		case criticalErr := <-criticalErrorChan:
-			if criticalErr != nil {
-				return nil, criticalErr
-			}
-
-		case <-ticker.C:
-			status, err := w.GetPodStatus(ctx)
-			if err != nil {
-				continue
-			}
-
-			pullReportSince := time.Since(status.Created)
-			if pullReportSince < pullReportDelay {
-				pullReportSince = time.Since(observationStarted)
-			}
-
-			switch status.Status {
-			case models.WorkspaceStatusRunning:
-				return status, nil
-
-			case models.WorkspaceStatusFailing, models.WorkspaceStatusStopped:
-				return status, fmt.Errorf("workspace %s failed to start: %s",
-					podName, status.Message)
-
-			case models.WorkspaceStatusPulling:
-				if !pullingReported && pullReportSince >= pullReportDelay {
-					w.sendPodStatusMessage(opts, models.WorkspaceStatusPulling,
-						"Workspace image is being downloaded")
-					pullingReported = true
-				}
-
-			case models.WorkspaceStatusProvisioning:
-				if pullingReported {
-					pullingReported = false
-					w.sendPodStatusMessage(opts, models.WorkspaceStatusProvisioning, "Workspace is starting")
-				}
-				if time.Since(startTime) > time.Duration(opts.Timeout)*time.Second {
-					return status, fmt.Errorf("workspace %s has been starting for too long: %s",
-						podName, status.Message)
-				}
-			}
-		}
-	}
-}
-
-// watchEvents watches and reports Kubernetes events for the pod
-// It captures events related to the pod and its PVCs to provide real-time feedback
-// and detect critical errors during provisioning
-func (w *Workspace) watchEvents(ctx context.Context, podName string,
-	criticalErrorChan chan<- error, opts *ProvisionOptions) {
-
-	v1 := w.client.KubeClient().CoreV1()
-	namespace := w.client.TargetNamespace()
-
-	eventCh := make(chan *corev1.Event, 256)
-	stopOnce := sync.Once{}
-	stopAll := func() {
-		stopOnce.Do(func() { close(eventCh) })
-	}
-
-	startWatcher := func(fieldSelector string) (watch.Interface, error) {
-		eventList, err := v1.Events(namespace).List(ctx, metav1.ListOptions{
-			FieldSelector: fieldSelector,
-			Limit:         1,
-		})
-		if err != nil {
-			w.log.Warn().Err(err).Str("selector",
-				fieldSelector).Msg("Failed to list events for resourceVersion; watching from beginning")
-		}
-
-		listOptions := metav1.ListOptions{
-			FieldSelector: fieldSelector,
-			Watch:         true,
-		}
-		if eventList != nil {
-			listOptions.ResourceVersion = eventList.ResourceVersion
-		}
-
-		watcher, err := v1.Events(namespace).Watch(ctx, listOptions)
-		if err != nil {
-			return nil, err
-		}
-		return watcher, nil
-	}
-
-	podSelector := fmt.Sprintf("involvedObject.kind=Pod,involvedObject.name=%s", podName)
-	podWatcher, err := startWatcher(podSelector)
-	if err != nil {
-		w.log.Warn().Err(err).Msg("Failed to watch pod events")
-	} else {
-		defer podWatcher.Stop()
-		go func() {
-			defer func() {
-				// If both watchers exit, main loop will end via ctx.Done.
-			}()
-			for {
-				select {
-				case <-ctx.Done():
-					return
-				case evt, ok := <-podWatcher.ResultChan():
-					if !ok {
-						return
-					}
-					if evt.Type != watch.Added && evt.Type != watch.Modified {
-						continue
-					}
-					k8sEvent, ok := evt.Object.(*corev1.Event)
-					if !ok || k8sEvent == nil {
-						continue
-					}
-
-					select {
-					case eventCh <- k8sEvent:
-					case <-ctx.Done():
-						return
-					default:
-						w.log.Debug().Msg("Dropping event due to full channel")
-					}
-				}
-			}
-		}()
-	}
-
-	pvcSelector := "involvedObject.kind=PersistentVolumeClaim"
-	pvcWatcher, err := startWatcher(pvcSelector)
-	if err != nil {
-		w.log.Warn().Err(err).Msg("Failed to watch PVC events")
-	} else {
-		defer pvcWatcher.Stop()
-		go func() {
-			for {
-				select {
-				case <-ctx.Done():
-					return
-				case evt, ok := <-pvcWatcher.ResultChan():
-					if !ok {
-						return
-					}
-					if evt.Type != watch.Added && evt.Type != watch.Modified {
-						continue
-					}
-					k8sEvent, ok := evt.Object.(*corev1.Event)
-					if !ok || k8sEvent == nil {
-						continue
-					}
-					select {
-					case eventCh <- k8sEvent:
-					case <-ctx.Done():
-						return
-					default:
-						w.log.Debug().Msg("Dropping event due to full channel")
-					}
-				}
-			}
-		}()
-	}
-
-	defer stopAll()
-
-	seenEvents := map[string]bool{}
-	pvcPrefix := "pvc-" + podName + "-"
-
-	for {
-		select {
-		case <-ctx.Done():
-			return
-
-		case k8sEvent, ok := <-eventCh:
-			if !ok {
-				return
-			}
-			if k8sEvent == nil {
-				continue
-			}
-
-			kind := k8sEvent.InvolvedObject.Kind
-			name := k8sEvent.InvolvedObject.Name
-
-			switch kind {
-			case "Pod":
-				if name != podName {
-					continue
-				}
-			case "PersistentVolumeClaim":
-				if !strings.HasPrefix(name, pvcPrefix) {
-					continue
-				}
-			default:
-				continue
-			}
-
-			message := k8sEvent.Message
-			if k8sEvent.Reason != "" {
-				message = fmt.Sprintf("%s: %s", k8sEvent.Reason, k8sEvent.Message)
-			}
-
-			key := kind + "\x00" + name + "\x00" + message
-			if _, exists := seenEvents[key]; exists {
-				continue
-			}
-			seenEvents[key] = true
-
-			eventMessage := models.WorkspaceStreamEvent{
-				Type:       models.WorkspaceStreamEventTypeEvent,
-				Timestamp:  k8sEvent.CreationTimestamp.Format("2006-01-02 15:04:05"),
-				ObjectName: fmt.Sprintf("%s/%s", kind, name),
-				Message:    message,
-			}
-
-			w.log.Debug().Msg(eventMessage.String())
-			if opts.Messages != nil {
-				opts.Messages <- eventMessage
-			}
-
-			if criticalErr := w.isCriticalError(eventMessage.Message); criticalErr != nil {
-				criticalErrorChan <- criticalErr
-				return
-			}
-		}
-	}
-}
-
-// isCriticalError determines if an event message indicates a critical error and returns a user-friendly error
-func (w *Workspace) isCriticalError(message string) error {
-	messageLower := strings.ToLower(message)
-
-	// Check for critical error patterns
-	type errorPattern struct {
-		keyword  string
-		code     int
-		category string
-	}
-
-	patterns := []errorPattern{
-		// Image errors - these are critical and should stop provisioning
-		{"failed to pull image", 1, "image"},
-		{"imagepullbackoff", 2, "image"},
-		{"errimagepull", 3, "image"},
-		{"invalidimagename", 4, "image"},
-		{"image not found", 5, "image"},
-		{"authentication required", 6, "image"},
-
-		// Resource errors - only truly critical ones
-		{"insufficient memory", 7, "resources"},
-		{"insufficient cpu", 8, "resources"},
-
-		// NOTE: PVC/scheduling errors are NOT critical - they may resolve as PVCs provision
-		// These are visible in the event stream but don't stop provisioning
-		// "unbound immediate persistentvolumeclaims" - REMOVED (temporary during PVC provisioning)
-		// "failed scheduling" - REMOVED (temporary during PVC provisioning)
-		// "failedbinding" - kept as it indicates a real problem
-		{"failedbinding", 11, "storage"},
-
-		// Storage provisioning failures - these indicate real problems
-		{"failed to provision volume", 12, "storage"},
-		{"provisioningfailed", 13, "storage"},
-	}
-
-	for _, pattern := range patterns {
-		if strings.Contains(messageLower, pattern.keyword) {
-			w.log.Error().Msgf("Provisioning error detected: %s", message)
-
-			// Extract key details from the message
-			cleanMsg := extractKeyDetails(message, pattern.category)
-
-			return fmt.Errorf("Provisioning error: %s (code %d)", cleanMsg, pattern.code)
-		}
-	}
-
-	return nil
-}
-
-// extractKeyDetails extracts the most relevant part of the error message
-func extractKeyDetails(message, category string) string {
-	switch category {
-	case "storage":
-		// For storage errors, include the full scheduling message
-		if strings.Contains(strings.ToLower(message), "failedscheduling") {
-			// Keep the full message for scheduling/PVC issues
-			return message
-		}
-		if strings.Contains(strings.ToLower(message), "unbound") {
-			return "Workspace storage is not available. " + message
-		}
-		return "Storage error: " + message
-
-	case "image":
-		// For image errors, extract image name if present
-		return "Image error: " + message
-
-	case "resources":
-		// For resource errors, include the constraint details
-		return "Resource constraint: " + message
-
-	case "scheduling":
-		// For scheduling errors, include full details
-		return message
-
-	default:
-		return message
-	}
 }
