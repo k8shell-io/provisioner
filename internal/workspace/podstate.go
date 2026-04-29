@@ -406,8 +406,12 @@ func classifyEvent(ev *corev1.Event, maxRestarts int32, crashLoopThreshold int32
 		}
 	case "PersistentVolumeClaim":
 		switch ev.Reason {
-		case "FailedBinding", "ProvisioningFailed":
+		case "FailedBinding":
+			// FailedBinding means no suitable PV exists — permanent, cannot self-resolve.
 			pe.Severity = EventSeverityCritical
+		case "ProvisioningFailed":
+			// ProvisioningFailed is a transient CSI retry; the provisioner will keep retrying.
+			pe.Severity = EventSeverityWarning
 		}
 	}
 
@@ -816,7 +820,9 @@ func (pw *PodWatcher) watchLoop(
 	var pullingStart time.Time
 	pullingReported := false
 
-	lastStatus := AnalyzePod(currentPod, eventSlice(), pw.CrashLoopThreshold).Status
+	initSnap := AnalyzePod(currentPod, eventSlice(), pw.CrashLoopThreshold)
+	lastStatus := initSnap.Status
+	lastStage := initSnap.Stage
 
 	for {
 		select {
@@ -884,20 +890,21 @@ func (pw *PodWatcher) watchLoop(
 				pullingReported = false
 			}
 
-			// Emit status changes, with a delay before reporting StagePulling.
-			if snap.Status != lastStatus {
+			if snap.Status != lastStatus || snap.Stage != lastStage {
 				pw.log.Info().
 					Str("pod", pw.podName).
 					Str("oldStatus", string(lastStatus)).
 					Str("newStatus", string(snap.Status)).
-					Str("stage", string(snap.Stage)).
+					Str("oldStage", string(lastStage)).
+					Str("newStage", string(snap.Stage)).
 					Str("message", snap.Message).
 					Int32("restarts", snap.Restarts).
-					Msg("pod status changed")
+					Msg("pod stage/status changed")
 				if snap.Stage != StagePulling {
 					pw.emitSnapshot(opts, snap)
 				}
 				lastStatus = snap.Status
+				lastStage = snap.Stage
 			}
 			if snap.Stage == StagePulling && !pullingReported &&
 				!pullingStart.IsZero() && time.Since(pullingStart) >= pullReportDelay {
@@ -909,7 +916,7 @@ func (pw *PodWatcher) watchLoop(
 				pullingReported = true
 			}
 
-			// Check terminal conditions.
+			// Check terminal conditions
 			if snap.CriticalErr != nil {
 				pw.log.Info().
 					Err(snap.CriticalErr).
@@ -939,7 +946,7 @@ func (pw *PodWatcher) watchLoop(
 }
 
 // listEventSources fetches the current event lists for pod and PVC events separately.
-// Returns empty (non-nil) lists on error, logging warnings.
+// Returns empty (non-nil) lists on error, logging warnings
 func (pw *PodWatcher) listEventSources(ctx context.Context, podName string, pvcNames map[string]bool) (*corev1.EventList, *corev1.EventList) {
 	v1 := pw.kubeClient.CoreV1()
 
