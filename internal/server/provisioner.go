@@ -355,7 +355,8 @@ func (p *ProvisionerService) ProvisionWorkspaceStream(
 	messages := make(chan models.WorkspaceStreamEvent, 100)
 	done := make(chan *models.WorkspaceStatus)
 	errorChan := make(chan error)
-	var seenPulling bool
+	provisioningMilestones := []int{20, 40, 60, 75}
+	provisioningStep := 0
 	progressPct := 0
 
 	go func() {
@@ -411,13 +412,11 @@ func (p *ProvisionerService) ProvisionWorkspaceStream(
 				var newPerc int
 				switch msg.Status {
 				case models.WorkspaceStatusProvisioning:
-					if seenPulling {
-						newPerc = 75
-					} else {
-						newPerc = 25
+					if provisioningStep < len(provisioningMilestones) {
+						newPerc = provisioningMilestones[provisioningStep]
+						provisioningStep++
 					}
 				case models.WorkspaceStatusPulling:
-					seenPulling = true
 					newPerc = 50
 				case models.WorkspaceStatusRunning:
 					newPerc = 100
