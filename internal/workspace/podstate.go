@@ -603,6 +603,10 @@ func (pw *PodWatcher) Watch(ctx context.Context, opts *ProvisionOptions, waitFor
 		Msg("fetched events")
 
 	snap := AnalyzePod(pod, allEvents, pw.CrashLoopThreshold)
+	if snap.Stage == StageRunning && !snap.Created.IsZero() {
+		snap.Message = fmt.Sprintf("Workspace is ready, provisioned in %s",
+			time.Since(snap.Created).Round(time.Second))
+	}
 
 	pw.log.Debug().
 		Str("stage", string(snap.Stage)).
@@ -864,6 +868,10 @@ func (pw *PodWatcher) watchLoop(
 			}
 
 			snap := AnalyzePod(currentPod, eventSlice(), pw.CrashLoopThreshold)
+			if snap.Stage == StageRunning && !snap.Created.IsZero() {
+				snap.Message = fmt.Sprintf("Workspace is ready, provisioned in %s",
+					time.Since(snap.Created).Round(time.Second))
+			}
 
 			// Manage the pulling delay timer.
 			if snap.Stage == StagePulling {

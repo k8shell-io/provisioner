@@ -386,7 +386,7 @@ func (p *ProvisionerService) ProvisionWorkspaceStream(
 			if !ok {
 				continue
 			}
-			if msg.Status == models.WorkspaceStatusPulling {
+			if msg.Type == models.WorkspaceStreamEventTypeStatus {
 				if err := p.sendProvisionEvent(stream, job, &provisionerv1.ProvisionEvent{
 					Type:       string(models.WorkspaceStreamEventTypeStatus),
 					Timestamp:  msg.Timestamp,
