@@ -403,6 +403,9 @@ func classifyEvent(ev *corev1.Event, maxRestarts int32, crashLoopThreshold int32
 			}
 		case "FailedScheduling", "Unhealthy", "NodeNotReady":
 			pe.Severity = EventSeverityWarning
+		case "FailedMount", "FailedAttachVolume", "FailedMapVolume":
+			// Volume mount/attach failures are transient; Kubernetes will keep retrying.
+			pe.Severity = EventSeverityWarning
 		}
 	case "PersistentVolumeClaim":
 		switch ev.Reason {
@@ -672,7 +675,6 @@ func (pw *PodWatcher) watchLoop(
 
 	v1 := pw.kubeClient.CoreV1()
 
-	// Accumulated state.
 	currentPod := initialPod
 	knownEvents := make(map[types.UID]corev1.Event, len(initialEvents))
 	for _, ev := range initialEvents {
@@ -807,18 +809,23 @@ func (pw *PodWatcher) watchLoop(
 		}()
 	}
 
-	// Track which event messages have already been emitted (UID + Count) to avoid duplicates.
 	type emittedKey struct {
 		uid   types.UID
 		count int32
 	}
 	emitted := map[emittedKey]bool{}
 
-	// Pulling status delay: avoid reporting StagePulling until it has persisted for a while,
-	// to suppress noise from images that are cached and resolve almost immediately.
 	const pullReportDelay = 8 * time.Second
 	var pullingStart time.Time
 	pullingReported := false
+
+	const mountWarnDelay = 30 * time.Second // warn after 30s when mount failure events are present
+	const stuckWarnDelay = 60 * time.Second // warn generically if stuck in starting > 60s
+	stageEnteredAt := time.Now()
+	mountWarnEmitted := false
+	stuckWarnEmitted := false
+	stuckTicker := time.NewTicker(15 * time.Second)
+	defer stuckTicker.Stop()
 
 	initSnap := AnalyzePod(currentPod, eventSlice(), pw.CrashLoopThreshold)
 	lastStatus := initSnap.Status
@@ -829,6 +836,34 @@ func (pw *PodWatcher) watchLoop(
 		case <-ctx.Done():
 			pw.log.Debug().Err(ctx.Err()).Str("pod", pw.podName).Msg("PodWatcher watchLoop: context cancelled")
 			return nil, ctx.Err()
+
+		case <-stuckTicker.C:
+			if lastStage == StageScheduling || lastStage == StageInitializing || lastStage == StageStarting {
+				elapsed := time.Since(stageEnteredAt)
+				if !mountWarnEmitted && elapsed >= mountWarnDelay {
+					if mountMsg := latestMountWarning(knownEvents); mountMsg != "" {
+						pw.log.Warn().
+							Str("pod", pw.podName).
+							Str("stage", string(lastStage)).
+							Dur("elapsed", elapsed).
+							Str("event", mountMsg).
+							Msg("volume mount issue detected while waiting for pod")
+						pw.emitWarningStatus(opts, "Volume mount issue: "+mountMsg)
+						mountWarnEmitted = true
+					}
+				}
+				if !stuckWarnEmitted && elapsed >= stuckWarnDelay {
+					pw.log.Warn().
+						Str("pod", pw.podName).
+						Str("stage", string(lastStage)).
+						Dur("elapsed", elapsed).
+						Msg("workspace is taking longer than expected to start")
+					pw.emitWarningStatus(opts,
+						fmt.Sprintf("Workspace is taking longer than expected to start (%s elapsed)",
+							elapsed.Round(time.Second)))
+					stuckWarnEmitted = true
+				}
+			}
 
 		case <-timeoutCh:
 			snap := AnalyzePod(currentPod, eventSlice(), pw.CrashLoopThreshold)
@@ -905,6 +940,9 @@ func (pw *PodWatcher) watchLoop(
 				}
 				lastStatus = snap.Status
 				lastStage = snap.Stage
+				stageEnteredAt = time.Now()
+				mountWarnEmitted = false
+				stuckWarnEmitted = false
 			}
 			if snap.Stage == StagePulling && !pullingReported &&
 				!pullingStart.IsZero() && time.Since(pullingStart) >= pullReportDelay {
@@ -997,4 +1035,43 @@ func (pw *PodWatcher) emitEvent(opts *ProvisionOptions, pe PodEvent) {
 		ObjectName: fmt.Sprintf("%s/%s", pe.ObjectKind, pe.ObjectName),
 		Message:    fmt.Sprintf("%s: %s", pe.Reason, pe.Message),
 	}
+}
+
+// emitWarningStatus sends a status event with WorkspaceStatusProvisioning and a custom
+// warning message, used to surface stuck/slow conditions to the client without aborting.
+func (pw *PodWatcher) emitWarningStatus(opts *ProvisionOptions, message string) {
+	if opts == nil || opts.Messages == nil {
+		return
+	}
+	opts.Messages <- models.WorkspaceStreamEvent{
+		Type:       models.WorkspaceStreamEventTypeStatus,
+		Timestamp:  time.Now().Format("2006-01-02 15:04:05"),
+		ObjectName: pw.podName,
+		Status:     models.WorkspaceStatusWarning,
+		Message:    message,
+	}
+}
+
+// latestMountWarning scans known events for the most recent FailedMount, FailedAttachVolume,
+// or FailedMapVolume event on a Pod and returns its message, or "" if none found.
+func latestMountWarning(events map[types.UID]corev1.Event) string {
+	var latestMsg string
+	var latestTime time.Time
+	for _, ev := range events {
+		if ev.InvolvedObject.Kind != "Pod" {
+			continue
+		}
+		switch ev.Reason {
+		case "FailedMount", "FailedAttachVolume", "FailedMapVolume":
+			t := ev.LastTimestamp.Time
+			if t.IsZero() {
+				t = ev.CreationTimestamp.Time
+			}
+			if t.After(latestTime) {
+				latestTime = t
+				latestMsg = ev.Message
+			}
+		}
+	}
+	return latestMsg
 }
