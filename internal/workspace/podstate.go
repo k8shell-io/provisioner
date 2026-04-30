@@ -15,8 +15,6 @@ import (
 	"k8s.io/client-go/kubernetes"
 )
 
-// ---- Types ------------------------------------------------------------------
-
 // PodLifecycleStage is the current stage in a pod's lifecycle.
 // Stages progress roughly in order: Scheduling → Pulling → Initializing → Starting → Running.
 // A pod can enter Terminating, Stopped, or Failed from any stage.
@@ -90,14 +88,11 @@ func stageToStatus(stage PodLifecycleStage) models.WorkspaceStatusMessage {
 	}
 }
 
-// ---- AnalyzePod (pure) -------------------------------------------------------
-
 // AnalyzePod derives a PodStateSnapshot from a pod and its associated K8s events.
 // events may be nil/empty for a point-in-time check without event history; in that
 // case StagePulling cannot be detected since it is event-driven only.
 // crashLoopThreshold is the per-container restart count at which a BackOff event
 // becomes critical.
-// This function has no side effects and makes no I/O calls.
 func AnalyzePod(pod *corev1.Pod, events []corev1.Event, crashLoopThreshold int32) PodStateSnapshot {
 	if pod == nil {
 		return PodStateSnapshot{
@@ -107,12 +102,9 @@ func AnalyzePod(pod *corev1.Pod, events []corev1.Event, crashLoopThreshold int32
 		}
 	}
 
-	// Total restarts (sum) for the WorkspaceStatus.Restarts field.
 	restarts := podRestartCount(pod)
-	// Max per-container restarts for the crash loop threshold.
 	maxRestarts := podMaxContainerRestarts(pod)
 
-	// Classify events; track the image pull state of each container via FieldPath.
 	podEvents := make([]PodEvent, 0, len(events))
 	var criticalErr error
 
@@ -152,7 +144,6 @@ func AnalyzePod(pod *corev1.Pod, events []corev1.Event, crashLoopThreshold int32
 
 	lastFail := podLastFailure(pod)
 
-	// ---- Terminating ----
 	if pod.DeletionTimestamp != nil {
 		return PodStateSnapshot{
 			Created:         pod.CreationTimestamp.Time,
@@ -165,7 +156,6 @@ func AnalyzePod(pod *corev1.Pod, events []corev1.Event, crashLoopThreshold int32
 		}
 	}
 
-	// ---- Terminal phases ----
 	switch pod.Status.Phase {
 	case corev1.PodSucceeded:
 		return PodStateSnapshot{
@@ -190,7 +180,6 @@ func AnalyzePod(pod *corev1.Pod, events []corev1.Event, crashLoopThreshold int32
 		}
 	}
 
-	// ---- Not yet scheduled ----
 	if pod.Spec.NodeName == "" {
 		return PodStateSnapshot{
 			Created:         pod.CreationTimestamp.Time,
@@ -203,7 +192,6 @@ func AnalyzePod(pod *corev1.Pod, events []corev1.Event, crashLoopThreshold int32
 		}
 	}
 
-	// ---- Image pulling (event-driven only) ----
 	if activePulling > 0 {
 		return PodStateSnapshot{
 			Created:         pod.CreationTimestamp.Time,
@@ -216,8 +204,6 @@ func AnalyzePod(pod *corev1.Pod, events []corev1.Event, crashLoopThreshold int32
 		}
 	}
 
-	// ---- Critical event surfaced before pod phase reflects it ----
-	// e.g. ImagePullBackOff event arrives before pod phase becomes Failed
 	if criticalErr != nil {
 		return PodStateSnapshot{
 			Created:         pod.CreationTimestamp.Time,
@@ -231,7 +217,6 @@ func AnalyzePod(pod *corev1.Pod, events []corev1.Event, crashLoopThreshold int32
 		}
 	}
 
-	// ---- Init containers ----
 	for _, cs := range pod.Status.InitContainerStatuses {
 		if cs.State.Terminated != nil && cs.State.Terminated.ExitCode == 0 {
 			continue // completed successfully
@@ -299,7 +284,6 @@ func AnalyzePod(pod *corev1.Pod, events []corev1.Event, crashLoopThreshold int32
 		}
 	}
 
-	// ---- Main containers ----
 	if len(pod.Status.ContainerStatuses) == 0 {
 		return PodStateSnapshot{
 			Created:         pod.CreationTimestamp.Time,
@@ -536,8 +520,6 @@ func snapToWorkspaceStatus(snap *PodStateSnapshot) *models.WorkspaceStatus {
 		LastFailMessage: snap.LastFailMessage,
 	}
 }
-
-// ---- PodWatcher -------------------------------------------------------------
 
 // PodWatcher observes a pod's lifecycle using the Kubernetes watch API.
 // It calls AnalyzePod on each state change and emits WorkspaceStreamEvents.
