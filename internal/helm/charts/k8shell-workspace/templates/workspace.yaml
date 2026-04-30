@@ -241,10 +241,17 @@ spec:
   {{- range $storageName, $storage := .Values.storages }}
   {{- if and $storage (kindIs "map" $storage) ($storage.enabled | default false) }}
   - name: storage-{{ $storageName }}
-    {{- if ($storage.memory | default false) }}
+    {{- if eq ($storage.type | default "local") "memory" }}
     emptyDir:
       medium: Memory
-      sizeLimit: {{ $storage.size }}
+      {{- if $storage.sizeLimit }}
+      sizeLimit: {{ $storage.sizeLimit }}
+      {{- end }}
+    {{- else if eq ($storage.type | default "local") "emptyDir" }}
+    emptyDir:
+      {{- if $storage.sizeLimit }}
+      sizeLimit: {{ $storage.sizeLimit }}
+      {{- end }}
     {{- else if eq ($storage.type | default "local") "shared" }}
     persistentVolumeClaim:
       claimName: pvc-{{ $storageName }}{{- if $storage.id }}-{{ $storage.id }}{{- end }}

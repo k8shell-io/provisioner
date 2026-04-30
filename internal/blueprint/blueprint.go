@@ -25,6 +25,7 @@ import (
 	"github.com/rs/zerolog"
 	"gopkg.in/yaml.v3"
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/resource"
 )
 
 // RawBlueprint represents an unprocessed blueprint with CEL expressions intact.
@@ -214,12 +215,53 @@ func (bm *BlueprintManager) validateAllBlueprints() []error {
 		for _, e := range validateClaimSpecs(bp) {
 			allErrors = append(allErrors, fmt.Errorf("blueprint '%s': %w", name, e))
 		}
+		for _, e := range validateStorageSizeLimits(bp) {
+			allErrors = append(allErrors, fmt.Errorf("blueprint '%s': %w", name, e))
+		}
 		for _, e := range validateSecurityContexts(bp) {
 			allErrors = append(allErrors, fmt.Errorf("blueprint '%s': %w", name, e))
 		}
 	}
 
 	return allErrors
+}
+
+// validateStorageSizeLimits checks that sizeLimit is only specified on emptyDir and memory
+// storage types, and that its value is a valid Kubernetes resource quantity.
+func validateStorageSizeLimits(bp *models.Blueprint) []error {
+	type namedStorage struct {
+		name    string
+		storage models.Storage
+	}
+
+	var all []namedStorage
+	for name, s := range bp.Storages {
+		all = append(all, namedStorage{name, s})
+	}
+	for name, s := range bp.Podman.Storages {
+		all = append(all, namedStorage{"podman." + name, s})
+	}
+
+	var errs []error
+	for _, ns := range all {
+		s := ns.storage
+		if !s.Enabled || s.SizeLimit == "" {
+			continue
+		}
+		storageType := s.Type
+		if storageType == "" {
+			storageType = "local"
+		}
+		switch storageType {
+		case "emptyDir", "memory":
+			if _, err := resource.ParseQuantity(s.SizeLimit); err != nil {
+				errs = append(errs, fmt.Errorf("storage %q: sizeLimit %q is not a valid Kubernetes quantity: %w", ns.name, s.SizeLimit, err))
+			}
+		default:
+			errs = append(errs, fmt.Errorf("storage %q: sizeLimit is only valid for emptyDir and memory types, got type %q", ns.name, storageType))
+		}
+	}
+	return errs
 }
 
 // validateClaimSpecs decodes each storage claimSpec into corev1.PersistentVolumeClaimSpec
