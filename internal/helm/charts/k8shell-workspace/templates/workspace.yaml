@@ -248,10 +248,12 @@ spec:
       sizeLimit: {{ $storage.sizeLimit }}
       {{- end }}
     {{- else if eq ($storage.type | default "local") "emptyDir" }}
+    {{- if $storage.sizeLimit }}
     emptyDir:
-      {{- if $storage.sizeLimit }}
       sizeLimit: {{ $storage.sizeLimit }}
-      {{- end }}
+    {{- else }}
+    emptyDir: {}
+    {{- end }}
     {{- else if eq ($storage.type | default "local") "shared" }}
     persistentVolumeClaim:
       claimName: pvc-{{ $storageName }}{{- if $storage.id }}-{{ $storage.id }}{{- end }}
