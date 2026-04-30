@@ -184,7 +184,7 @@ Expects: dict "storages" <storages-map> "user" <__user__-map>
 {{- $gid := 0 | int -}}
 {{- if $uidExplicit -}}{{- $uid = $s.fsOwnerUid | int -}}{{- else -}}{{- $uid = $user.uid | default 0 | int -}}{{- end -}}
 {{- if $gidExplicit -}}{{- $gid = $s.fsOwnerGid | int -}}{{- else -}}{{- $gid = $user.gid | default 0 | int -}}{{- end -}}
-chown {{ $uid }}:{{ $gid }} {{ $s.path }}
+{{- printf "chown %d:%d %s\n" $uid $gid $s.path -}}
 {{- end -}}
 {{- end -}}
 {{- end -}}
