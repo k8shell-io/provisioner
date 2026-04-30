@@ -169,39 +169,37 @@ Usage:
 {{- end -}}
 
 {{/*
-Emit chown shell commands for storages that have fsOwnerUid or fsOwnerGid set.
-Expects: dict "storages" <storages-map>
+Emit chown shell commands for storages in the init container.
+For writable non-shared storages: uses fsOwnerUid/fsOwnerGid when explicitly set (non-zero),
+otherwise falls back to the workspace user's uid/gid.
+Expects: dict "storages" <storages-map> "user" <__user__-map>
 */}}
 {{- define "workspace.storage.chownCommands" -}}
+{{- $user := .user | default dict -}}
 {{- range $name, $s := .storages -}}
-{{- if and $s (kindIs "map" $s) ($s.enabled | default false) -}}
-{{- $uid := $s.fsOwnerUid | default 0 | int -}}
-{{- $gid := $s.fsOwnerGid | default 0 | int -}}
-{{- if and (ne $uid 0) (ne $gid 0) }}
+{{- if and $s (kindIs "map" $s) ($s.enabled | default false) (not ($s.readonly | default false)) (ne ($s.type | default "local") "shared") -}}
+{{- $uidExplicit := hasKey $s "fsOwnerUid" -}}
+{{- $gidExplicit := hasKey $s "fsOwnerGid" -}}
+{{- $uid := 0 | int -}}
+{{- $gid := 0 | int -}}
+{{- if $uidExplicit -}}{{- $uid = $s.fsOwnerUid | int -}}{{- else -}}{{- $uid = $user.uid | default 0 | int -}}{{- end -}}
+{{- if $gidExplicit -}}{{- $gid = $s.fsOwnerGid | int -}}{{- else -}}{{- $gid = $user.gid | default 0 | int -}}{{- end -}}
 chown {{ $uid }}:{{ $gid }} {{ $s.path }}
-{{- else if ne $uid 0 }}
-chown {{ $uid }} {{ $s.path }}
-{{- else if ne $gid 0 }}
-chown :{{ $gid }} {{ $s.path }}
-{{- end -}}
 {{- end -}}
 {{- end -}}
 {{- end -}}
 
 {{/*
-Emit volumeMount entries for storages that have fsOwnerUid or fsOwnerGid set.
-Expects: dict "storages" <storages-map> "prefix" <volume-name-prefix>
+Emit volumeMount entries for the init container chown step.
+Expects: dict "storages" <storages-map> "prefix" <volume-name-prefix> "user" <__user__-map>
 */}}
 {{- define "workspace.storage.chownVolumeMounts" -}}
 {{- $prefix := .prefix -}}
+{{- $user := .user | default dict -}}
 {{- range $name, $s := .storages -}}
-{{- if and $s (kindIs "map" $s) ($s.enabled | default false) -}}
-{{- $uid := $s.fsOwnerUid | default 0 | int -}}
-{{- $gid := $s.fsOwnerGid | default 0 | int -}}
-{{- if or (ne $uid 0) (ne $gid 0) }}
+{{- if and $s (kindIs "map" $s) ($s.enabled | default false) (not ($s.readonly | default false)) (ne ($s.type | default "local") "shared") }}
 - name: storage-{{ $prefix }}{{ $name }}
   mountPath: {{ $s.path }}
-{{- end -}}
 {{- end -}}
 {{- end -}}
 {{- end -}}
