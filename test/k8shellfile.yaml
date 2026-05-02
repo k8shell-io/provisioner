@@ -5,7 +5,7 @@ blueprint:
   shell: /bin/zsh
   sudo: true
   network:
-    networkPolicy: workspace
+    networkPolicyClass: workspace
   resources:
     cpu: 8
     memory: 8Gi

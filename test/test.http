@@ -37,7 +37,7 @@ blueprint:
   shell: /bin/zsh
   sudo: true
   network:
-    networkPolicy: system
+    networkPolicyClass: system
   resources:
     cpu: 8
     memory: 8Gi

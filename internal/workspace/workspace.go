@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -52,9 +53,6 @@ type GetWorkspacesOptions struct {
 	Organization string
 	Blueprint    string
 	Workspace    string
-	RepoName     string
-	RepoOwner    string
-	RepoRef      string
 }
 
 // GetWorkspacesResult defines the result structure for GetWorkspaces function,
@@ -78,8 +76,8 @@ type WorkspaceLabels struct {
 	JobId        string
 }
 
-// ParseWorkspaceLabels parses the label set attached to a workspace pod
-func ParseWorkspaceLabels(labels map[string]string) (*WorkspaceLabels, error) {
+// ParseWorkspaceMetadata parses the label set and annotations attached to a workspace pod
+func ParseWorkspaceMetadata(labels map[string]string, annotations map[string]string) (*WorkspaceLabels, error) {
 	if labels == nil {
 		return nil, fmt.Errorf("workspace labels are nil")
 	}
@@ -94,9 +92,9 @@ func ParseWorkspaceLabels(labels map[string]string) (*WorkspaceLabels, error) {
 		return nil, fmt.Errorf("missing label k8shell.io/blueprint")
 	}
 
-	userstrB64, ok := labels["k8shell.io/userstr"]
+	userstrB64, ok := annotations["k8shell.io/userstr"]
 	if !ok || userstrB64 == "" {
-		return nil, fmt.Errorf("missing label k8shell.io/userstr")
+		return nil, fmt.Errorf("missing annotation k8shell.io/userstr")
 	}
 
 	canUser, err := models.NewCanonicalUserStrFromBase64(userstrB64)
@@ -109,9 +107,9 @@ func ParseWorkspaceLabels(labels map[string]string) (*WorkspaceLabels, error) {
 		Username:     username,
 		Organization: labels["k8shell.io/organization"],
 		Blueprint:    blueprint,
-		RepoOwner:    labels["k8shell.io/repo-owner"],
-		RepoName:     labels["k8shell.io/repo-name"],
-		RepoRef:      labels["k8shell.io/repo-ref"],
+		RepoOwner:    canUser.Identity.RepoOwner,
+		RepoName:     canUser.Identity.RepoName,
+		RepoRef:      canUser.Identity.RepoRef,
 		AppVersion:   labels["app.kubernetes.io/version"],
 		JobId:        labels["k8shell.io/job-id"],
 		UserStr:      canUser,
@@ -156,15 +154,6 @@ func GetWorkspaces(ctx context.Context, helmClient *helm.Client,
 	}
 	if opts.Blueprint != "" {
 		labels["k8shell.io/blueprint"] = opts.Blueprint
-	}
-	if opts.RepoName != "" {
-		labels["k8shell.io/repo-name"] = opts.RepoName
-	}
-	if opts.RepoOwner != "" {
-		labels["k8shell.io/repo-owner"] = opts.RepoOwner
-	}
-	if opts.RepoRef != "" {
-		labels["k8shell.io/repo-ref"] = opts.RepoRef
 	}
 
 	selector := getSelector(labels)
@@ -350,12 +339,10 @@ func (w *Workspace) Values() (map[string]interface{}, error) {
 
 	values["__user__"] = userValues
 	values["__username__"] = w.user.Username
-	values["__repoowner__"] = w.userStr.Identity.RepoOwner
-	values["__reponame__"] = w.userStr.Identity.RepoName
-	values["__reporef__"] = w.userStr.Identity.RepoRef
 	values["__workspace__"] = w.Name
 	values["__blueprint__"] = w.blueprint.Name
 	values["__organization__"] = w.user.Organization
+	values["__networkpolicy__"] = w.blueprint.Network.NetworkPolicyClass
 	values["__registry__"] = w.client.Registry.ToValues()
 	values["__namespace__"] = getNamespace()
 	values["__certmanager__"] = cmValues
@@ -431,21 +418,15 @@ func (w *Workspace) TemplateHash(ctx context.Context) (string, error) {
 }
 
 func (w *Workspace) GetPodStatus(ctx context.Context) (*models.WorkspaceStatus, error) {
-	v1 := w.client.KubeClient().CoreV1()
-	pod, err := v1.Pods(w.client.TargetNamespace()).Get(ctx, w.Name, metav1.GetOptions{})
+	pw := NewPodWatcher(w.client.KubeClient(), w.client.TargetNamespace(), w.Name, w.log)
+	snap, err := pw.Watch(ctx, nil, false)
 	if err != nil {
-		if k8sErrors.IsNotFound(err) {
-			return nil, fmt.Errorf("%w: %s", models.ErrWorkspaceNotFound, w.Name)
+		if errors.Is(err, models.ErrWorkspaceNotFound) {
+			return nil, err
 		}
 		return nil, fmt.Errorf("failed to get workspace pod status %s: %w", w.Name, err)
 	}
-	return &models.WorkspaceStatus{
-		Created:         pod.CreationTimestamp.Time,
-		Status:          workspacePodStatus(pod),
-		Message:         workspacePodMessage(pod),
-		Restarts:        podRestartCount(pod),
-		LastFailMessage: podLastFailure(pod),
-	}, nil
+	return snapToWorkspaceStatus(snap), nil
 }
 
 func (w *Workspace) IsInstalled(ctx context.Context) (bool, error) {
@@ -525,31 +506,36 @@ func WorkspaceDetailsFromPod(pod *corev1.Pod) *models.WorkspaceDetails {
 	cpu := pod.Spec.Containers[0].Resources.Limits.Cpu().String()
 	memory := pod.Spec.Containers[0].Resources.Limits.Memory().String()
 
+	// Parse userstr to get original repo values
+	userstrB64, ok := pod.Annotations["k8shell.io/userstr"]
+	if !ok || userstrB64 == "" {
+		return nil // userstr is required
+	}
+	canUser, err := models.NewCanonicalUserStrFromBase64(userstrB64)
+	if err != nil {
+		return nil // failed to parse userstr
+	}
+
+	snap := AnalyzePod(pod, nil, defaultCrashLoopThreshold)
 	wsDetails := &models.WorkspaceDetails{
-		WorkspaceStatus: models.WorkspaceStatus{
-			Created:         pod.CreationTimestamp.Time,
-			Status:          workspacePodStatus(pod),
-			Message:         workspacePodMessage(pod),
-			Restarts:        podRestartCount(pod),
-			LastFailMessage: podLastFailure(pod),
-		},
-		Name:         nameLabel,
-		Username:     pod.Labels["k8shell.io/username"],
-		RepoOwner:    pod.Labels["k8shell.io/repo-owner"],
-		RepoName:     pod.Labels["k8shell.io/repo-name"],
-		RepoRef:      pod.Labels["k8shell.io/repo-ref"],
-		Blueprint:    pod.Labels["k8shell.io/blueprint"],
-		Organization: pod.Labels["k8shell.io/organization"],
-		JobId:        pod.Labels["k8shell.io/job-id"],
-		ServerName:   serverName,
-		PodIP:        pod.Status.PodIP,
-		Port:         port,
-		TLSEnabled:   tlsEnabled,
-		Splash:       splash,
-		AppVersion:   appVersion,
-		CPU:          cpu,
-		Memory:       memory,
-		Hostname:     podHostname(pod),
+		WorkspaceStatus: *snapToWorkspaceStatus(&snap),
+		Name:            nameLabel,
+		Username:        pod.Labels["k8shell.io/username"],
+		RepoOwner:       canUser.Identity.RepoOwner,
+		RepoName:        canUser.Identity.RepoName,
+		RepoRef:         canUser.Identity.RepoRef,
+		Blueprint:       pod.Labels["k8shell.io/blueprint"],
+		Organization:    pod.Labels["k8shell.io/organization"],
+		JobId:           pod.Labels["k8shell.io/job-id"],
+		ServerName:      serverName,
+		PodIP:           pod.Status.PodIP,
+		Port:            port,
+		TLSEnabled:      tlsEnabled,
+		Splash:          splash,
+		AppVersion:      appVersion,
+		CPU:             cpu,
+		Memory:          memory,
+		Hostname:        podHostname(pod),
 	}
 
 	return wsDetails

@@ -24,8 +24,6 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
-const TOTAL_PROVISION_EVENTS = 12
-
 type ProvisionJobServer struct {
 	models.ProvisionJob `json:",inline"`
 	NextEventId         int64              `json:"-"`
@@ -55,11 +53,12 @@ func NewProvisionJob(WorkspaceName string, username string, kv *natsc.JetStreamK
 
 func (j *ProvisionJobServer) AddEvent(ev *provisionerv1.ProvisionEvent) {
 	event := models.WorkspaceStreamEvent{
-		Id:        j.NextEventId,
-		Type:      models.WorkspaceStreamEventType(ev.Type),
-		Timestamp: ev.Timestamp,
-		Message:   ev.Message,
-		Status:    models.WorkspaceStatusMessage(ev.Status),
+		Id:         j.NextEventId,
+		Type:       models.WorkspaceStreamEventType(ev.Type),
+		Timestamp:  ev.Timestamp,
+		ObjectName: ev.ObjectName,
+		Message:    ev.Message,
+		Status:     models.WorkspaceStatusMessage(ev.Status),
 	}
 	j.Events = append(j.Events, event)
 	j.NextEventId++
@@ -114,6 +113,14 @@ func (p *ProvisionerService) FindWorkspace(ctx context.Context,
 		}
 		return nil, status.Errorf(codes.Internal, "Failed to get workspace details: %v", err)
 	}
+
+	if p.server.provisionJobsKV != nil && s.JobId != "" {
+		_, err := p.server.provisionJobsKV.Get(s.JobId)
+		if err != nil {
+			s.JobId = ""
+		}
+	}
+
 	return gapi.WorkspaceDetailsToProto(s), nil
 }
 
@@ -123,18 +130,30 @@ func (p *ProvisionerService) GetWorkspaces(
 	req *provisionerv1.GetWorkspacesRequest,
 ) (*provisionerv1.GetWorkspacesResponse, error) {
 
+	if req.RepoName != "" || req.RepoOwner != "" || req.RepoRef != "" {
+		return nil, status.Error(codes.Unimplemented, "Filtering by repo details (RepoName, RepoOwner, RepoRef) is not supported")
+	}
+
 	workspaces, err := ws.GetWorkspaces(ctx, p.server.helm,
 		ws.GetWorkspacesOptions{
 			Username:     req.Username,
 			Blueprint:    req.Blueprint,
 			Organization: req.Organization,
 			Workspace:    req.Workspace,
-			RepoName:     req.RepoName,
-			RepoOwner:    req.RepoOwner,
-			RepoRef:      req.RepoRef,
 		})
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "Failed to list workspaces: %v", err)
+	}
+
+	if p.server.provisionJobsKV != nil {
+		for _, w := range workspaces.Workspaces {
+			if w.JobId != "" {
+				_, err := p.server.provisionJobsKV.Get(w.JobId)
+				if err != nil {
+					w.JobId = ""
+				}
+			}
+		}
 	}
 
 	var protoWorkspaces []*commonv1.WorkspaceDetails
@@ -336,9 +355,9 @@ func (p *ProvisionerService) ProvisionWorkspaceStream(
 	messages := make(chan models.WorkspaceStreamEvent, 100)
 	done := make(chan *models.WorkspaceStatus)
 	errorChan := make(chan error)
-	progress := 0
-	percent := 0
-	// isPullingImage := false
+	provisioningMilestones := []int{20, 40, 60, 75}
+	provisioningStep := 0
+	progressPct := 0
 
 	go func() {
 		defer close(done)
@@ -366,7 +385,7 @@ func (p *ProvisionerService) ProvisionWorkspaceStream(
 			if !ok {
 				continue
 			}
-			if msg.Status == models.WorkspaceStatusPulling {
+			if msg.Type == models.WorkspaceStreamEventTypeStatus {
 				if err := p.sendProvisionEvent(stream, job, &provisionerv1.ProvisionEvent{
 					Type:       string(models.WorkspaceStreamEventTypeStatus),
 					Timestamp:  msg.Timestamp,
@@ -378,7 +397,7 @@ func (p *ProvisionerService) ProvisionWorkspaceStream(
 				}
 			}
 
-			if req.SendEvents {
+			if req.SendEvents && msg.Type == models.WorkspaceStreamEventTypeEvent {
 				if err := p.sendProvisionEvent(stream, job, &provisionerv1.ProvisionEvent{
 					Type:       string(models.WorkspaceStreamEventTypeEvent),
 					Timestamp:  msg.Timestamp,
@@ -389,17 +408,27 @@ func (p *ProvisionerService) ProvisionWorkspaceStream(
 				}
 			}
 
-			if req.SendProgress {
-				progress++
-				newPerc := min((progress*100)/TOTAL_PROVISION_EVENTS, 100)
-				if newPerc > percent {
-					percent = newPerc
+			if req.SendProgress && msg.Type == models.WorkspaceStreamEventTypeStatus {
+				var newPerc int
+				switch msg.Status {
+				case models.WorkspaceStatusProvisioning:
+					if provisioningStep < len(provisioningMilestones) {
+						newPerc = provisioningMilestones[provisioningStep]
+						provisioningStep++
+					}
+				case models.WorkspaceStatusPulling:
+					newPerc = 50
+				case models.WorkspaceStatusRunning:
+					newPerc = 100
+				}
+				if newPerc > progressPct {
+					progressPct = newPerc
 					if err := p.sendProvisionEvent(stream, job, &provisionerv1.ProvisionEvent{
 						Type:       string(models.WorkspaceStreamEventTypeProgress),
 						Timestamp:  time.Now().Format("2006-01-02 15:04:05"),
 						ObjectName: workspace.Name,
-						Status:     fmt.Sprintf("%d", percent),
-						Message:    fmt.Sprintf("%d%% complete", percent),
+						Status:     fmt.Sprintf("%d", progressPct),
+						Message:    fmt.Sprintf("%d%% complete", progressPct),
 					}); err != nil {
 						p.log.Error().Err(err).Msg("Failed to send provision progress event")
 					}
@@ -421,6 +450,17 @@ func (p *ProvisionerService) ProvisionWorkspaceStream(
 				Message:    status.Message,
 			}); err != nil {
 				p.log.Error().Err(err).Msg("Failed to send provision status event")
+			}
+			if req.SendProgress && progressPct < 100 {
+				if err := p.sendProvisionEvent(stream, job, &provisionerv1.ProvisionEvent{
+					Type:       string(models.WorkspaceStreamEventTypeProgress),
+					Timestamp:  time.Now().Format("2006-01-02 15:04:05"),
+					ObjectName: workspace.Name,
+					Status:     "100",
+					Message:    "100% complete",
+				}); err != nil {
+					p.log.Error().Err(err).Msg("Failed to send provision progress event")
+				}
 			}
 			if job != nil {
 				job.SetStatus(models.ProvisionJobCompleted)
@@ -452,9 +492,9 @@ func (p *ProvisionerService) ProvisionWorkspaceStream(
 // prepareWorkspaceName prepares the workspace object for provisioning/upgrade based on the workspace name
 func (p *ProvisionerService) prepareWorkspaceWithPod(ctx context.Context, pod *corev1.Pod) (*ws.Workspace, error) {
 
-	userstrb64 := pod.Labels["k8shell.io/userstr"]
+	userstrb64 := pod.Annotations["k8shell.io/userstr"]
 	if userstrb64 == "" {
-		return nil, status.Errorf(codes.Internal, "Workspace pod is missing userstr label")
+		return nil, status.Errorf(codes.Internal, "Workspace pod is missing userstr annotation")
 	}
 
 	userstr, err := models.NewCanonicalUserStrFromBase64(userstrb64)
@@ -580,9 +620,9 @@ func (p *ProvisionerService) UpgradeWorkspaceResources(ctx context.Context,
 		return nil, status.Errorf(codes.Internal, "Failed to find workspace: %v", err)
 	}
 
-	wl, err := ws.ParseWorkspaceLabels(pod.Labels)
+	wl, err := ws.ParseWorkspaceMetadata(pod.Labels, pod.Annotations)
 	if err != nil {
-		return nil, status.Errorf(codes.Internal, "Failed to parse workspace labels: %v", err)
+		return nil, status.Errorf(codes.Internal, "Failed to parse workspace metadata: %v", err)
 	}
 
 	userpb, err := p.server.Identity.FindUser(ctx, &identityv1.FindUserRequest{Username: wl.Username})
@@ -632,10 +672,10 @@ func (p *ProvisionerService) UpgradeWorkspaceStream(
 			"Failed to find workspace: %v", err))
 	}
 
-	wl, err := ws.ParseWorkspaceLabels(pod.Labels)
+	wl, err := ws.ParseWorkspaceMetadata(pod.Labels, pod.Annotations)
 	if err != nil {
 		return p.sendProvisionHandshakeErr(stream, name, status.Errorf(codes.Internal,
-			"Failed to parse workspace labels: %v", err))
+			"Failed to parse workspace metadata: %v", err))
 	}
 
 	_, err = p.server.Identity.FindUser(ctx, &identityv1.FindUserRequest{Username: wl.Username})

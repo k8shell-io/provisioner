@@ -11,8 +11,8 @@ blueprints:
     docker:
       enabled: true
 
-    subdomain: !cel "metadata.repoOwner"
-    hostname: !cel "user.username + '-' + metadata.repoName"
+    subdomain: !cel "normalizeDNS(metadata.repoOwner)"
+    hostname: !cel "user.username + '-' + normalizeDNS(metadata.repoName)"
 
     env:
       GIT_ADDRESS: !cel "metadata.repoAddress"
@@ -28,7 +28,7 @@ blueprints:
       shared:
         readonly: false
         claimSpecAnnotations:
-          zfs-csi.k8shell.io/volume-name: !cel "metadata.repoOwner + '/shared'"
+          zfs-csi.k8shell.io/volume-name: !cel "normalizeDNS(metadata.repoOwner) + '/shared'"
 
     initScripts:
       - clone_repo@: |

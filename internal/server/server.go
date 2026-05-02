@@ -211,7 +211,7 @@ func (s *Server) GetBlueprintScope(blueprintName string, user *models.User,
 		User:          user,
 		WorkspaceName: workspaceName,
 		Metadata: &models.BlueprintMetadata{
-			Name:        blueprintName,
+			Name:        blueprint.NormalizeDNSLabel(blueprintName),
 			RepoName:    repoName,
 			RepoOwner:   ownerName,
 			RepoAddress: repoAddress,

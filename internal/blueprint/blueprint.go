@@ -7,7 +7,9 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"sync"
@@ -23,6 +25,7 @@ import (
 	"github.com/rs/zerolog"
 	"gopkg.in/yaml.v3"
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/resource"
 )
 
 // RawBlueprint represents an unprocessed blueprint with CEL expressions intact.
@@ -212,12 +215,53 @@ func (bm *BlueprintManager) validateAllBlueprints() []error {
 		for _, e := range validateClaimSpecs(bp) {
 			allErrors = append(allErrors, fmt.Errorf("blueprint '%s': %w", name, e))
 		}
+		for _, e := range validateStorageSizeLimits(bp) {
+			allErrors = append(allErrors, fmt.Errorf("blueprint '%s': %w", name, e))
+		}
 		for _, e := range validateSecurityContexts(bp) {
 			allErrors = append(allErrors, fmt.Errorf("blueprint '%s': %w", name, e))
 		}
 	}
 
 	return allErrors
+}
+
+// validateStorageSizeLimits checks that sizeLimit is only specified on emptyDir and memory
+// storage types, and that its value is a valid Kubernetes resource quantity.
+func validateStorageSizeLimits(bp *models.Blueprint) []error {
+	type namedStorage struct {
+		name    string
+		storage models.Storage
+	}
+
+	var all []namedStorage
+	for name, s := range bp.Storages {
+		all = append(all, namedStorage{name, s})
+	}
+	for name, s := range bp.Podman.Storages {
+		all = append(all, namedStorage{"podman." + name, s})
+	}
+
+	var errs []error
+	for _, ns := range all {
+		s := ns.storage
+		if !s.Enabled || s.SizeLimit == "" {
+			continue
+		}
+		storageType := s.Type
+		if storageType == "" {
+			storageType = "local"
+		}
+		switch storageType {
+		case "emptyDir", "memory":
+			if _, err := resource.ParseQuantity(s.SizeLimit); err != nil {
+				errs = append(errs, fmt.Errorf("storage %q: sizeLimit %q is not a valid Kubernetes quantity: %w", ns.name, s.SizeLimit, err))
+			}
+		default:
+			errs = append(errs, fmt.Errorf("storage %q: sizeLimit is only valid for emptyDir and memory types, got type %q", ns.name, storageType))
+		}
+	}
+	return errs
 }
 
 // validateClaimSpecs decodes each storage claimSpec into corev1.PersistentVolumeClaimSpec
@@ -337,6 +381,28 @@ func validateSecurityContexts(bp *models.Blueprint) []error {
 	return errs
 }
 
+// NormalizeDNSLabel normalizes a string to be a valid DNS label / Helm release name:
+// lowercase alphanumeric and hyphens, must start and end with alphanumeric, max 53 chars.
+func NormalizeDNSLabel(s string) string {
+	if s == "" {
+		return ""
+	}
+	s = strings.ToLower(s)
+	reg := regexp.MustCompile(`[^a-z0-9-]+`)
+	s = reg.ReplaceAllString(s, "-")
+	reg = regexp.MustCompile(`^[^a-z0-9]+`)
+	s = reg.ReplaceAllString(s, "")
+	reg = regexp.MustCompile(`[^a-z0-9]+$`)
+	s = reg.ReplaceAllString(s, "")
+	reg = regexp.MustCompile(`-+`)
+	s = reg.ReplaceAllString(s, "-")
+	if len(s) > 53 {
+		s = s[:53]
+		s = strings.TrimRight(s, "-")
+	}
+	return s
+}
+
 // GetBlueprint evaluates CEL expressions for a specific blueprint with given scope.
 func (bm *BlueprintManager) GetBlueprint(name string, scope *BlueprintScope) (*models.Blueprint, error) {
 	if scope == nil {
@@ -351,7 +417,7 @@ func (bm *BlueprintManager) GetBlueprint(name string, scope *BlueprintScope) (*m
 		return nil, fmt.Errorf("blueprint %s not found: %w", name, ErrBlueprintNotFound)
 	}
 
-	scope.Metadata.Name = rawBp.Name
+	scope.Metadata.Name = NormalizeDNSLabel(rawBp.Name)
 	var tmpl yamlcel.CELTemplate
 	if err := rawBp.Node.Decode(&tmpl); err != nil {
 		return nil, fmt.Errorf("failed to decode CEL template for %s: %w", name, err)
@@ -373,6 +439,10 @@ func (bm *BlueprintManager) GetBlueprint(name string, scope *BlueprintScope) (*m
 	decoder.KnownFields(bm.knownFields)
 	if err := decoder.Decode(&bp); err != nil {
 		return nil, fmt.Errorf("%w", err)
+	}
+
+	if bp.Name != "" {
+		bp.Name = NormalizeDNSLabel(bp.Name)
 	}
 
 	return &bp, nil
@@ -511,6 +581,14 @@ func (bm *BlueprintManager) loadRawBlueprints(dir string) error {
 		root, err := bm.processor.LoadFile(path)
 		if err != nil {
 			return fmt.Errorf("failed to load YAML file '%s': %w", path, err)
+		}
+
+		absPath, err := filepath.Abs(path)
+		if err != nil {
+			return fmt.Errorf("failed to resolve path '%s': %w", path, err)
+		}
+		if err := processIncludes(root, filepath.Dir(absPath), []string{absPath}); err != nil {
+			return fmt.Errorf("failed to process !include in '%s': %w", path, err)
 		}
 
 		return bm.extractRawBlueprints(root, path)
@@ -703,6 +781,95 @@ func (bm *BlueprintManager) cloneAndProcessCELNodes(node *yaml.Node) *yaml.Node 
 }
 
 //** helper functions **//
+
+// processIncludes walks a YAML node tree and resolves !include tags by loading
+// and inlining the referenced YAML files in-place. This happens before CEL
+// evaluation, so included fragments may themselves contain CEL expressions.
+// baseDir is used to resolve relative paths. stack holds the absolute paths of
+// files currently on the include chain and is used for cycle detection.
+func processIncludes(node *yaml.Node, baseDir string, stack []string) error {
+	switch node.Kind {
+	case yaml.DocumentNode:
+		for _, child := range node.Content {
+			if err := processIncludes(child, baseDir, stack); err != nil {
+				return err
+			}
+		}
+	case yaml.MappingNode:
+		// Content is [key0, val0, key1, val1, ...]; only value nodes (odd indices) are candidates
+		for i := 1; i < len(node.Content); i += 2 {
+			val := node.Content[i]
+			if val.Kind == yaml.ScalarNode && val.Tag == "!include" {
+				if err := resolveInclude(val, baseDir, stack); err != nil {
+					return err
+				}
+			} else {
+				if err := processIncludes(val, baseDir, stack); err != nil {
+					return err
+				}
+			}
+		}
+	case yaml.SequenceNode:
+		for _, child := range node.Content {
+			if child.Kind == yaml.ScalarNode && child.Tag == "!include" {
+				if err := resolveInclude(child, baseDir, stack); err != nil {
+					return err
+				}
+			} else {
+				if err := processIncludes(child, baseDir, stack); err != nil {
+					return err
+				}
+			}
+		}
+	}
+	return nil
+}
+
+// resolveInclude replaces a !include scalar node in-place with the parsed YAML
+// content of the referenced file. Nested !include tags within the included file
+// are resolved recursively using the included file's directory as the base.
+func resolveInclude(node *yaml.Node, baseDir string, stack []string) error {
+	includePath := node.Value
+	if !filepath.IsAbs(includePath) {
+		includePath = filepath.Join(baseDir, includePath)
+	}
+	includePath = filepath.Clean(includePath)
+
+	for _, s := range stack {
+		if s == includePath {
+			return fmt.Errorf("!include cycle detected: %s -> %s", strings.Join(stack, " -> "), includePath)
+		}
+	}
+
+	raw, err := os.ReadFile(includePath)
+	if err != nil {
+		return fmt.Errorf("!include '%s': %w", includePath, err)
+	}
+
+	var doc yaml.Node
+	if err := yaml.Unmarshal(raw, &doc); err != nil {
+		return fmt.Errorf("!include '%s': parse error: %w", includePath, err)
+	}
+	if len(doc.Content) == 0 {
+		return fmt.Errorf("!include '%s': file is empty or invalid", includePath)
+	}
+
+	included := doc.Content[0] // unwrap the DocumentNode wrapper
+
+	includeBaseDir := filepath.Dir(includePath)
+	newStack := append(append([]string{}, stack...), includePath)
+	if err := processIncludes(included, includeBaseDir, newStack); err != nil {
+		return fmt.Errorf("!include '%s': %w", includePath, err)
+	}
+
+	node.Kind = included.Kind
+	node.Tag = included.Tag
+	node.Value = included.Value
+	node.Content = included.Content
+	node.Style = included.Style
+
+	return nil
+}
 
 // generateRandomName creates a random name with the given prefix.
 func generateRandomName(prefix string) string {

@@ -59,6 +59,7 @@ func (w *Workspace) buildConfigYAML() (string, error) {
 			Exclude:       bp.K8shelld.IgnoreOrphans,
 		},
 		ReapZombies: k8shelldcfg.ReapZombies{Enabled: true},
+		Shells:      w.config.K8shellCapabilities.Shells,
 	}
 
 	out, err := marshalYAML2(cfg)
