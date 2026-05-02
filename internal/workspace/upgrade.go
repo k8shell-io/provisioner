@@ -91,12 +91,13 @@ func (w *Workspace) upgradeWithLock(ctx context.Context, opts *ProvisionOptions)
 		return nil, fmt.Errorf("failed to upgrade workspace %s: %w", w.Name, err)
 	}
 
-	status, err := w.waitForPodRunning(ctx, startTime, opts)
+	pw := NewPodWatcher(w.client.KubeClient(), w.client.TargetNamespace(), w.Name, w.log)
+	snap, err := pw.Watch(ctx, opts, true)
 	if err != nil {
 		return nil, err
 	}
-
-	if status.Status == "Running" {
+	status := snapToWorkspaceStatus(snap)
+	if status.Status == models.WorkspaceStatusRunning {
 		upgradeTime := time.Since(startTime)
 		w.log.Info().Msgf("Workspace %s upgrade completed in %s", w.Name, upgradeTime)
 	}

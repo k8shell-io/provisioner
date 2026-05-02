@@ -8,7 +8,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/k8shell-io/common/pkg/models"
 	"gopkg.in/yaml.v3"
 	corev1 "k8s.io/api/core/v1"
 )
@@ -62,324 +61,11 @@ func podMountsSecret(pod *corev1.Pod, secretName string) bool {
 	return false
 }
 
-// podStatusAndMessage analyzes a pod and returns both the workspace status and a corresponding message.
-type podStatusInfo struct {
-	status          models.WorkspaceStatusMessage
-	message         string
-	phase           corev1.PodPhase
-	reason          string
-	detailedMessage string
-}
-
-func (s podStatusInfo) String() string {
-	return fmt.Sprintf("Status: %s, Message: %s (phase=%s, reason=%s, detailedMessage=%s)", s.status, s.message, s.phase, s.reason, s.detailedMessage)
-}
-
-func analyzePodStatus(pod *corev1.Pod) podStatusInfo {
-	if pod == nil {
-		return podStatusInfo{
-			status:  models.WorkspaceStatusUnknown,
-			message: "Pod information not available",
-		}
-	}
-
-	info := podStatusInfo{
-		phase: pod.Status.Phase,
-	}
-
-	// Pod is being deleted
-	if pod.DeletionTimestamp != nil {
-		info.status = models.WorkspaceStatusTerminating
-		info.message = "Workspace is terminating"
-		return info
-	}
-
-	// Check container states for specific reasons (init containers first, then regular containers)
-	containerReason, containerMsg := podTopReason(pod)
-	info.reason = containerReason
-	info.detailedMessage = containerMsg
-
-	// Determine status and message based on container reason and pod phase
-	if containerReason != "" {
-		if isFailingReason(containerReason) {
-			info.status = models.WorkspaceStatusFailing
-			info.message = formatStatusMessage(info.phase, containerReason, containerMsg)
-			return info
-		}
-		// Transient errors (like "Error") are treated as provisioning, not failing
-		// They often appear briefly before CrashLoopBackOff
-		if isTransientErrorReason(containerReason) {
-			info.status = models.WorkspaceStatusProvisioning
-			if containerMsg != "" {
-				info.message = containerMsg
-			} else {
-				info.message = "Container is starting"
-			}
-			info.reason = "" // Don't use transient "Error" as the reason
-			return info
-		}
-		if isProvisioningReason(containerReason) {
-			if podAnyContainerImagePending(pod) {
-				info.status = models.WorkspaceStatusPulling
-				// Use K8s reason, provide image download context in message
-				if containerMsg != "" {
-					info.message = formatStatusMessage(info.phase, containerReason, containerMsg)
-				} else {
-					info.message = formatStatusMessage(info.phase, containerReason, "Downloading container images")
-				}
-			} else {
-				info.status = models.WorkspaceStatusProvisioning
-				info.message = formatStatusMessage(info.phase, containerReason, containerMsg)
-			}
-			return info
-		}
-	}
-
-	// Fall back to pod phase analysis
-	switch pod.Status.Phase {
-	case corev1.PodPending:
-		if podAnyContainerImagePending(pod) {
-			info.status = models.WorkspaceStatusPulling
-			// Check for K8s reason, don't use custom "Pulling" reason
-			if pod.Status.Reason != "" {
-				info.message = formatStatusMessage(info.phase, pod.Status.Reason, pod.Status.Message)
-			} else {
-				info.message = "Downloading container images"
-			}
-		} else {
-			info.status = models.WorkspaceStatusProvisioning
-			// Check for scheduling issues
-			if pod.Status.Reason != "" {
-				info.message = formatStatusMessage(info.phase, pod.Status.Reason, pod.Status.Message)
-			} else {
-				info.message = "Waiting for resources"
-			}
-		}
-
-	case corev1.PodRunning:
-		if podAllContainersReady(pod) {
-			info.status = models.WorkspaceStatusRunning
-			info.message = "Workspace is ready"
-		} else {
-			// NOT all ready - find out why
-			notReadyReason, notReadyMsg := podNotReadyReason(pod)
-			if notReadyReason != "" {
-				if isFailingReason(notReadyReason) {
-					info.status = models.WorkspaceStatusFailing
-					info.message = formatStatusMessage(info.phase, notReadyReason, notReadyMsg)
-				} else {
-					info.status = models.WorkspaceStatusProvisioning
-					info.message = formatStatusMessage(info.phase, notReadyReason, notReadyMsg)
-				}
-			} else {
-				// Generic "not ready" - no K8s reason available
-				info.status = models.WorkspaceStatusProvisioning
-				info.message = "Containers are starting"
-			}
-		}
-
-	case corev1.PodSucceeded:
-		info.status = models.WorkspaceStatusStopped
-		if pod.Status.Reason != "" {
-			info.message = formatStatusMessage(info.phase, pod.Status.Reason, pod.Status.Message)
-		} else {
-			info.message = "Workspace completed"
-		}
-
-	case corev1.PodFailed:
-		info.status = models.WorkspaceStatusFailing
-		if pod.Status.Reason != "" {
-			info.message = formatStatusMessage(info.phase, pod.Status.Reason, pod.Status.Message)
-		} else if pod.Status.Message != "" {
-			info.message = pod.Status.Message
-		} else {
-			info.message = "Pod failed"
-		}
-
-	default:
-		info.status = models.WorkspaceStatusUnknown
-		if pod.Status.Reason != "" {
-			info.message = formatStatusMessage(info.phase, pod.Status.Reason, pod.Status.Message)
-		} else {
-			info.message = fmt.Sprintf("Phase: %s", info.phase)
-		}
-	}
-
-	return info
-}
-
-// formatStatusMessage creates a consistent, informative message from phase, reason, and details
-func formatStatusMessage(phase corev1.PodPhase, reason, detailedMessage string) string {
-	reason = strings.TrimSpace(reason)
-	detailedMessage = strings.TrimSpace(detailedMessage)
-
-	// For user-friendly messages, we don't need to show the phase if reason is clear
-	if reason != "" {
-		if detailedMessage != "" {
-			return fmt.Sprintf("%s: %s", reason, detailedMessage)
-		}
-		return reason
-	}
-
-	// Fallback: include phase
-	if detailedMessage != "" {
-		return fmt.Sprintf("Phase %s: %s", phase, detailedMessage)
-	}
-	return fmt.Sprintf("Phase: %s", phase)
-}
-
-// workspacePodStatus returns a small set of UI-friendly statuses
-func workspacePodStatus(pod *corev1.Pod) models.WorkspaceStatusMessage {
-	return analyzePodStatus(pod).status
-}
-
-// workspacePodMessage returns a single message consistent with workspacePodStatus
-func workspacePodMessage(pod *corev1.Pod) string {
-	return analyzePodStatus(pod).message
-}
-
-// podTopReason returns the "best" actionable reason/message from init containers first,
-// then regular containers. This is what catches CrashLoopBackOff while phase is Running.
-func podTopReason(pod *corev1.Pod) (reason string, message string) {
-	for _, cs := range pod.Status.InitContainerStatuses {
-		if cs.State.Waiting != nil && cs.State.Waiting.Reason != "" {
-			return cs.State.Waiting.Reason, cs.State.Waiting.Message
-		}
-		if cs.State.Terminated != nil && cs.State.Terminated.ExitCode != 0 {
-			if cs.State.Terminated.Reason != "" {
-				return cs.State.Terminated.Reason, cs.State.Terminated.Message
-			}
-			msg := cs.State.Terminated.Message
-			if msg == "" {
-				msg = fmt.Sprintf("Init container exited with code %d", cs.State.Terminated.ExitCode)
-			}
-			return "", msg
-		}
-	}
-
-	for _, cs := range pod.Status.ContainerStatuses {
-		if cs.State.Waiting != nil && cs.State.Waiting.Reason != "" {
-			return cs.State.Waiting.Reason, cs.State.Waiting.Message
-		}
-
-		if cs.State.Terminated != nil && cs.State.Terminated.ExitCode != 0 {
-			if cs.State.Terminated.Reason != "" {
-				return cs.State.Terminated.Reason, cs.State.Terminated.Message
-			}
-			msg := cs.State.Terminated.Message
-			if msg == "" {
-				msg = fmt.Sprintf("Container %s exited with code %d", cs.Name, cs.State.Terminated.ExitCode)
-			}
-			return "", msg
-		}
-
-		if cs.RestartCount > 0 && cs.LastTerminationState.Terminated != nil {
-			term := cs.LastTerminationState.Terminated
-			if term.ExitCode != 0 {
-				if term.Reason != "" && term.Reason != "Error" {
-					return "CrashLoopBackOff", fmt.Sprintf("%s (exit code %d)",
-						term.Reason, term.ExitCode)
-				}
-				return "CrashLoopBackOff", fmt.Sprintf("Container failed with exit code %d",
-					term.ExitCode)
-			}
-		}
-	}
-
-	return "", ""
-}
-
-func podAllContainersReady(pod *corev1.Pod) bool {
-	if pod == nil {
-		return false
-	}
-	if len(pod.Status.ContainerStatuses) == 0 {
-		return false
-	}
-	for _, cs := range pod.Status.ContainerStatuses {
-		if !cs.Ready {
-			return false
-		}
-	}
-	return true
-}
-
-// podNotReadyReason returns why a pod in Running phase has containers not ready
-func podNotReadyReason(pod *corev1.Pod) (reason, message string) {
-	for _, cs := range pod.Status.ContainerStatuses {
-		if !cs.Ready {
-			if cs.State.Waiting != nil && cs.State.Waiting.Reason != "" {
-				return cs.State.Waiting.Reason, cs.State.Waiting.Message
-			}
-			if cs.State.Running != nil {
-				// Container is running but not ready (failing readiness probes?)
-				// No K8s reason for this, just return message
-				return "", fmt.Sprintf("Container %s is running but not passing readiness checks", cs.Name)
-			}
-		}
-	}
-	return "", ""
-}
-
-func isFailingReason(reason string) bool {
-	switch reason {
-	case "CrashLoopBackOff",
-		"ImagePullBackOff",
-		"ErrImagePull",
-		"CreateContainerConfigError",
-		"CreateContainerError",
-		"RunContainerError",
-		"ContainerError",
-		"OOMKilled",
-		"InvalidImageName",
-		"RegistryUnavailable":
-		return true
-	default:
-		return false
-	}
-}
-
-// isTransientErrorReason returns true for error reasons that may be temporary
-// during container startup (like "Error" which appears briefly before CrashLoopBackOff)
-func isTransientErrorReason(reason string) bool {
-	switch reason {
-	case "Error":
-		return true
-	default:
-		return false
-	}
-}
-
-func isProvisioningReason(reason string) bool {
-	switch reason {
-	case "ContainerCreating",
-		"PodInitializing":
-		return true
-	default:
-		return false
-	}
-}
-
-// podAnyContainerImagePending returns true when at least one regular container
-// has not yet had its image pulled (imageID is empty), indicating an active download.
-func podAnyContainerImagePending(pod *corev1.Pod) bool {
-	if pod == nil {
-		return false
-	}
-	for _, cs := range pod.Status.ContainerStatuses {
-		if cs.ImageID == "" {
-			return true
-		}
-	}
-	return false
-}
-
 // podRestartCount returns total restarts across init + regular containers.
 func podRestartCount(pod *corev1.Pod) int32 {
 	if pod == nil {
 		return 0
 	}
-
 	var total int32
 	for _, cs := range pod.Status.InitContainerStatuses {
 		total += cs.RestartCount
@@ -392,7 +78,7 @@ func podRestartCount(pod *corev1.Pod) int32 {
 
 // podLastFailure returns the most recent non-zero exit termination reason/message.
 // It prefers the latest FinishedAt among init/regular containers.
-// If no termination is found, it falls back to a failing waiting reason (e.g. CrashLoopBackOff).
+// If no termination is found, it falls back to a hard-failing waiting reason (e.g. CrashLoopBackOff).
 func podLastFailure(pod *corev1.Pod) string {
 	if pod == nil {
 		return ""
@@ -431,9 +117,16 @@ func podLastFailure(pod *corev1.Pod) string {
 		return formatLastFailMessage(bestReason, bestMsg)
 	}
 
-	r, m := podTopReason(pod)
-	if r != "" && isFailingReason(r) {
-		return formatLastFailMessage(r, m)
+	// Fallback: surface a hard-failing waiting reason such as CrashLoopBackOff.
+	for _, cs := range pod.Status.InitContainerStatuses {
+		if cs.State.Waiting != nil && isHardFailureReason(cs.State.Waiting.Reason) {
+			return formatLastFailMessage(cs.State.Waiting.Reason, cs.State.Waiting.Message)
+		}
+	}
+	for _, cs := range pod.Status.ContainerStatuses {
+		if cs.State.Waiting != nil && isHardFailureReason(cs.State.Waiting.Reason) {
+			return formatLastFailMessage(cs.State.Waiting.Reason, cs.State.Waiting.Message)
+		}
 	}
 
 	return ""
@@ -442,7 +135,6 @@ func podLastFailure(pod *corev1.Pod) string {
 func formatLastFailMessage(reason, msg string) string {
 	reason = strings.TrimSpace(reason)
 	msg = strings.TrimSpace(msg)
-
 	if reason == "" && msg == "" {
 		return ""
 	}
@@ -468,32 +160,28 @@ func podHostname(pod *corev1.Pod) string {
 	return fmt.Sprintf("%s.%s.%s", hn, sd, pod.Namespace)
 }
 
-// ToMap converts any struct to a map[string]interface{} representation
+// toMap converts any struct to a map[string]interface{} representation.
 func toMap(b any) (map[string]interface{}, error) {
 	yamlBytes, err := yaml.Marshal(b)
 	if err != nil {
 		return nil, fmt.Errorf("failed to marshal struct to YAML: %w", err)
 	}
-
 	var values map[string]interface{}
 	if err := yaml.Unmarshal(yamlBytes, &values); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal YAML to map: %w", err)
 	}
-
 	return values, nil
 }
 
-// GetSelector returns a label selector string from the given labels map
+// getSelector returns a label selector string from the given labels map.
 func getSelector(labels map[string]string) string {
 	if len(labels) == 0 {
 		return ""
 	}
-
 	var selectors []string
 	for key, value := range labels {
 		selectors = append(selectors, fmt.Sprintf("%s=%s", key, value))
 	}
-
 	return strings.Join(selectors, ",")
 }
 
