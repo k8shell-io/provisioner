@@ -529,9 +529,10 @@ func (p *ProvisionerService) prepareWorkspaceWithUserStr(ctx context.Context,
 	case userStr.Identity.BlueprintKind == models.BlueprintKindCustom:
 		blueprintpb, err := p.server.Identity.GetBlueprintByUserStr(ctx, &identityv1.UserStr{Userstr: userStr.CanonicalUserStr})
 		if err != nil {
-			if status.Code(err) != codes.NotFound {
-				return nil, status.Errorf(codes.InvalidArgument, "failed to get blueprint by userstr: %v", err)
-			}
+			return nil, status.Errorf(codes.InvalidArgument, "failed to get blueprint by userstr: %v", err)
+		}
+
+		if len(blueprintpb.Blueprint) == 0 {
 			defaultBp := p.server.config.Blueprints.DefaultCustomBlueprint
 			if defaultBp == "" {
 				return nil, status.Errorf(codes.NotFound,
@@ -542,10 +543,11 @@ func (p *ProvisionerService) prepareWorkspaceWithUserStr(ctx context.Context,
 				Msg("custom blueprint not found; falling back to default")
 
 			defaultBpMetadata := &models.BlueprintMetadata{
-				Name:      userStr.Identity.Blueprint,
-				RepoName:  userStr.Identity.RepoName,
-				RepoOwner: userStr.Identity.RepoOwner,
-				RepoRef:   userStr.Identity.RepoRef,
+				Name:        userStr.Identity.Blueprint,
+				RepoName:    userStr.Identity.RepoName,
+				RepoOwner:   userStr.Identity.RepoOwner,
+				RepoRef:     userStr.Identity.RepoRef,
+				RepoAddress: blueprintpb.RepoAddress,
 			}
 			scope, errx := p.server.GetBlueprintScope(defaultBp, user, defaultBpMetadata, userStr.WorkspaceName)
 			if errx != nil {
@@ -566,7 +568,7 @@ func (p *ProvisionerService) prepareWorkspaceWithUserStr(ctx context.Context,
 		}
 
 		var customBlueprint models.CustomBlueprint
-		err = yaml.Unmarshal([]byte(blueprintpb.BlueprintJson), &customBlueprint)
+		err = yaml.Unmarshal(blueprintpb.Blueprint, &customBlueprint)
 		if err != nil {
 			return nil, status.Errorf(codes.Internal, "Failed to parse custom blueprint: %v", err)
 		}
@@ -576,6 +578,7 @@ func (p *ProvisionerService) prepareWorkspaceWithUserStr(ctx context.Context,
 		customBlueprint.Metadata.RepoName = userStr.Identity.RepoName
 		customBlueprint.Metadata.RepoOwner = userStr.Identity.RepoOwner
 		customBlueprint.Metadata.RepoRef = userStr.Identity.RepoRef
+		customBlueprint.Metadata.RepoAddress = blueprintpb.RepoAddress
 
 		if !user.HasBlueprint(customBlueprint.Template) {
 			return nil, status.Errorf(codes.PermissionDenied,

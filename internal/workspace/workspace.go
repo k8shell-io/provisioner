@@ -384,6 +384,19 @@ func (w *Workspace) Values() (map[string]interface{}, error) {
 	}
 	values["__blueprintyaml__"] = string(blueprintYAML)
 
+	// Inject git-related env vars from blueprint metadata when the workspace is repo-based.
+	if w.blueprint.Metadata.RepoName != "" {
+		envMap, _ := values["env"].(map[string]interface{})
+		if envMap == nil {
+			envMap = make(map[string]interface{})
+		}
+		envMap["GIT_ADDRESS"] = w.blueprint.Metadata.RepoAddress
+		envMap["GIT_REPOOWNER"] = w.blueprint.Metadata.RepoOwner
+		envMap["GIT_REPONAME"] = w.blueprint.Metadata.RepoName
+		envMap["GIT_REPOREF"] = w.blueprint.Metadata.RepoRef
+		values["env"] = envMap
+	}
+
 	return values, nil
 }
 
