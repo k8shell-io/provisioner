@@ -59,6 +59,7 @@ func (w *Workspace) buildConfigYAML() (string, error) {
 			Exclude:       bp.K8shelld.IgnoreOrphans,
 		},
 		ReapZombies: k8shelldcfg.ReapZombies{Enabled: true},
+		SaToken:     w.config.K8shellCapabilities.SaToken,
 		Shells:      w.config.K8shellCapabilities.Shells,
 	}
 

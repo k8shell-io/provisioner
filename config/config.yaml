@@ -13,7 +13,15 @@ defaultRegistry:
 
 k8shellCapabilities:
   apiServerEnabled: true
-  
+
+  # Service account token credential helper configuration
+  # Controls whether k8shelld uses the API server to retrieve SA tokens for workspace Kubernetes access
+  saToken:
+    # enabled controls whether the SA token credential helper is active
+    enabled: false
+    # cacheTokens controls whether retrieved tokens are cached to avoid redundant API server calls
+    cacheTokens: false
+
   # Shell session configuration
   # Controls behavior of PTY shell sessions in k8shelld workspaces
   shells:
