@@ -91,3 +91,8 @@ jwtVerifier:
 blueprints:
   directory: blueprints
 
+  # Default blueprint to use when a custom blueprint userstr is requested but
+  # the identity service returns not-found (e.g. user has no custom blueprint stored).
+  # Leave empty to return an error instead of falling back.
+  # defaultCustomBlueprint: default
+

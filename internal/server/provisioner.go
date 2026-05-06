@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"time"
 
+	"gopkg.in/yaml.v3"
+
 	"github.com/google/uuid"
 	commonv1 "github.com/k8shell-io/common/pkg/api/gen/go/common/v1"
 	identityv1 "github.com/k8shell-io/common/pkg/api/gen/go/identity/v1"
@@ -527,14 +529,53 @@ func (p *ProvisionerService) prepareWorkspaceWithUserStr(ctx context.Context,
 	case userStr.Identity.BlueprintKind == models.BlueprintKindCustom:
 		blueprintpb, err := p.server.Identity.GetBlueprintByUserStr(ctx, &identityv1.UserStr{Userstr: userStr.CanonicalUserStr})
 		if err != nil {
-			return nil, status.Errorf(codes.InvalidArgument, "failed to get blueprint by userstr: %v", err)
+			if status.Code(err) != codes.NotFound {
+				return nil, status.Errorf(codes.InvalidArgument, "failed to get blueprint by userstr: %v", err)
+			}
+			defaultBp := p.server.config.Blueprints.DefaultCustomBlueprint
+			if defaultBp == "" {
+				return nil, status.Errorf(codes.NotFound,
+					"custom blueprint not found for userstr %s and no defaultCustomBlueprint is configured",
+					userStr.CanonicalUserStr)
+			}
+			p.log.Info().Str("userstr", userStr.CanonicalUserStr).Str("default", defaultBp).
+				Msg("custom blueprint not found; falling back to default")
+
+			defaultBpMetadata := &models.BlueprintMetadata{
+				Name:      userStr.Identity.Blueprint,
+				RepoName:  userStr.Identity.RepoName,
+				RepoOwner: userStr.Identity.RepoOwner,
+				RepoRef:   userStr.Identity.RepoRef,
+			}
+			scope, errx := p.server.GetBlueprintScope(defaultBp, user, defaultBpMetadata, userStr.WorkspaceName)
+			if errx != nil {
+				return nil, convertToGRPCError(errx)
+			}
+			if !user.HasBlueprint(defaultBp) {
+				return nil, status.Errorf(codes.PermissionDenied,
+					"Access denied: user %s is not authorized to use default blueprint %s",
+					userStr.Identity.Username, defaultBp)
+			}
+			blueprintObj, err = p.server.bpManager.GetBlueprint(defaultBp, scope)
+			if err != nil {
+				return nil, status.Errorf(codes.NotFound, "default custom blueprint %q not found: %v", defaultBp, err)
+			}
+			resolvedBpName = defaultBp
+			user = scope.User
+			break
 		}
 
 		var customBlueprint models.CustomBlueprint
-		err = json.Unmarshal([]byte(blueprintpb.BlueprintJson), &customBlueprint)
+		err = yaml.Unmarshal([]byte(blueprintpb.BlueprintJson), &customBlueprint)
 		if err != nil {
-			return nil, status.Errorf(codes.Internal, "Failed to parse custom blueprint JSON: %v", err)
+			return nil, status.Errorf(codes.Internal, "Failed to parse custom blueprint: %v", err)
 		}
+
+		customBlueprint.Name = userStr.Identity.Blueprint
+		customBlueprint.Metadata.Name = userStr.Identity.Blueprint
+		customBlueprint.Metadata.RepoName = userStr.Identity.RepoName
+		customBlueprint.Metadata.RepoOwner = userStr.Identity.RepoOwner
+		customBlueprint.Metadata.RepoRef = userStr.Identity.RepoRef
 
 		if !user.HasBlueprint(customBlueprint.Template) {
 			return nil, status.Errorf(codes.PermissionDenied,

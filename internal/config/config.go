@@ -87,7 +87,8 @@ func (r DefaultRegistry) ToValues() map[string]interface{} {
 
 // Blueprint represents a blueprint configuration
 type BlueprintsFileConfig struct {
-	Directory string `yaml:"directory" validate:"required"`
+	Directory              string `yaml:"directory" validate:"required"`
+	DefaultCustomBlueprint string `yaml:"defaultCustomBlueprint"`
 }
 
 func NewConfig(configFile string) (*Config, error) {
