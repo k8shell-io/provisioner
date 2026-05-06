@@ -532,7 +532,35 @@ func (p *ProvisionerService) prepareWorkspaceWithUserStr(ctx context.Context,
 			return nil, status.Errorf(codes.InvalidArgument, "failed to get blueprint by userstr: %v", err)
 		}
 
+		// Parse and validate the returned k8shell file; fall back to the default
+		// custom blueprint when the response is empty or the file is invalid.
+		var parsedCustomBlueprint *models.CustomBlueprint
+		useDefault := false
+
 		if len(blueprintpb.Blueprint) == 0 {
+			p.log.Info().Str("userstr", userStr.CanonicalUserStr).
+				Msg("custom blueprint not found (empty response); falling back to default custom blueprint")
+			useDefault = true
+		} else {
+			var k8shellFile models.K8shellFile
+			if err := yaml.Unmarshal(blueprintpb.Blueprint, &k8shellFile); err != nil {
+				p.log.Warn().Str("userstr", userStr.CanonicalUserStr).Err(err).
+					Msg("failed to parse k8shell file; falling back to default custom blueprint")
+				useDefault = true
+			} else {
+				customBp, validationErrors := models.ValidateK8shellFile(k8shellFile)
+				if len(validationErrors) > 0 {
+					p.log.Warn().Str("userstr", userStr.CanonicalUserStr).
+						Strs("errors", validationErrors).
+						Msg("k8shell file validation failed; falling back to default custom blueprint")
+					useDefault = true
+				} else {
+					parsedCustomBlueprint = customBp
+				}
+			}
+		}
+
+		if useDefault {
 			defaultBp := p.server.config.Blueprints.DefaultCustomBlueprint
 			if defaultBp == "" {
 				return nil, status.Errorf(codes.NotFound,
@@ -540,7 +568,7 @@ func (p *ProvisionerService) prepareWorkspaceWithUserStr(ctx context.Context,
 					userStr.CanonicalUserStr)
 			}
 			p.log.Info().Str("userstr", userStr.CanonicalUserStr).Str("default", defaultBp).
-				Msg("custom blueprint not found; falling back to default")
+				Msg("using default custom blueprint")
 
 			defaultBpMetadata := &models.BlueprintMetadata{
 				Name:        userStr.Identity.Blueprint,
@@ -567,30 +595,24 @@ func (p *ProvisionerService) prepareWorkspaceWithUserStr(ctx context.Context,
 			break
 		}
 
-		var customBlueprint models.CustomBlueprint
-		err = yaml.Unmarshal(blueprintpb.Blueprint, &customBlueprint)
-		if err != nil {
-			return nil, status.Errorf(codes.Internal, "Failed to parse custom blueprint: %v", err)
-		}
+		parsedCustomBlueprint.Name = userStr.Identity.Blueprint
+		parsedCustomBlueprint.Metadata.Name = userStr.Identity.Blueprint
+		parsedCustomBlueprint.Metadata.RepoName = userStr.Identity.RepoName
+		parsedCustomBlueprint.Metadata.RepoOwner = userStr.Identity.RepoOwner
+		parsedCustomBlueprint.Metadata.RepoRef = userStr.Identity.RepoRef
+		parsedCustomBlueprint.Metadata.RepoAddress = blueprintpb.RepoAddress
 
-		customBlueprint.Name = userStr.Identity.Blueprint
-		customBlueprint.Metadata.Name = userStr.Identity.Blueprint
-		customBlueprint.Metadata.RepoName = userStr.Identity.RepoName
-		customBlueprint.Metadata.RepoOwner = userStr.Identity.RepoOwner
-		customBlueprint.Metadata.RepoRef = userStr.Identity.RepoRef
-		customBlueprint.Metadata.RepoAddress = blueprintpb.RepoAddress
-
-		if !user.HasBlueprint(customBlueprint.Template) {
+		if !user.HasBlueprint(parsedCustomBlueprint.Template) {
 			return nil, status.Errorf(codes.PermissionDenied,
-				"Access denied: user %s is not authorized to use blueprint's template %s", userStr.Identity.Username, customBlueprint.Template)
+				"Access denied: user %s is not authorized to use blueprint's template %s", userStr.Identity.Username, parsedCustomBlueprint.Template)
 		}
 
-		scope, errx := p.server.GetBlueprintScope(customBlueprint.Metadata.Name, user, &customBlueprint.Metadata, userStr.WorkspaceName)
+		scope, errx := p.server.GetBlueprintScope(parsedCustomBlueprint.Metadata.Name, user, &parsedCustomBlueprint.Metadata, userStr.WorkspaceName)
 		if errx != nil {
 			return nil, convertToGRPCError(errx)
 		}
 
-		blueprintObj, err = p.server.bpManager.ComposeWithScope(&customBlueprint, scope)
+		blueprintObj, err = p.server.bpManager.ComposeWithScope(parsedCustomBlueprint, scope)
 		if err != nil {
 			return nil, status.Errorf(codes.InvalidArgument, "Failed to compose blueprint: %v", err)
 		}
