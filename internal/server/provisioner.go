@@ -532,8 +532,9 @@ func (p *ProvisionerService) prepareWorkspaceWithUserStr(ctx context.Context,
 			return nil, status.Errorf(codes.InvalidArgument, "failed to get blueprint by userstr: %v", err)
 		}
 
-		// Parse and validate the returned k8shell file; fall back to the default
-		// custom blueprint when the response is empty or the file is invalid.
+		p.log.Debug().Str("userstr", userStr.CanonicalUserStr).Str("blueprint",
+			string(blueprintpb.Blueprint)).Msg("Retrieved k8shell file for userstr")
+
 		var parsedCustomBlueprint *models.CustomBlueprint
 		useDefault := false
 
@@ -559,6 +560,9 @@ func (p *ProvisionerService) prepareWorkspaceWithUserStr(ctx context.Context,
 				}
 			}
 		}
+
+		p.log.Debug().Str("userstr", userStr.CanonicalUserStr).Bool("useDefault", useDefault).
+			Msg("Custom blueprint parsing result")
 
 		if useDefault {
 			defaultBp := p.server.config.Blueprints.DefaultCustomBlueprint
