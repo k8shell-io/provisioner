@@ -111,17 +111,33 @@ func (c *Client) InjectionSpecFromTemplate(ctx context.Context, values map[strin
 
 	prefix := "k8shell-" + workspaceName + "-"
 
-	// Build a volume name mapping (old → new) so volume mounts can be rewritten.
+	// Secret-backed volumes are excluded from injection: the referenced secrets
+	// are unlikely to exist in the target Deployment's namespace. Volume mounts
+	// that reference an excluded volume are also stripped from each container.
+	// TODO: make this configurable once the secrets strategy is settled.
+	skipVolumes := make(map[string]bool)
+	for _, v := range pod.Spec.Volumes {
+		if v.Secret != nil {
+			skipVolumes[v.Name] = true
+		}
+	}
+
+	// Build a volume name mapping (old → new) for non-skipped volumes only.
 	volMap := make(map[string]string, len(pod.Spec.Volumes))
 	for _, v := range pod.Spec.Volumes {
-		volMap[v.Name] = prefix + v.Name
+		if !skipVolumes[v.Name] {
+			volMap[v.Name] = prefix + v.Name
+		}
 	}
 
 	rewriteMounts := func(mounts []corev1.VolumeMount) []corev1.VolumeMount {
-		out := make([]corev1.VolumeMount, len(mounts))
-		for i, m := range mounts {
-			m.Name = volMap[m.Name]
-			out[i] = m
+		out := make([]corev1.VolumeMount, 0, len(mounts))
+		for _, m := range mounts {
+			if newName, ok := volMap[m.Name]; ok {
+				m.Name = newName
+				out = append(out, m)
+			}
+			// mounts referencing a skipped volume are dropped
 		}
 		return out
 	}
@@ -140,15 +156,33 @@ func (c *Client) InjectionSpecFromTemplate(ctx context.Context, values map[strin
 		initContainers[i] = c
 	}
 
-	volumes := make([]corev1.Volume, len(pod.Spec.Volumes))
-	for i, v := range pod.Spec.Volumes {
+	volumes := make([]corev1.Volume, 0, len(pod.Spec.Volumes))
+	for _, v := range pod.Spec.Volumes {
+		if skipVolumes[v.Name] {
+			continue
+		}
 		v.Name = prefix + v.Name
-		volumes[i] = v
+		volumes = append(volumes, v)
 	}
 
+	// Only propagate specific k8shell.io/ labels needed for workspace discovery.
+	// Helm-managed labels (app.kubernetes.io/*, helm.sh/chart, etc.) and
+	// k8shell.io/app must not be carried over: the target Deployment may already
+	// have these labels with different values in its selector, which would cause
+	// Kubernetes to reject the patch with "selector does not match template labels".
+	podLabelAllowlist := map[string]bool{
+		"k8shell.io/workspace":      true,
+		"k8shell.io/username":       true,
+		"k8shell.io/organization":   true,
+		"k8shell.io/blueprint":      true,
+		"k8shell.io/network-policy": true,
+		"k8shell.io/subdomain":      true,
+	}
 	podLabels := make(map[string]string)
 	for k, v := range pod.Labels {
-		podLabels[k] = v
+		if podLabelAllowlist[k] {
+			podLabels[k] = v
+		}
 	}
 
 	// Copy key annotations needed for workspace discovery on injected pods.

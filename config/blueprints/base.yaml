@@ -1,28 +1,26 @@
 blueprints:
   - name: base
-    shell: /bin/sh
     isTemplate: true
-    sudo: false
 
     splash: |
       Welcome to k8shell - cloud-native workspaces on Kubernetes!
       Connected to k8shelld (version: {{.Version}}-{{.Commit}})
       For more information, visit https://k8shell.io
 
-    image: <image:tag>
+    image: docker.io/alpine:latest
     imagePullPolicy: IfNotPresent
 
     subdomain: !cel "user.organization"
     hostname: !cel "user.username + '-' + metadata.name"
 
     k8shelld:
-      image: k8shell-base/k8shelld:pr-50-f512f89
+      image: k8shell-base/k8shelld:pr-57-6c5e1a9
       imagePullPolicy: IfNotPresent
       ignoreOrphans:
         - .*JetBrains.*
 
     network:
-      networkPolicyClass: system
+      networkPolicyClass: workspace
 
     resources:
       cpu: 4
@@ -30,44 +28,43 @@ blueprints:
 
     podman:
       enabled: false
-      image: quay.io/podman/stable:v5.8.2
+      image: quay.io/podman/stable:v5.8.1
+
+      securityContext:
+        runAsUser: 1000
+        runAsGroup: 1000
+        appArmorProfile:
+          type: Unconfined
 
       resources:
         cpu: 2
         memory: 2Gi
 
-      # group owner of podman unix socket
-      groupId: 999
-
       # use the same volumes as in the main workspace
       parentStorages: true
 
-      # storages:
-      #   data:
-      #     enabled: false
-      #     path: /home/podman/.local/share/containers
-      #     fsOwnerUid: 1000   # chown path to this uid at pod start (0 = skip)
-      #     fsOwnerGid: 1000   # chown path to this gid at pod start (0 = skip)
-      #     claimSpec:
-      #       storageClassName: ""
-      #       accessModes:
-      #         - ReadWriteMany
-      #       resources:
-      #         requests:
-      #           storage: 10Gi
+      createDockerSockSymlink: true
 
     # list of storages in the workspace
     # storages:
     #   home:
     #     enabled: false
+    #     storageClass: ""
+    #     size: 10Gi
     #     path: !cel "'/home/' + user.username"
-    #     readonly: false
-    #     claimSpec:
-    #       storageClassName: ""
-    #       accessModes:
-    #         - ReadWriteMany
-    #       resources:
-    #         requests:
-    #           storage: 10Gi
+    #     readonly: False
 
     enableApps: false
+    apps:
+      vscode:
+        enabled: false
+        listen: 8080
+        installAsRoot: true
+        binary: "/usr/bin/code-server"
+        versionCmd: ["/usr/bin/code-server", "--version"]
+        versionRegex: "^([0-9]+\\.[0-9]+\\.[0-9]+)"
+        install: |
+          curl -fsSL https://code-server.dev/install.sh | sh
+        start: ["/usr/bin/code-server", "--auth=none", "--bind-addr=127.0.0.1:8080", "."]
+        restartPolicy: always
+        protocol: "http"

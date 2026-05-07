@@ -183,31 +183,31 @@ func GetWorkspaces(ctx context.Context, helmClient *helm.Client,
 	// Also search all namespaces for pods injected into external Deployments.
 	// Injected pods live outside the provisioner namespace but carry the same
 	// k8shell.io/app=k8shell-workspace label set.
-	injectedList, err := v1.Pods("").List(ctx, metav1.ListOptions{
-		LabelSelector: selector,
-	})
-	if err == nil {
-		// Deduplicate by workspace name: prefer a Running pod over others.
-		seen := make(map[string]*models.WorkspaceDetails, len(injectedList.Items))
-		for i := range injectedList.Items {
-			ip := &injectedList.Items[i]
-			if ip.Namespace == namespace {
-				continue // already handled above as standalone pod
-			}
-			d := WorkspaceDetailsFromInjectedPod(ip)
-			if d == nil {
-				continue
-			}
-			prev, exists := seen[d.Name]
-			if !exists || d.Status == models.WorkspaceStatusRunning {
-				seen[d.Name] = d
-				_ = prev
-			}
-		}
-		for _, d := range seen {
-			out = append(out, d)
-		}
-	}
+	// injectedList, err := v1.Pods("").List(ctx, metav1.ListOptions{
+	// 	LabelSelector: selector,
+	// })
+	// if err == nil {
+	// 	// Deduplicate by workspace name: prefer a Running pod over others.
+	// 	seen := make(map[string]*models.WorkspaceDetails, len(injectedList.Items))
+	// 	for i := range injectedList.Items {
+	// 		ip := &injectedList.Items[i]
+	// 		if ip.Namespace == namespace {
+	// 			continue // already handled above as standalone pod
+	// 		}
+	// 		d := WorkspaceDetailsFromInjectedPod(ip)
+	// 		if d == nil {
+	// 			continue
+	// 		}
+	// 		prev, exists := seen[d.Name]
+	// 		if !exists || d.Status == models.WorkspaceStatusRunning {
+	// 			seen[d.Name] = d
+	// 			_ = prev
+	// 		}
+	// 	}
+	// 	for _, d := range seen {
+	// 		out = append(out, d)
+	// 	}
+	// }
 
 	return &GetWorkspacesResult{
 		Workspaces: out,
