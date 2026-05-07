@@ -69,9 +69,9 @@ func (w *Workspace) upgradeWithLock(ctx context.Context, opts *ProvisionOptions)
 	labels := map[string]string{
 		"app.kubernetes.io/name":       helm.WORKSPACE_CHART_NAME,
 		"app.kubernetes.io/instance":   w.Name,
-		"app.kubernetes.io/version":    w.appVersion(),
+		"k8shell.io/k8shelld-version":  w.appVersion(),
 		"app.kubernetes.io/managed-by": "k8shell-provisioner",
-		"k8shell.io/app":               helm.WORKSPACE_CHART_NAME,
+		"k8shell.io/type":              "workspace",
 		"k8shell.io/workspace":         w.Name,
 		"k8shell.io/username":          w.user.Username,
 		"k8shell.io/blueprint":         w.blueprint.Name,

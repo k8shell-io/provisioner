@@ -111,7 +111,7 @@ func ParseWorkspaceMetadata(labels map[string]string, annotations map[string]str
 		RepoOwner:    canUser.Identity.RepoOwner,
 		RepoName:     canUser.Identity.RepoName,
 		RepoRef:      canUser.Identity.RepoRef,
-		AppVersion:   labels["app.kubernetes.io/version"],
+		AppVersion:   labels["k8shell.io/k8shelld-version"],
 		JobId:        labels["k8shell.io/job-id"],
 		UserStr:      canUser,
 	}, nil
@@ -142,7 +142,7 @@ func GetWorkspaces(ctx context.Context, helmClient *helm.Client,
 	opts GetWorkspacesOptions) (*GetWorkspacesResult, error) {
 
 	labels := map[string]string{}
-	labels["k8shell.io/app"] = "k8shell-workspace"
+	labels["k8shell.io/type"] = "workspace"
 
 	if opts.Username != "" {
 		labels["k8shell.io/username"] = opts.Username
@@ -182,33 +182,49 @@ func GetWorkspaces(ctx context.Context, helmClient *helm.Client,
 	}
 
 	// Also search all namespaces for pods injected into external Deployments.
-	// Injected pods live outside the provisioner namespace but carry the same
-	// k8shell.io/app=k8shell-workspace label set.
-	// injectedList, err := v1.Pods("").List(ctx, metav1.ListOptions{
-	// 	LabelSelector: selector,
-	// })
-	// if err == nil {
-	// 	// Deduplicate by workspace name: prefer a Running pod over others.
-	// 	seen := make(map[string]*models.WorkspaceDetails, len(injectedList.Items))
-	// 	for i := range injectedList.Items {
-	// 		ip := &injectedList.Items[i]
-	// 		if ip.Namespace == namespace {
-	// 			continue // already handled above as standalone pod
-	// 		}
-	// 		d := WorkspaceDetailsFromInjectedPod(ip)
-	// 		if d == nil {
-	// 			continue
-	// 		}
-	// 		prev, exists := seen[d.Name]
-	// 		if !exists || d.Status == models.WorkspaceStatusRunning {
-	// 			seen[d.Name] = d
-	// 			_ = prev
-	// 		}
-	// 	}
-	// 	for _, d := range seen {
-	// 		out = append(out, d)
-	// 	}
-	// }
+	// Injected pods carry k8shell.io/injected=true (not k8shell.io/type=workspace,
+	// which is unsafe to stamp on arbitrary Deployments). Build a separate selector.
+	injectedLabels := map[string]string{
+		helm.LabelInjected: "true",
+	}
+	if opts.Username != "" {
+		injectedLabels["k8shell.io/username"] = opts.Username
+	}
+	if opts.Workspace != "" {
+		injectedLabels["k8shell.io/workspace"] = opts.Workspace
+	}
+	if opts.Organization != "" {
+		injectedLabels["k8shell.io/organization"] = opts.Organization
+	}
+	if opts.Blueprint != "" {
+		injectedLabels["k8shell.io/blueprint"] = opts.Blueprint
+	}
+	injectedSelector := getSelector(injectedLabels)
+	injectedList, err := v1.Pods("").List(ctx, metav1.ListOptions{
+		LabelSelector: injectedSelector,
+	})
+	if err == nil {
+		// Deduplicate by workspace name: prefer a Running pod over others.
+		seen := make(map[string]*models.WorkspaceDetails, len(injectedList.Items))
+		for i := range injectedList.Items {
+			ip := &injectedList.Items[i]
+			if ip.Namespace == namespace {
+				continue // already handled above as standalone pod
+			}
+			d := WorkspaceDetailsFromInjectedPod(ip)
+			if d == nil {
+				continue
+			}
+			prev, exists := seen[d.Name]
+			if !exists || d.Status == models.WorkspaceStatusRunning {
+				seen[d.Name] = d
+				_ = prev
+			}
+		}
+		for _, d := range seen {
+			out = append(out, d)
+		}
+	}
 
 	return &GetWorkspacesResult{
 		Workspaces: out,
@@ -388,7 +404,7 @@ func (w *Workspace) Values() (map[string]interface{}, error) {
 	values["__userstr__"] = userstrB64
 	values["__jobid__"] = w.JobId
 
-	configYAML, err := w.buildConfigYAML()
+	configYAML, err := w.buildConfigYAML("")
 	if err != nil {
 		return nil, fmt.Errorf("failed to build config YAML: %w", err)
 	}
@@ -524,16 +540,14 @@ func (w *Workspace) StopPod(ctx context.Context) error {
 
 // workspacePodStatus extracts the workspace details from pod
 // WorkspaceDetailsFromInjectedPod builds a WorkspaceDetails for a workspace
-// that is injected as a sidecar into an external Deployment. The pod is one of
-// the Deployment's pods (its name is assigned by the ReplicaSet, not equal to
-// the workspace name). workspaceName is read from the k8shell.io/workspace label.
+// that is injected as a sidecar into an external Deployment.
 func WorkspaceDetailsFromInjectedPod(pod *corev1.Pod) *models.WorkspaceDetails {
 	if pod == nil {
 		return nil
 	}
 
-	workspaceName := pod.Labels["k8shell.io/workspace"]
-	if workspaceName == "" {
+	originalWorkspaceName := pod.Labels["k8shell.io/workspace"]
+	if originalWorkspaceName == "" {
 		return nil
 	}
 
@@ -553,13 +567,13 @@ func WorkspaceDetailsFromInjectedPod(pod *corev1.Pod) *models.WorkspaceDetails {
 		}
 	}
 
-	appVersion := pod.Labels["app.kubernetes.io/version"]
+	appVersion := pod.Labels["k8shell.io/k8shelld-version"]
 	if appVersion == "" {
 		appVersion = "1.0.0"
 	}
 
-	// The workspace main container is prefixed with "k8shell-<workspaceName>-".
-	mainContainerName := "k8shell-" + workspaceName + "-main"
+	// The workspace main container is prefixed with "k8shell-<originalWorkspaceName>-".
+	mainContainerName := "k8shell-" + originalWorkspaceName + "-main"
 	var cpu, memory string
 	var port int
 	for _, c := range pod.Spec.Containers {
@@ -579,14 +593,13 @@ func WorkspaceDetailsFromInjectedPod(pod *corev1.Pod) *models.WorkspaceDetails {
 		port = models.WORKSPACE_PORT
 	}
 
-	// TLS cert secret is still named <workspaceName>-tls even after injection.
-	tlsEnabled := podMountsSecret(pod, workspaceName+"-tls")
+	tlsEnabled := podMountsSecret(pod, originalWorkspaceName+"-tls")
 
 	snap := AnalyzePod(pod, nil, defaultCrashLoopThreshold)
 
 	return &models.WorkspaceDetails{
 		WorkspaceStatus: *snapToWorkspaceStatus(&snap),
-		Name:            workspaceName,
+		Name:            pod.Name,
 		Username:        pod.Labels["k8shell.io/username"],
 		RepoOwner:       canUser.Identity.RepoOwner,
 		RepoName:        canUser.Identity.RepoName,
@@ -594,7 +607,7 @@ func WorkspaceDetailsFromInjectedPod(pod *corev1.Pod) *models.WorkspaceDetails {
 		Blueprint:       pod.Labels["k8shell.io/blueprint"],
 		Organization:    pod.Labels["k8shell.io/organization"],
 		JobId:           pod.Labels["k8shell.io/job-id"],
-		ServerName:      workspaceName + "." + pod.Namespace,
+		ServerName:      pod.Name + "." + pod.Namespace,
 		PodIP:           pod.Status.PodIP,
 		Port:            port,
 		TLSEnabled:      tlsEnabled,
@@ -622,7 +635,7 @@ func WorkspaceDetailsFromPod(pod *corev1.Pod) *models.WorkspaceDetails {
 		}
 	}
 
-	appVersion, exists := pod.Labels["app.kubernetes.io/version"]
+	appVersion, exists := pod.Labels["k8shell.io/k8shelld-version"]
 	if !exists {
 		appVersion = "1.0.0"
 	}

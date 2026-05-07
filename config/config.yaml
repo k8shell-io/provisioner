@@ -76,7 +76,7 @@ nats:
 
 # Identity service configuration
 identity:
-  address: identity.k8shell-staging:9020
+  address: 10.42.2.42:9020
   tokenFilePath: /opt/shared/provisioner/identity-token
   # caCertPath: /opt/shared/auth/ca.crt
   # serverName: identity.k8shell-test.svc

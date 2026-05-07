@@ -10,8 +10,11 @@ import (
 // buildConfigYAML constructs the k8shelld config.yaml content from the workspace's
 // blueprint and server config, returning it as a clean YAML string with no comments
 // or Helm templating.
-func (w *Workspace) buildConfigYAML() (string, error) {
+func (w *Workspace) buildConfigYAML(customNamespace string) (string, error) {
 	namespace := getNamespace()
+	if customNamespace != "" {
+		namespace = customNamespace
+	}
 	bp := w.blueprint
 
 	// Resolve GRPC allowed namespace/SA, respecting blueprint connection overrides.

@@ -8,7 +8,7 @@ metadata:
 spec:
   clusterIP: None
   selector:
-    k8shell.io/app: k8shell-workspace
+    k8shell.io/type: workspace
     k8shell.io/workspace: {{ .Values.__workspace__ }}
   ports:
     - name: grpc-api

@@ -2,14 +2,14 @@
 
 {{/* labels for helm resources */}}
 {{- define "workspace.labels" -}}
-k8shell.io/app: k8shell-workspace
+k8shell.io/type: workspace
 k8shell.io/workspace: "{{ .Values.__workspace__ }}"
 {{- end -}}
 
 {{/* labels for helm resources */}}
 {{- define "workspace.workspaceLabels" -}}
-k8shell.io/app: k8shell-workspace
-app.kubernetes.io/version: {{ .Values.__appversion__ }}
+k8shell.io/type: workspace
+k8shell.io/k8shelld-version: {{ .Values.__appversion__ }}
 k8shell.io/workspace: "{{ .Values.__workspace__ }}"
 k8shell.io/blueprint: "{{ .Values.__blueprint__ }}"
 k8shell.io/username: "{{ .Values.__username__ }}"

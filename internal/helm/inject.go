@@ -15,6 +15,10 @@ import (
 )
 
 const (
+	// LabelInjected is stamped on a Deployment's pod template when a workspace is
+	// injected, so that GetWorkspaces can discover injected pods cluster-wide.
+	LabelInjected = "k8shell.io/injected"
+
 	// AnnotationInjectedWorkspace marks which workspace was injected into a Deployment.
 	AnnotationInjectedWorkspace = "k8shell.io/injected-workspace"
 	// AnnotationInjectedContainers lists the injected container names (comma-separated).
@@ -167,7 +171,7 @@ func (c *Client) InjectionSpecFromTemplate(ctx context.Context, values map[strin
 
 	// Only propagate specific k8shell.io/ labels needed for workspace discovery.
 	// Helm-managed labels (app.kubernetes.io/*, helm.sh/chart, etc.) and
-	// k8shell.io/app must not be carried over: the target Deployment may already
+	// k8shell.io/type must not be carried over: the target Deployment may already
 	// have these labels with different values in its selector, which would cause
 	// Kubernetes to reject the patch with "selector does not match template labels".
 	podLabelAllowlist := map[string]bool{
@@ -289,6 +293,13 @@ func (c *Client) InjectIntoDeployment(ctx context.Context, namespace, deployment
 		Labels:      spec.PodLabels,
 		Annotations: spec.PodAnnotations,
 	}
+	// Always stamp the injected marker so GetWorkspaces can discover injected
+	// pods cluster-wide without relying on k8shell.io/type which is not safe to
+	// carry over to arbitrary Deployments.
+	if patch.Spec.Template.Metadata.Labels == nil {
+		patch.Spec.Template.Metadata.Labels = make(map[string]string)
+	}
+	patch.Spec.Template.Metadata.Labels[LabelInjected] = "true"
 	patch.Spec.Template.Spec = specPatch{
 		ShareProcessNamespace: &trueVal,
 		InitContainers:        spec.InitContainers,

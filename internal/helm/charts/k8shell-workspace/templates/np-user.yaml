@@ -9,7 +9,7 @@ metadata:
 spec:
   podSelector:
     matchLabels:
-      k8shell.io/app: k8shell-workspace
+      k8shell.io/type: workspace
       k8shell.io/organization: "{{ .Values.__organization__ }}"
       k8shell.io/workspace: "{{ .Values.__workspace__ }}"
   policyTypes:
@@ -20,12 +20,12 @@ spec:
     - from:
         - podSelector:
             matchLabels:
-              k8shell.io/app: k8shell-workspace
+              k8shell.io/type: workspace
               k8shell.io/organization: {{ .Values.__organization__ }}
               k8shell.io/username: {{ .Values.__username__ }}
         - podSelector:
             matchLabels:
-              k8shell.io/app: k8shell-workspace
+              k8shell.io/type: workspace
               k8shell.io/organization: "{{ .Values.__organization__ }}"
               k8shell.io/network-policy: system
 {{ include "default.ingress" . | nindent 4 }}  
@@ -33,7 +33,7 @@ spec:
     - to:
         - podSelector:
             matchLabels:
-              k8shell.io/app: k8shell-workspace
+              k8shell.io/type: workspace
               k8shell.io/organization: "{{ .Values.__organization__ }}"
               k8shell.io/username: "{{ .Values.__username__ }}"
 {{ include "default.egress" . | nindent 4 }}  

@@ -250,20 +250,39 @@ func (p *ProvisionerService) sendProvisionEvent(
 	return err
 }
 
-func (p *ProvisionerService) sendProvisionHandshakeErr(
-	stream provisionerv1.ProvisionerService_ProvisionWorkspaceStreamServer,
-	workspaceName string, err error,
-) error {
-	errx := stream.Send(&provisionerv1.ProvisionWorkspaceResponse{
-		Data: &provisionerv1.ProvisionWorkspaceResponse_Handshake{
-			Handshake: &provisionerv1.HandshakeResponse{
-				Workspace: workspaceName,
-				Error:     err.Error(),
-			},
-		},
+// handshakeErrSender abstracts the stream-specific wrapping needed to deliver a
+// HandshakeResponse error to the client.
+type handshakeErrSender interface {
+	sendHandshake(h *provisionerv1.HandshakeResponse) error
+}
+
+type provisionHandshakeSender struct {
+	s provisionerv1.ProvisionerService_ProvisionWorkspaceStreamServer
+}
+
+func (w provisionHandshakeSender) sendHandshake(h *provisionerv1.HandshakeResponse) error {
+	return w.s.Send(&provisionerv1.ProvisionWorkspaceResponse{
+		Data: &provisionerv1.ProvisionWorkspaceResponse_Handshake{Handshake: h},
+	})
+}
+
+type injectHandshakeSender struct {
+	s provisionerv1.ProvisionerService_InjectWorkspaceStreamServer
+}
+
+func (w injectHandshakeSender) sendHandshake(h *provisionerv1.HandshakeResponse) error {
+	return w.s.Send(&provisionerv1.InjectWorkspaceResponse{
+		Data: &provisionerv1.InjectWorkspaceResponse_Handshake{Handshake: h},
+	})
+}
+
+func (p *ProvisionerService) sendHandshakeErr(sender handshakeErrSender, workspaceName string, handshakeErr error) error {
+	errx := sender.sendHandshake(&provisionerv1.HandshakeResponse{
+		Workspace: workspaceName,
+		Error:     handshakeErr.Error(),
 	})
 	if errx != nil {
-		p.log.Error().Err(errx).Msg("Failed to send handshake error response")
+		p.log.Error().Err(errx).Msg("failed to send handshake error")
 	}
 	return errx
 }
@@ -276,6 +295,7 @@ func (p *ProvisionerService) ProvisionWorkspaceStream(
 
 	var job *ProvisionJobServer
 	ctx := stream.Context()
+	msgStream := provisionHandshakeSender{stream}
 
 	timeout := int(req.Timeout)
 	if timeout <= 0 {
@@ -284,41 +304,41 @@ func (p *ProvisionerService) ProvisionWorkspaceStream(
 
 	userstr, err := models.NewUserStr(req.Userstr, false)
 	if err != nil {
-		return p.sendProvisionHandshakeErr(stream, "", status.Errorf(codes.InvalidArgument,
+		return p.sendHandshakeErr(msgStream, "", status.Errorf(codes.InvalidArgument,
 			"Invalid userstr format: %v", err))
 	}
 
 	canUserStr, err := userstr.Canonicalize()
 	if err != nil {
-		return p.sendProvisionHandshakeErr(stream, "", status.Errorf(codes.InvalidArgument,
+		return p.sendHandshakeErr(msgStream, "", status.Errorf(codes.InvalidArgument,
 			"Failed to canonicalize userstr: %v", err))
 	}
 
 	workspace, err := p.prepareWorkspaceWithUserStr(ctx, canUserStr)
 	if err != nil {
-		return p.sendProvisionHandshakeErr(stream, "", err)
+		return p.sendHandshakeErr(msgStream, "", err)
 	}
 
 	tokenResp, err := p.server.Identity.GetUserAccessToken(ctx, &identityv1.GetUserAccessTokenRequest{
 		Username: canUserStr.Identity.Username,
 	})
 	if err != nil {
-		return p.sendProvisionHandshakeErr(stream, workspace.Name, status.Errorf(codes.Unauthenticated,
+		return p.sendHandshakeErr(msgStream, workspace.Name, status.Errorf(codes.Unauthenticated,
 			"failed to retrieve identity token for user %s: %v", canUserStr.Identity.Username, err))
 	}
 	if _, err := p.server.tokenVerifier.VerifyToken(tokenResp.AccessToken); err != nil {
-		return p.sendProvisionHandshakeErr(stream, workspace.Name, status.Errorf(codes.Unauthenticated,
+		return p.sendHandshakeErr(msgStream, workspace.Name, status.Errorf(codes.Unauthenticated,
 			"identity token for user %s is invalid: %v", canUserStr.Identity.Username, err))
 	}
 	workspace.SetIdentityToken(tokenResp.AccessToken)
 
 	exists, st, err := workspace.ExistsAndRunning(ctx)
 	if err != nil {
-		return p.sendProvisionHandshakeErr(stream, workspace.Name, status.Errorf(codes.Internal,
+		return p.sendHandshakeErr(msgStream, workspace.Name, status.Errorf(codes.Internal,
 			"Failed to check if workspace can be provisioned: %v", err))
 	}
 	if exists {
-		return p.sendProvisionHandshakeErr(stream, workspace.Name, status.Errorf(codes.AlreadyExists,
+		return p.sendHandshakeErr(msgStream, workspace.Name, status.Errorf(codes.AlreadyExists,
 			"Workspace %s already exists and is running", workspace.Name))
 	}
 
@@ -328,7 +348,7 @@ func (p *ProvisionerService) ProvisionWorkspaceStream(
 			p.log.Debug().Msgf("Workspace %s is terminating, waiting for pod to be gone", workspace.Name)
 			waitDur := time.Duration(timeout) * time.Second
 			if err := p.waitForWorkspacePodGone(ctx, workspace.Name, waitDur); err != nil {
-				return p.sendProvisionHandshakeErr(stream, workspace.Name, status.Errorf(codes.DeadlineExceeded,
+				return p.sendHandshakeErr(msgStream, workspace.Name, status.Errorf(codes.DeadlineExceeded,
 					"Workspace %s is still being deleted; please retry: %v", workspace.Name, err))
 			}
 			p.log.Debug().Msgf("Workspace %s deletion detected, proceeding with provisioning", workspace.Name)
@@ -727,8 +747,9 @@ func (p *ProvisionerService) UpgradeWorkspaceStream(
 	stream grpc.ServerStreamingServer[provisionerv1.ProvisionWorkspaceResponse],
 ) error {
 	name := req.Workspace
+	msgStream := provisionHandshakeSender{stream}
 	if name == "" {
-		return p.sendProvisionHandshakeErr(stream, "", status.Errorf(codes.InvalidArgument,
+		return p.sendHandshakeErr(msgStream, "", status.Errorf(codes.InvalidArgument,
 			"workspace name is required"))
 	}
 
@@ -736,39 +757,39 @@ func (p *ProvisionerService) UpgradeWorkspaceStream(
 	_, pod, err := ws.FindWorkspace(ctx, p.server.helm, name)
 	if err != nil {
 		if errors.Is(err, models.ErrWorkspaceNotFound) {
-			return p.sendProvisionHandshakeErr(stream, name, status.Errorf(codes.NotFound,
+			return p.sendHandshakeErr(msgStream, name, status.Errorf(codes.NotFound,
 				"Workspace %s not found", name))
 		}
-		return p.sendProvisionHandshakeErr(stream, name, status.Errorf(codes.Internal,
+		return p.sendHandshakeErr(msgStream, name, status.Errorf(codes.Internal,
 			"Failed to find workspace: %v", err))
 	}
 
 	wl, err := ws.ParseWorkspaceMetadata(pod.Labels, pod.Annotations)
 	if err != nil {
-		return p.sendProvisionHandshakeErr(stream, name, status.Errorf(codes.Internal,
+		return p.sendHandshakeErr(msgStream, name, status.Errorf(codes.Internal,
 			"Failed to parse workspace metadata: %v", err))
 	}
 
 	_, err = p.server.Identity.FindUser(ctx, &identityv1.FindUserRequest{Username: wl.Username})
 	if err != nil {
-		return p.sendProvisionHandshakeErr(stream, name, status.Errorf(codes.Internal,
+		return p.sendHandshakeErr(msgStream, name, status.Errorf(codes.Internal,
 			"Failed to get user %s: %v", wl.Username, err))
 	}
 
 	if !req.Force {
 		workspace, err := p.prepareWorkspaceWithPod(ctx, pod)
 		if err != nil {
-			return p.sendProvisionHandshakeErr(stream, name, err)
+			return p.sendHandshakeErr(msgStream, name, err)
 		}
 
 		canUpgrade, err := workspace.CanUpgrade(ctx, pod)
 		if err != nil {
-			return p.sendProvisionHandshakeErr(stream, name, status.Errorf(codes.Internal,
+			return p.sendHandshakeErr(msgStream, name, status.Errorf(codes.Internal,
 				"Failed to check if workspace can be upgraded: %v", err))
 		}
 
 		if !canUpgrade {
-			return p.sendProvisionHandshakeErr(stream, name, status.Errorf(codes.FailedPrecondition,
+			return p.sendHandshakeErr(msgStream, name, status.Errorf(codes.FailedPrecondition,
 				"Workspace %s cannot be upgraded because it is already up to date.", name))
 		}
 	}
@@ -778,7 +799,7 @@ func (p *ProvisionerService) UpgradeWorkspaceStream(
 		DelaySeconds: 0,
 	})
 	if err != nil {
-		return p.sendProvisionHandshakeErr(stream, name, status.Errorf(codes.Internal,
+		return p.sendHandshakeErr(msgStream, name, status.Errorf(codes.Internal,
 			"Failed to delete workspace %s for upgrade: %v", name, err))
 	}
 
@@ -1024,26 +1045,6 @@ func (p *ProvisionerService) sendInjectEvent(
 	return err
 }
 
-// sendInjectHandshakeErr sends a HandshakeResponse carrying an error and returns the send error (if any).
-func (p *ProvisionerService) sendInjectHandshakeErr(
-	stream provisionerv1.ProvisionerService_InjectWorkspaceStreamServer,
-	workspaceName string,
-	handshakeErr error,
-) error {
-	errx := stream.Send(&provisionerv1.InjectWorkspaceResponse{
-		Data: &provisionerv1.InjectWorkspaceResponse_Handshake{
-			Handshake: &provisionerv1.HandshakeResponse{
-				Workspace: workspaceName,
-				Error:     handshakeErr.Error(),
-			},
-		},
-	})
-	if errx != nil {
-		p.log.Error().Err(errx).Msg("failed to send inject handshake error")
-	}
-	return errx
-}
-
 // InjectWorkspaceStream injects a k8shell workspace as a sidecar into an existing
 // Deployment in the specified namespace and streams provisioning events back to
 // the caller until the injected pods are Running (or the timeout is reached).
@@ -1052,6 +1053,7 @@ func (p *ProvisionerService) InjectWorkspaceStream(
 	stream provisionerv1.ProvisionerService_InjectWorkspaceStreamServer,
 ) error {
 	ctx := stream.Context()
+	msgStream := injectHandshakeSender{stream}
 
 	timeout := int(req.TimeoutSeconds)
 	if timeout <= 0 {
@@ -1060,29 +1062,42 @@ func (p *ProvisionerService) InjectWorkspaceStream(
 
 	userstr, err := models.NewUserStr(req.Userstr, false)
 	if err != nil {
-		return p.sendInjectHandshakeErr(stream, "", status.Errorf(codes.InvalidArgument,
+		return p.sendHandshakeErr(msgStream, "", status.Errorf(codes.InvalidArgument,
 			"invalid userstr format: %v", err))
 	}
 
 	canUserStr, err := userstr.Canonicalize()
 	if err != nil {
-		return p.sendInjectHandshakeErr(stream, "", status.Errorf(codes.InvalidArgument,
+		return p.sendHandshakeErr(msgStream, "", status.Errorf(codes.InvalidArgument,
 			"failed to canonicalize userstr: %v", err))
 	}
 
 	if req.Namespace == "" {
-		return p.sendInjectHandshakeErr(stream, "", status.Errorf(codes.InvalidArgument,
+		return p.sendHandshakeErr(msgStream, "", status.Errorf(codes.InvalidArgument,
 			"namespace is required"))
 	}
 	if req.DeploymentName == "" {
-		return p.sendInjectHandshakeErr(stream, "", status.Errorf(codes.InvalidArgument,
+		return p.sendHandshakeErr(msgStream, "", status.Errorf(codes.InvalidArgument,
 			"deployment_name is required"))
 	}
 
 	workspace, err := p.prepareWorkspaceWithUserStr(ctx, canUserStr)
 	if err != nil {
-		return p.sendInjectHandshakeErr(stream, "", err)
+		return p.sendHandshakeErr(msgStream, "", err)
 	}
+
+	tokenResp, err := p.server.Identity.GetUserAccessToken(ctx, &identityv1.GetUserAccessTokenRequest{
+		Username: canUserStr.Identity.Username,
+	})
+	if err != nil {
+		return p.sendHandshakeErr(msgStream, workspace.Name, status.Errorf(codes.Unauthenticated,
+			"failed to retrieve identity token for user %s: %v", canUserStr.Identity.Username, err))
+	}
+	if _, err := p.server.tokenVerifier.VerifyToken(tokenResp.AccessToken); err != nil {
+		return p.sendHandshakeErr(msgStream, workspace.Name, status.Errorf(codes.Unauthenticated,
+			"identity token for user %s is invalid: %v", canUserStr.Identity.Username, err))
+	}
+	workspace.SetIdentityToken(tokenResp.AccessToken)
 
 	// Send the initial handshake so the client knows the canonical workspace name.
 	if err := stream.Send(&provisionerv1.InjectWorkspaceResponse{
