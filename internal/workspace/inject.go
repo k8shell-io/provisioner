@@ -114,7 +114,7 @@ func (w *Workspace) Inject(ctx context.Context, opts *InjectOptions) (*models.Wo
 		Messages: opts.Messages,
 	}
 	pw := NewPodWatcher(w.client.KubeClient(), opts.Namespace, w.Name, w.log)
-	snap, err := pw.Watch(ctx, provisionOpts, true)
+	snap, err := pw.WatchByLabel(ctx, "k8shell.io/workspace="+w.Name, provisionOpts)
 	if err != nil {
 		return nil, fmt.Errorf("error watching injected pods: %w", err)
 	}

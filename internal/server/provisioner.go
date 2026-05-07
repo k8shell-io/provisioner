@@ -1006,3 +1006,266 @@ func (p *ProvisionerService) waitForWorkspacePodGone(ctx context.Context, name s
 		}
 	}
 }
+
+// sendInjectEvent sends a single ProvisionEvent wrapped in an InjectWorkspaceResponse to the stream.
+func (p *ProvisionerService) sendInjectEvent(
+	stream provisionerv1.ProvisionerService_InjectWorkspaceStreamServer,
+	event *provisionerv1.ProvisionEvent,
+) error {
+	err := stream.Send(&provisionerv1.InjectWorkspaceResponse{
+		Data: &provisionerv1.InjectWorkspaceResponse_Event{
+			Event: event,
+		},
+	})
+	if err != nil {
+		p.log.Error().Err(err).Msg("failed to send inject event")
+	}
+	return err
+}
+
+// sendInjectHandshakeErr sends a HandshakeResponse carrying an error and returns the send error (if any).
+func (p *ProvisionerService) sendInjectHandshakeErr(
+	stream provisionerv1.ProvisionerService_InjectWorkspaceStreamServer,
+	workspaceName string,
+	handshakeErr error,
+) error {
+	errx := stream.Send(&provisionerv1.InjectWorkspaceResponse{
+		Data: &provisionerv1.InjectWorkspaceResponse_Handshake{
+			Handshake: &provisionerv1.HandshakeResponse{
+				Workspace: workspaceName,
+				Error:     handshakeErr.Error(),
+			},
+		},
+	})
+	if errx != nil {
+		p.log.Error().Err(errx).Msg("failed to send inject handshake error")
+	}
+	return errx
+}
+
+// InjectWorkspaceStream injects a k8shell workspace as a sidecar into an existing
+// Deployment in the specified namespace and streams provisioning events back to
+// the caller until the injected pods are Running (or the timeout is reached).
+func (p *ProvisionerService) InjectWorkspaceStream(
+	req *provisionerv1.InjectWorkspaceRequest,
+	stream provisionerv1.ProvisionerService_InjectWorkspaceStreamServer,
+) error {
+	ctx := stream.Context()
+
+	timeout := int(req.TimeoutSeconds)
+	if timeout <= 0 {
+		timeout = 120
+	}
+
+	userstr, err := models.NewUserStr(req.Userstr, false)
+	if err != nil {
+		return p.sendInjectHandshakeErr(stream, "", status.Errorf(codes.InvalidArgument,
+			"invalid userstr format: %v", err))
+	}
+
+	canUserStr, err := userstr.Canonicalize()
+	if err != nil {
+		return p.sendInjectHandshakeErr(stream, "", status.Errorf(codes.InvalidArgument,
+			"failed to canonicalize userstr: %v", err))
+	}
+
+	if req.Namespace == "" {
+		return p.sendInjectHandshakeErr(stream, "", status.Errorf(codes.InvalidArgument,
+			"namespace is required"))
+	}
+	if req.DeploymentName == "" {
+		return p.sendInjectHandshakeErr(stream, "", status.Errorf(codes.InvalidArgument,
+			"deployment_name is required"))
+	}
+
+	workspace, err := p.prepareWorkspaceWithUserStr(ctx, canUserStr)
+	if err != nil {
+		return p.sendInjectHandshakeErr(stream, "", err)
+	}
+
+	// Send the initial handshake so the client knows the canonical workspace name.
+	if err := stream.Send(&provisionerv1.InjectWorkspaceResponse{
+		Data: &provisionerv1.InjectWorkspaceResponse_Handshake{
+			Handshake: &provisionerv1.HandshakeResponse{
+				Workspace: workspace.Name,
+			},
+		},
+	}); err != nil {
+		return fmt.Errorf("failed to send inject handshake: %w", err)
+	}
+
+	messages := make(chan models.WorkspaceStreamEvent, 100)
+	done := make(chan *models.WorkspaceStatus)
+	errorChan := make(chan error)
+	progressPct := 0
+	provisioningMilestones := []int{20, 40, 60, 75}
+	provisioningStep := 0
+
+	go func() {
+		defer close(done)
+		defer close(errorChan)
+
+		st, err := workspace.Inject(ctx, &ws.InjectOptions{
+			Namespace:      req.Namespace,
+			DeploymentName: req.DeploymentName,
+			Timeout:        timeout,
+			Messages:       messages,
+		})
+		if err != nil {
+			errorChan <- err
+			return
+		}
+		done <- st
+	}()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+
+		case msg, ok := <-messages:
+			if !ok {
+				continue
+			}
+			if msg.Type == models.WorkspaceStreamEventTypeStatus {
+				if err := p.sendInjectEvent(stream, &provisionerv1.ProvisionEvent{
+					Type:       string(models.WorkspaceStreamEventTypeStatus),
+					Timestamp:  msg.Timestamp,
+					ObjectName: msg.ObjectName,
+					Status:     string(msg.Status),
+					Message:    msg.Message,
+				}); err != nil {
+					p.log.Error().Err(err).Msg("failed to send inject status event")
+				}
+			}
+
+			if req.SendEvents && msg.Type == models.WorkspaceStreamEventTypeEvent {
+				if err := p.sendInjectEvent(stream, &provisionerv1.ProvisionEvent{
+					Type:       string(models.WorkspaceStreamEventTypeEvent),
+					Timestamp:  msg.Timestamp,
+					ObjectName: msg.ObjectName,
+					Message:    msg.Message,
+				}); err != nil {
+					p.log.Error().Err(err).Msg("failed to send inject event message")
+				}
+			}
+
+			if req.SendProgress && msg.Type == models.WorkspaceStreamEventTypeStatus {
+				var newPerc int
+				switch msg.Status {
+				case models.WorkspaceStatusProvisioning:
+					if provisioningStep < len(provisioningMilestones) {
+						newPerc = provisioningMilestones[provisioningStep]
+						provisioningStep++
+					}
+				case models.WorkspaceStatusPulling:
+					newPerc = 50
+				case models.WorkspaceStatusRunning:
+					newPerc = 100
+				}
+				if newPerc > progressPct {
+					progressPct = newPerc
+					if err := p.sendInjectEvent(stream, &provisionerv1.ProvisionEvent{
+						Type:       string(models.WorkspaceStreamEventTypeProgress),
+						Timestamp:  time.Now().Format("2006-01-02 15:04:05"),
+						ObjectName: workspace.Name,
+						Status:     fmt.Sprintf("%d", progressPct),
+						Message:    fmt.Sprintf("%d%% complete", progressPct),
+					}); err != nil {
+						p.log.Error().Err(err).Msg("failed to send inject progress event")
+					}
+				}
+			}
+
+		case st := <-done:
+			finalStatus := models.WorkspaceStatusUnknown
+			if st != nil {
+				finalStatus = st.Status
+			}
+			if err := p.sendInjectEvent(stream, &provisionerv1.ProvisionEvent{
+				Type:       string(models.WorkspaceStreamEventTypeStatus),
+				Timestamp:  time.Now().Format("2006-01-02 15:04:05"),
+				ObjectName: workspace.Name,
+				Status:     string(finalStatus),
+				Message:    st.Message,
+			}); err != nil {
+				p.log.Error().Err(err).Msg("failed to send final inject status event")
+			}
+			if req.SendProgress && progressPct < 100 {
+				_ = p.sendInjectEvent(stream, &provisionerv1.ProvisionEvent{
+					Type:       string(models.WorkspaceStreamEventTypeProgress),
+					Timestamp:  time.Now().Format("2006-01-02 15:04:05"),
+					ObjectName: workspace.Name,
+					Status:     "100",
+					Message:    "100% complete",
+				})
+			}
+			// Send the final WorkspaceStatus message.
+			_ = stream.Send(&provisionerv1.InjectWorkspaceResponse{
+				Data: &provisionerv1.InjectWorkspaceResponse_Status{
+					Status: gapi.WorkspaceStatusToProto(st),
+				},
+			})
+			return nil
+
+		case err := <-errorChan:
+			if err != nil {
+				_ = p.sendInjectEvent(stream, &provisionerv1.ProvisionEvent{
+					Type:       string(models.WorkspaceStreamEventTypeStatus),
+					Timestamp:  time.Now().Format("2006-01-02 15:04:05"),
+					ObjectName: workspace.Name,
+					Status:     string(models.WorkspaceStatusError),
+					Message:    err.Error(),
+				})
+			}
+			return nil
+		}
+	}
+}
+
+// EjectWorkspace removes a previously injected workspace from a Deployment and
+// deletes all supporting resources (ConfigMaps, PVCs, NetworkPolicies) in the
+// target namespace.
+func (p *ProvisionerService) EjectWorkspace(
+	ctx context.Context,
+	req *provisionerv1.EjectWorkspaceRequest,
+) (*provisionerv1.EjectWorkspaceResponse, error) {
+	if req.Namespace == "" {
+		return nil, status.Errorf(codes.InvalidArgument, "namespace is required")
+	}
+	if req.DeploymentName == "" {
+		return nil, status.Errorf(codes.InvalidArgument, "deployment_name is required")
+	}
+
+	userstr, err := models.NewUserStr(req.Userstr, false)
+	if err != nil {
+		return nil, status.Errorf(codes.InvalidArgument, "invalid userstr format: %v", err)
+	}
+
+	canUserStr, err := userstr.Canonicalize()
+	if err != nil {
+		return nil, status.Errorf(codes.InvalidArgument, "failed to canonicalize userstr: %v", err)
+	}
+
+	workspace, err := p.prepareWorkspaceWithUserStr(ctx, canUserStr)
+	if err != nil {
+		return nil, err
+	}
+
+	timeout := int(req.TimeoutSeconds)
+	if timeout <= 0 {
+		timeout = 60
+	}
+
+	if err := workspace.Eject(ctx, &ws.EjectOptions{
+		Namespace:      req.Namespace,
+		DeploymentName: req.DeploymentName,
+		Timeout:        timeout,
+	}); err != nil {
+		return nil, status.Errorf(codes.Internal, "failed to eject workspace %s: %v", workspace.Name, err)
+	}
+
+	return &provisionerv1.EjectWorkspaceResponse{
+		Workspace: workspace.Name,
+	}, nil
+}

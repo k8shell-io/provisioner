@@ -29,12 +29,16 @@ const (
 )
 
 // InjectionSpec holds the containers, init containers, volumes, and pod-template
-// labels extracted from a rendered workspace chart, ready for injection.
+// labels/annotations extracted from a rendered workspace chart, ready for injection.
 type InjectionSpec struct {
 	Containers     []corev1.Container
 	InitContainers []corev1.Container
 	Volumes        []corev1.Volume
 	PodLabels      map[string]string
+	// PodAnnotations carries key annotations (e.g. k8shell.io/userstr) from the
+	// rendered workspace pod so they can be added to the Deployment's pod template,
+	// enabling FindWorkspace/GetWorkspaces to discover injected workspaces by label.
+	PodAnnotations map[string]string
 }
 
 // WorkspaceResourcesFromTemplate renders the workspace Helm chart and extracts
@@ -147,11 +151,20 @@ func (c *Client) InjectionSpecFromTemplate(ctx context.Context, values map[strin
 		podLabels[k] = v
 	}
 
+	// Copy key annotations needed for workspace discovery on injected pods.
+	podAnnotations := make(map[string]string)
+	for _, key := range []string{"k8shell.io/userstr", "workspace.k8shell.io/splash"} {
+		if v, ok := pod.Annotations[key]; ok && v != "" {
+			podAnnotations[key] = v
+		}
+	}
+
 	return &InjectionSpec{
 		Containers:     containers,
 		InitContainers: initContainers,
 		Volumes:        volumes,
 		PodLabels:      podLabels,
+		PodAnnotations: podAnnotations,
 	}, nil
 }
 
@@ -191,11 +204,13 @@ func (c *Client) InjectIntoDeployment(ctx context.Context, namespace, deployment
 		Containers            []corev1.Container `json:"containers"`
 		Volumes               []corev1.Volume    `json:"volumes,omitempty"`
 	}
+	type templateMeta struct {
+		Labels      map[string]string `json:"labels,omitempty"`
+		Annotations map[string]string `json:"annotations,omitempty"`
+	}
 	type templatePatch struct {
-		Metadata struct {
-			Labels map[string]string `json:"labels,omitempty"`
-		} `json:"metadata,omitempty"`
-		Spec specPatch `json:"spec"`
+		Metadata templateMeta `json:"metadata,omitempty"`
+		Spec     specPatch    `json:"spec"`
 	}
 	type depPatch struct {
 		Metadata struct {
@@ -236,7 +251,10 @@ func (c *Client) InjectIntoDeployment(ctx context.Context, namespace, deployment
 		AnnotationInjectedVolumes:        strings.Join(volumeNames, ","),
 		AnnotationInjectedSharePID:       origSharePIDStr,
 	}
-	patch.Spec.Template.Metadata.Labels = spec.PodLabels
+	patch.Spec.Template.Metadata = templateMeta{
+		Labels:      spec.PodLabels,
+		Annotations: spec.PodAnnotations,
+	}
 	patch.Spec.Template.Spec = specPatch{
 		ShareProcessNamespace: &trueVal,
 		InitContainers:        spec.InitContainers,
@@ -307,6 +325,18 @@ func (c *Client) EjectFromDeployment(ctx context.Context, namespace, deploymentN
 		newPodLabels[k] = v
 	}
 
+	// Remove the workspace annotations that were injected into the pod template.
+	injectedAnnotationKeys := map[string]bool{
+		"k8shell.io/userstr":          true,
+		"workspace.k8shell.io/splash": true,
+	}
+	newPodAnnotations := make(map[string]string)
+	for k, v := range dep.Spec.Template.Annotations {
+		if !injectedAnnotationKeys[k] {
+			newPodAnnotations[k] = v
+		}
+	}
+
 	// Build a full replacement patch for spec.template (strategic merge patch
 	// cannot delete array elements by name — we must supply the complete lists).
 	type specPatch struct {
@@ -315,11 +345,13 @@ func (c *Client) EjectFromDeployment(ctx context.Context, namespace, deploymentN
 		Containers            []corev1.Container `json:"containers"`
 		Volumes               []corev1.Volume    `json:"volumes"`
 	}
+	type templateMeta struct {
+		Labels      map[string]string `json:"labels"`
+		Annotations map[string]string `json:"annotations"`
+	}
 	type templatePatch struct {
-		Metadata struct {
-			Labels map[string]string `json:"labels"`
-		} `json:"metadata"`
-		Spec specPatch `json:"spec"`
+		Metadata templateMeta `json:"metadata"`
+		Spec     specPatch    `json:"spec"`
 	}
 	type depPatch struct {
 		Metadata struct {
@@ -348,7 +380,10 @@ func (c *Client) EjectFromDeployment(ctx context.Context, namespace, deploymentN
 		AnnotationInjectedVolumes:        "",
 		AnnotationInjectedSharePID:       "",
 	}
-	patch.Spec.Template.Metadata.Labels = newPodLabels
+	patch.Spec.Template.Metadata = templateMeta{
+		Labels:      newPodLabels,
+		Annotations: newPodAnnotations,
+	}
 	patch.Spec.Template.Spec = specPatch{
 		ShareProcessNamespace: restorePID,
 		InitContainers:        newInit,

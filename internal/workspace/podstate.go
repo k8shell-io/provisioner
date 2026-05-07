@@ -1057,3 +1057,97 @@ func latestMountWarning(events map[types.UID]corev1.Event) string {
 	}
 	return latestMsg
 }
+
+// waitForPodByLabel returns the first non-terminating pod matching labelSelector
+// in pw.namespace, waiting for one to appear if none exist yet. ctx controls
+// the overall deadline; callers should set an appropriate timeout on ctx.
+func (pw *PodWatcher) waitForPodByLabel(ctx context.Context, labelSelector string) (*corev1.Pod, error) {
+	v1 := pw.kubeClient.CoreV1()
+
+	// Check if a matching pod already exists.
+	list, err := v1.Pods(pw.namespace).List(ctx, metav1.ListOptions{
+		LabelSelector: labelSelector,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to list pods with selector %q: %w", labelSelector, err)
+	}
+	for i := range list.Items {
+		if list.Items[i].DeletionTimestamp == nil {
+			pw.log.Debug().Str("pod", list.Items[i].Name).
+				Str("selector", labelSelector).
+				Msg("WatchByLabel: found existing pod")
+			return &list.Items[i], nil
+		}
+	}
+
+	// None yet — watch for the rolling-update pod to appear.
+	pw.log.Debug().Str("selector", labelSelector).Msg("WatchByLabel: no pod yet, watching for creation")
+	watcher, err := v1.Pods(pw.namespace).Watch(ctx, metav1.ListOptions{
+		LabelSelector:   labelSelector,
+		ResourceVersion: list.ResourceVersion,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to watch pods with selector %q: %w", labelSelector, err)
+	}
+	defer watcher.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return nil, fmt.Errorf("timeout waiting for pod with label %q to appear: %w", labelSelector, ctx.Err())
+		case evt, ok := <-watcher.ResultChan():
+			if !ok {
+				return nil, fmt.Errorf("watch channel closed while waiting for pod with label %q", labelSelector)
+			}
+			if evt.Type != watch.Added && evt.Type != watch.Modified {
+				continue
+			}
+			pod, ok := evt.Object.(*corev1.Pod)
+			if !ok || pod == nil || pod.DeletionTimestamp != nil {
+				continue
+			}
+			pw.log.Debug().Str("pod", pod.Name).Str("selector", labelSelector).
+				Msg("WatchByLabel: pod appeared")
+			return pod, nil
+		}
+	}
+}
+
+// WatchByLabel waits for the first pod matching labelSelector to appear in
+// pw.namespace, then watches it through its full lifecycle exactly like
+// Watch(waitForRunning=true), streaming status and event messages to opts.Messages.
+//
+// This is the correct method for injection mode, where the workspace containers
+// run inside a Deployment's pod (whose name is not known in advance — it is
+// assigned by the ReplicaSet controller when the rolling update fires).
+//
+// The pod-discovery phase uses half of opts.Timeout (min 30 s, max 90 s) so
+// that the remaining budget is available for the lifecycle watch.
+func (pw *PodWatcher) WatchByLabel(ctx context.Context, labelSelector string, opts *ProvisionOptions) (*PodStateSnapshot, error) {
+	// Allocate part of the timeout budget for pod discovery.
+	discoveryTimeout := 60 // seconds
+	if opts != nil && opts.Timeout > 0 {
+		half := opts.Timeout / 2
+		if half < 30 {
+			half = 30
+		}
+		if half > 90 {
+			half = 90
+		}
+		discoveryTimeout = half
+	}
+
+	discoveryCtx, cancel := context.WithTimeout(ctx, time.Duration(discoveryTimeout)*time.Second)
+	defer cancel()
+
+	pod, err := pw.waitForPodByLabel(discoveryCtx, labelSelector)
+	if err != nil {
+		return nil, fmt.Errorf("inject pod discovery failed: %w", err)
+	}
+
+	// Delegate the lifecycle watch to a named PodWatcher so all existing logic
+	// (AnalyzePod, emitSnapshot, watchLoop, etc.) is reused unchanged.
+	namedWatcher := NewPodWatcher(pw.kubeClient, pw.namespace, pod.Name, pw.log)
+	namedWatcher.CrashLoopThreshold = pw.CrashLoopThreshold
+	return namedWatcher.Watch(ctx, opts, true)
+}
