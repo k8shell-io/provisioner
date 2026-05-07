@@ -91,6 +91,18 @@ spec:
         value: {{ .Values.__user__.email }}
       - name: USERFULLNAME
         value: {{ .Values.__user__.fullname }}
+      {{- if .Values.__jwtverifierpublickey__ }}
+      - name: JWT_VERIFIER_PUBLIC_KEY
+        value: {{ .Values.__jwtverifierpublickey__ | b64enc | quote }}
+      {{- end }}
+      {{- if .Values.__jwtverifiersigningmethod__ }}
+      - name: JWT_VERIFIER_SIGNING_METHOD
+        value: {{ .Values.__jwtverifiersigningmethod__ | quote }}
+      {{- end }}
+      {{- if .Values.__identitytoken__ }}
+      - name: IDENTITY_TOKEN
+        value: {{ .Values.__identitytoken__ | quote }}
+      {{- end }}
       {{- if .Values.env }}    
       {{- range $envName, $envValue := .Values.env }}            
       - name: {{ $envName }}
@@ -143,12 +155,7 @@ spec:
         mountPath: /etc/tls/k8shelld
         readOnly: true
       {{- end }}
-      - name: identity-token-volume
-        mountPath: /run/secrets/identity-token
-        readOnly: true
-      - name: jwt-verifier-volume
-        mountPath: /run/secrets/jwt-verifier
-        readOnly: true
+
 
     #### podman engine container
     {{- if ($podman.enabled | default false) }}
@@ -309,12 +316,6 @@ spec:
     secret:
       secretName: {{ .Values.__workspace__ }}-tls
   {{- end }}
-  - name: identity-token-volume
-    secret:
-      secretName: identity-token-{{ .Values.__username__ }}
-  - name: jwt-verifier-volume
-    secret:
-      secretName: jwt-verifier
 
   {{- if .Values.affinity }}
   affinity:

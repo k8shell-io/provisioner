@@ -108,12 +108,6 @@ func (c *Client) EnsureBase(ctx context.Context) error {
 		"io.k8shell.provisioner/commit": c.Commit,
 	}
 
-	if err := c.applySecret(ctx, "jwt-verifier", labels, corev1.SecretTypeOpaque, map[string][]byte{
-		"public-key.pem": []byte(c.JWTVerifierPublicKey),
-	}); err != nil {
-		return fmt.Errorf("failed to apply jwt-verifier secret: %w", err)
-	}
-
 	registryValues := c.Registry.ToValues()
 
 	if dockerConfigJson, ok := registryValues["dockerConfigJson"].(string); ok && dockerConfigJson != "" {
