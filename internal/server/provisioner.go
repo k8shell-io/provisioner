@@ -310,6 +310,7 @@ func (p *ProvisionerService) ProvisionWorkspaceStream(
 		return p.sendProvisionHandshakeErr(stream, workspace.Name, status.Errorf(codes.Unauthenticated,
 			"identity token for user %s is invalid: %v", canUserStr.Identity.Username, err))
 	}
+	workspace.SetIdentityToken(tokenResp.AccessToken)
 
 	exists, st, err := workspace.ExistsAndRunning(ctx)
 	if err != nil {
