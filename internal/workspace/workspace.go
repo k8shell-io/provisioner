@@ -20,6 +20,7 @@ import (
 	"gopkg.in/yaml.v3"
 	"helm.sh/helm/v3/pkg/release"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	k8sErrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
@@ -136,62 +137,102 @@ func FindWorkspace(ctx context.Context, helmClient *helm.Client, workspace strin
 	return ws.Workspaces[0], &ws.Pods[0], nil
 }
 
-// GetWorkspaces lists workspace pods matching optional filters and returns status details
-// similar to GetWorkspaceStatus, without fetching Service/Secret per workspace.
-func GetWorkspaces(ctx context.Context, helmClient *helm.Client,
-	opts GetWorkspacesOptions) (*GetWorkspacesResult, error) {
-
-	labels := map[string]string{}
-	labels["k8shell.io/type"] = "workspace"
-
-	if opts.Username != "" {
-		labels["k8shell.io/username"] = opts.Username
-	}
-	if opts.Workspace != "" {
-		labels["k8shell.io/workspace"] = opts.Workspace
-	}
-	if opts.Organization != "" {
-		labels["k8shell.io/organization"] = opts.Organization
-	}
-	if opts.Blueprint != "" {
-		labels["k8shell.io/blueprint"] = opts.Blueprint
+func podMatchesWorkspaceFilters(p *corev1.Pod, opts GetWorkspacesOptions, injected bool) bool {
+	if p == nil {
+		return false
 	}
 
-	selector := getSelector(labels)
+	lbls := p.Labels
+
+	if injected {
+		if lbls[helm.LabelInjected] != "true" {
+			return false
+		}
+	} else {
+		if lbls["k8shell.io/type"] != "workspace" {
+			return false
+		}
+	}
+
+	if opts.Username != "" && lbls["k8shell.io/username"] != opts.Username {
+		return false
+	}
+	if opts.Organization != "" && lbls["k8shell.io/organization"] != opts.Organization {
+		return false
+	}
+	if opts.Blueprint != "" && lbls["k8shell.io/blueprint"] != opts.Blueprint {
+		return false
+	}
+
+	return true
+}
+
+func GetWorkspaces(
+	ctx context.Context,
+	helmClient *helm.Client,
+	opts GetWorkspacesOptions,
+) (*GetWorkspacesResult, error) {
 	v1 := helmClient.KubeClient().CoreV1()
 	namespace := helmClient.TargetNamespace()
 
-	podList, err := v1.Pods(namespace).List(ctx, metav1.ListOptions{
-		LabelSelector: selector,
-	})
-	if err != nil {
-		if strings.Contains(err.Error(), "unable to parse") {
-			return nil, fmt.Errorf("%w: %s", models.ErrInvalidParameters, selector)
+	out := make([]*models.WorkspaceDetails, 0)
+	pods := make([]corev1.Pod, 0)
+
+	if opts.Workspace != "" {
+		p, err := v1.Pods(namespace).Get(ctx, opts.Workspace, metav1.GetOptions{})
+		if err != nil && !apierrors.IsNotFound(err) {
+			return nil, fmt.Errorf("failed to get workspace pod %q: %w", opts.Workspace, err)
 		}
-		return nil, fmt.Errorf("failed to list workspace pods: %w", err)
+		if err == nil && podMatchesWorkspaceFilters(p, opts, false) {
+			if d := WorkspaceDetailsFromPod(p); d != nil {
+				out = append(out, d)
+				pods = append(pods, *p)
+			}
+		}
+	} else {
+		labels := map[string]string{
+			"k8shell.io/type": "workspace",
+		}
+		if opts.Username != "" {
+			labels["k8shell.io/username"] = opts.Username
+		}
+		if opts.Organization != "" {
+			labels["k8shell.io/organization"] = opts.Organization
+		}
+		if opts.Blueprint != "" {
+			labels["k8shell.io/blueprint"] = opts.Blueprint
+		}
+		selector := getSelector(labels)
+
+		podList, err := v1.Pods(namespace).List(ctx, metav1.ListOptions{
+			LabelSelector: selector,
+		})
+		if err != nil {
+			if strings.Contains(err.Error(), "unable to parse") {
+				return nil, fmt.Errorf("%w: %s", models.ErrInvalidParameters, selector)
+			}
+			return nil, fmt.Errorf("failed to list workspace pods: %w", err)
+		}
+
+		for i := range podList.Items {
+			p := &podList.Items[i]
+			if !podMatchesWorkspaceFilters(p, opts, false) {
+				continue
+			}
+			d := WorkspaceDetailsFromPod(p)
+			if d == nil {
+				continue
+			}
+			out = append(out, d)
+			pods = append(pods, *p)
+		}
 	}
 
-	out := make([]*models.WorkspaceDetails, 0, len(podList.Items))
-	for i := range podList.Items {
-		p := &podList.Items[i]
-		d := WorkspaceDetailsFromPod(p)
-		if d == nil {
-			continue
-		}
-		out = append(out, d)
-	}
-
-	// Also search all namespaces for pods injected into external Deployments.
-	// Injected pods carry k8shell.io/injected=true (not k8shell.io/type=workspace,
-	// which is unsafe to stamp on arbitrary Deployments). Build a separate selector.
 	injectedLabels := map[string]string{
 		helm.LabelInjected: "true",
 	}
 	if opts.Username != "" {
 		injectedLabels["k8shell.io/username"] = opts.Username
-	}
-	if opts.Workspace != "" {
-		injectedLabels["k8shell.io/workspace"] = opts.Workspace
 	}
 	if opts.Organization != "" {
 		injectedLabels["k8shell.io/organization"] = opts.Organization
@@ -200,35 +241,49 @@ func GetWorkspaces(ctx context.Context, helmClient *helm.Client,
 		injectedLabels["k8shell.io/blueprint"] = opts.Blueprint
 	}
 	injectedSelector := getSelector(injectedLabels)
+
 	injectedList, err := v1.Pods("").List(ctx, metav1.ListOptions{
 		LabelSelector: injectedSelector,
 	})
 	if err == nil {
-		// Deduplicate by workspace name: prefer a Running pod over others.
-		seen := make(map[string]*models.WorkspaceDetails, len(injectedList.Items))
+		type wsd struct {
+			ws *models.WorkspaceDetails
+			p  *corev1.Pod
+		}
+
+		seen := make(map[string]*wsd, len(injectedList.Items))
 		for i := range injectedList.Items {
 			ip := &injectedList.Items[i]
 			if ip.Namespace == namespace {
-				continue // already handled above as standalone pod
+				continue
 			}
+			if opts.Workspace != "" && ip.Name != opts.Workspace {
+				continue
+			}
+			if !podMatchesWorkspaceFilters(ip, opts, true) {
+				continue
+			}
+
 			d := WorkspaceDetailsFromInjectedPod(ip)
 			if d == nil {
 				continue
 			}
+
 			prev, exists := seen[d.Name]
 			if !exists || d.Status == models.WorkspaceStatusRunning {
-				seen[d.Name] = d
+				seen[d.Name] = &wsd{ws: d, p: ip}
 				_ = prev
 			}
 		}
 		for _, d := range seen {
-			out = append(out, d)
+			out = append(out, d.ws)
+			pods = append(pods, *d.p)
 		}
 	}
 
 	return &GetWorkspacesResult{
 		Workspaces: out,
-		Pods:       podList.Items,
+		Pods:       pods,
 	}, nil
 }
 
