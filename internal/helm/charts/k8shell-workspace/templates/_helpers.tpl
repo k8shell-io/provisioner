@@ -94,7 +94,7 @@ k8shell.io/job-id: "{{ .Values.__jobid__ }}"
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
-  name: "pvc-{{ .Release.Name }}-{{ .pvcPrefix }}{{ .name }}"
+  name: "pvc-{{ .ctx.Release.Name }}-{{ .pvcPrefix }}{{ .name }}"
   namespace: {{ .ctx.Release.Namespace }} 
   {{- if .storage.claimSpecAnnotations }}
   annotations:

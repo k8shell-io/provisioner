@@ -268,16 +268,6 @@ func (w provisionHandshakeSender) sendHandshake(h *provisionerv1.HandshakeRespon
 	})
 }
 
-type injectHandshakeSender struct {
-	s provisionerv1.ProvisionerService_InjectWorkspaceStreamServer
-}
-
-func (w injectHandshakeSender) sendHandshake(h *provisionerv1.HandshakeResponse) error {
-	return w.s.Send(&provisionerv1.InjectWorkspaceResponse{
-		Data: &provisionerv1.InjectWorkspaceResponse_Handshake{Handshake: h},
-	})
-}
-
 func (p *ProvisionerService) sendHandshakeErr(sender handshakeErrSender, workspaceName string, handshakeErr error) error {
 	errx := sender.sendHandshake(&provisionerv1.HandshakeResponse{
 		Workspace: workspaceName,
@@ -294,28 +284,35 @@ func (p *ProvisionerService) ProvisionWorkspaceStream(
 	req *provisionerv1.ProvisionWorkspaceRequest,
 	stream provisionerv1.ProvisionerService_ProvisionWorkspaceStreamServer,
 ) error {
-
 	var job *ProvisionJobServer
 	ctx := stream.Context()
 	msgStream := provisionHandshakeSender{stream}
 
+	parsedUserStr, err := userstr.ParseUserStr(req.Userstr)
+	if err != nil {
+		return p.sendHandshakeErr(msgStream, "", status.Errorf(codes.InvalidArgument,
+			"invalid userstr format: %v", err))
+	}
+
+	canUserStr, err := parsedUserStr.Canonicalize()
+	if err != nil {
+		return p.sendHandshakeErr(msgStream, "", status.Errorf(codes.InvalidArgument,
+			"failed to canonicalize userstr: %v", err))
+	}
+
+	identity := canUserStr.Identity()
+	workspaceNamespace := parsedUserStr.Namespace("")
+	podName := parsedUserStr.Pod()
+	injectMode := workspaceNamespace != "" && podName != ""
+
 	timeout := int(req.Timeout)
 	if timeout <= 0 {
-		timeout = 20
+		if injectMode {
+			timeout = 120
+		} else {
+			timeout = 20
+		}
 	}
-
-	userstr, err := userstr.ParseUserStr(req.Userstr)
-	if err != nil {
-		return p.sendHandshakeErr(msgStream, "", status.Errorf(codes.InvalidArgument,
-			"Invalid userstr format: %v", err))
-	}
-
-	canUserStr, err := userstr.Canonicalize()
-	if err != nil {
-		return p.sendHandshakeErr(msgStream, "", status.Errorf(codes.InvalidArgument,
-			"Failed to canonicalize userstr: %v", err))
-	}
-	identity := canUserStr.Identity()
 
 	workspace, err := p.prepareWorkspaceWithUserStr(ctx, canUserStr)
 	if err != nil {
@@ -335,19 +332,24 @@ func (p *ProvisionerService) ProvisionWorkspaceStream(
 	}
 	workspace.SetIdentityToken(tokenResp.AccessToken)
 
-	exists, st, err := workspace.ExistsAndRunning(ctx)
-	if err != nil {
-		return p.sendHandshakeErr(msgStream, workspace.Name, status.Errorf(codes.Internal,
-			"Failed to check if workspace can be provisioned: %v", err))
-	}
-	if exists {
-		return p.sendHandshakeErr(msgStream, workspace.Name, status.Errorf(codes.AlreadyExists,
-			"Workspace %s already exists and is running", workspace.Name))
-	}
+	deploymentName := ""
+	if injectMode {
+		deploymentName, err = p.resolveDeploymentNameFromPod(ctx, workspaceNamespace, podName)
+		if err != nil {
+			return p.sendHandshakeErr(msgStream, workspace.Name, err)
+		}
+	} else {
+		exists, st, err := workspace.ExistsAndRunning(ctx)
+		if err != nil {
+			return p.sendHandshakeErr(msgStream, workspace.Name, status.Errorf(codes.Internal,
+				"Failed to check if workspace can be provisioned: %v", err))
+		}
+		if exists {
+			return p.sendHandshakeErr(msgStream, workspace.Name, status.Errorf(codes.AlreadyExists,
+				"Workspace %s already exists and is running", workspace.Name))
+		}
 
-	if st != nil {
-		if st.Status == models.WorkspaceStatusTerminating {
-			// Pod is actively being deleted — wait for it to disappear before reprovisioning.
+		if st != nil && st.Status == models.WorkspaceStatusTerminating {
 			p.log.Debug().Msgf("Workspace %s is terminating, waiting for pod to be gone", workspace.Name)
 			waitDur := time.Duration(timeout) * time.Second
 			if err := p.waitForWorkspacePodGone(ctx, workspace.Name, waitDur); err != nil {
@@ -356,8 +358,7 @@ func (p *ProvisionerService) ProvisionWorkspaceStream(
 			}
 			p.log.Debug().Msgf("Workspace %s deletion detected, proceeding with provisioning", workspace.Name)
 		}
-		// WorkspaceStatusStopped (PodSucceeded) is a final state — the pod will never self-delete.
-		// Provision() handles it by recycling the pod directly via doStart().
+
 	}
 
 	if p.server.provisionJobsKV != nil {
@@ -366,15 +367,12 @@ func (p *ProvisionerService) ProvisionWorkspaceStream(
 		job.SetStatus(models.ProvisionJobRunning)
 	}
 
-	err = stream.Send(&provisionerv1.ProvisionWorkspaceResponse{
-		Data: &provisionerv1.ProvisionWorkspaceResponse_Handshake{
-			Handshake: &provisionerv1.HandshakeResponse{
-				Workspace: workspace.Name,
-				Jobid:     workspace.JobId,
-			},
-		},
-	})
-	if err != nil {
+	if err := stream.Send(&provisionerv1.ProvisionWorkspaceResponse{
+		Data: &provisionerv1.ProvisionWorkspaceResponse_Handshake{Handshake: &provisionerv1.HandshakeResponse{
+			Workspace: workspace.Name,
+			Jobid:     workspace.JobId,
+		}},
+	}); err != nil {
 		return fmt.Errorf("failed to send handshake response: %w", err)
 	}
 
@@ -389,18 +387,35 @@ func (p *ProvisionerService) ProvisionWorkspaceStream(
 		defer close(done)
 		defer close(errorChan)
 
-		status, err := workspace.Provision(ctx, &ws.ProvisionOptions{
-			Timeout:  timeout,
-			Messages: messages,
-		})
-
-		if err != nil {
-			errorChan <- err
-			return
+		var st *models.WorkspaceStatus
+		var runErr error
+		if injectMode {
+			st, runErr = workspace.Inject(ctx, &ws.InjectOptions{
+				Namespace:            workspaceNamespace,
+				DeploymentName:       deploymentName,
+				WorkspaceCanonicalId: canUserStr.CanonicalId(),
+				Timeout:              timeout,
+				Messages:             messages,
+			})
+		} else {
+			st, runErr = workspace.Provision(ctx, &ws.ProvisionOptions{
+				Timeout:  timeout,
+				Messages: messages,
+			})
 		}
 
-		done <- status
+		if runErr != nil {
+			errorChan <- runErr
+			return
+		}
+		done <- st
 	}()
+
+	emitEvent := func(ev *provisionerv1.ProvisionEvent) {
+		if err := p.sendProvisionEvent(stream, job, ev); err != nil {
+			p.log.Error().Err(err).Msg("failed to send stream event")
+		}
+	}
 
 	for {
 		select {
@@ -411,27 +426,24 @@ func (p *ProvisionerService) ProvisionWorkspaceStream(
 			if !ok {
 				continue
 			}
+
 			if msg.Type == models.WorkspaceStreamEventTypeStatus {
-				if err := p.sendProvisionEvent(stream, job, &provisionerv1.ProvisionEvent{
+				emitEvent(&provisionerv1.ProvisionEvent{
 					Type:       string(models.WorkspaceStreamEventTypeStatus),
 					Timestamp:  msg.Timestamp,
 					ObjectName: msg.ObjectName,
 					Status:     string(msg.Status),
 					Message:    msg.Message,
-				}); err != nil {
-					p.log.Error().Err(err).Msg("Failed to send provision event message")
-				}
+				})
 			}
 
 			if req.SendEvents && msg.Type == models.WorkspaceStreamEventTypeEvent {
-				if err := p.sendProvisionEvent(stream, job, &provisionerv1.ProvisionEvent{
+				emitEvent(&provisionerv1.ProvisionEvent{
 					Type:       string(models.WorkspaceStreamEventTypeEvent),
 					Timestamp:  msg.Timestamp,
 					ObjectName: msg.ObjectName,
 					Message:    msg.Message,
-				}); err != nil {
-					p.log.Error().Err(err).Msg("Failed to send provision event message")
-				}
+				})
 			}
 
 			if req.SendProgress && msg.Type == models.WorkspaceStreamEventTypeStatus {
@@ -449,63 +461,56 @@ func (p *ProvisionerService) ProvisionWorkspaceStream(
 				}
 				if newPerc > progressPct {
 					progressPct = newPerc
-					if err := p.sendProvisionEvent(stream, job, &provisionerv1.ProvisionEvent{
+					emitEvent(&provisionerv1.ProvisionEvent{
 						Type:       string(models.WorkspaceStreamEventTypeProgress),
 						Timestamp:  time.Now().Format("2006-01-02 15:04:05"),
 						ObjectName: workspace.Name,
 						Status:     fmt.Sprintf("%d", progressPct),
 						Message:    fmt.Sprintf("%d%% complete", progressPct),
-					}); err != nil {
-						p.log.Error().Err(err).Msg("Failed to send provision progress event")
-					}
+					})
 				}
 			}
 
-		case status := <-done:
-			st := models.WorkspaceStatusUnknown
-			if status != nil {
-				st = status.Status
+		case st := <-done:
+			finalStatus := models.WorkspaceStatusUnknown
+			finalMessage := ""
+			if st != nil {
+				finalStatus = st.Status
+				finalMessage = st.Message
 			}
-			p.log.Debug().Msgf("Provisioning process completed for workspace %s with final status: %s",
-				workspace.Name, status.Status)
-			if err := p.sendProvisionEvent(stream, job, &provisionerv1.ProvisionEvent{
+
+			emitEvent(&provisionerv1.ProvisionEvent{
 				Type:       string(models.WorkspaceStreamEventTypeStatus),
 				Timestamp:  time.Now().Format("2006-01-02 15:04:05"),
 				ObjectName: workspace.Name,
-				Status:     string(st),
-				Message:    status.Message,
-			}); err != nil {
-				p.log.Error().Err(err).Msg("Failed to send provision status event")
-			}
+				Status:     string(finalStatus),
+				Message:    finalMessage,
+			})
+
 			if req.SendProgress && progressPct < 100 {
-				if err := p.sendProvisionEvent(stream, job, &provisionerv1.ProvisionEvent{
+				emitEvent(&provisionerv1.ProvisionEvent{
 					Type:       string(models.WorkspaceStreamEventTypeProgress),
 					Timestamp:  time.Now().Format("2006-01-02 15:04:05"),
 					ObjectName: workspace.Name,
 					Status:     "100",
 					Message:    "100% complete",
-				}); err != nil {
-					p.log.Error().Err(err).Msg("Failed to send provision progress event")
-				}
+				})
 			}
+
 			if job != nil {
 				job.SetStatus(models.ProvisionJobCompleted)
 			}
 			return nil
 
-		case err := <-errorChan:
-			p.log.Debug().Msgf("Provisioning process completed for workspace %s with error: %v",
-				workspace.Name, err)
-			if err != nil {
-				if err := p.sendProvisionEvent(stream, job, &provisionerv1.ProvisionEvent{
+		case runErr := <-errorChan:
+			if runErr != nil {
+				emitEvent(&provisionerv1.ProvisionEvent{
 					Type:       string(models.WorkspaceStreamEventTypeStatus),
 					Timestamp:  time.Now().Format("2006-01-02 15:04:05"),
 					ObjectName: workspace.Name,
 					Status:     string(models.WorkspaceStatusError),
-					Message:    err.Error(),
-				}); err != nil {
-					p.log.Error().Err(err).Msg("Failed to send provision error event")
-				}
+					Message:    runErr.Error(),
+				})
 			}
 			if job != nil {
 				job.SetStatus(models.ProvisionJobCompleted)
@@ -1037,219 +1042,6 @@ func (p *ProvisionerService) waitForWorkspacePodGone(ctx context.Context, name s
 		case <-wctx.Done():
 			return fmt.Errorf("timeout waiting for workspace pod %s to be deleted: %w", name, wctx.Err())
 		case <-ticker.C:
-		}
-	}
-}
-
-// sendInjectEvent sends a single ProvisionEvent wrapped in an InjectWorkspaceResponse to the stream.
-func (p *ProvisionerService) sendInjectEvent(
-	stream provisionerv1.ProvisionerService_InjectWorkspaceStreamServer,
-	event *provisionerv1.ProvisionEvent,
-) error {
-	err := stream.Send(&provisionerv1.InjectWorkspaceResponse{
-		Data: &provisionerv1.InjectWorkspaceResponse_Event{
-			Event: event,
-		},
-	})
-	if err != nil {
-		p.log.Error().Err(err).Msg("failed to send inject event")
-	}
-	return err
-}
-
-// InjectWorkspaceStream injects a k8shell workspace as a sidecar into an existing
-// Deployment in the specified namespace and streams provisioning events back to
-// the caller until the injected pods are Running (or the timeout is reached).
-func (p *ProvisionerService) InjectWorkspaceStream(
-	req *provisionerv1.InjectWorkspaceRequest,
-	stream provisionerv1.ProvisionerService_InjectWorkspaceStreamServer,
-) error {
-	ctx := stream.Context()
-	msgStream := injectHandshakeSender{stream}
-
-	timeout := int(req.TimeoutSeconds)
-	if timeout <= 0 {
-		timeout = 120
-	}
-
-	userstr, err := userstr.ParseUserStr(req.Userstr)
-	if err != nil {
-		return p.sendHandshakeErr(msgStream, "", status.Errorf(codes.InvalidArgument,
-			"invalid userstr format: %v", err))
-	}
-
-	if userstr.Namespace("") == "" || userstr.Pod() == "" {
-		return p.sendHandshakeErr(msgStream, "", status.Errorf(codes.InvalidArgument,
-			"userstr must include both pod and namespace for injection"))
-	}
-
-	canUserStr, err := userstr.Canonicalize()
-	if err != nil {
-		return p.sendHandshakeErr(msgStream, "", status.Errorf(codes.InvalidArgument,
-			"failed to canonicalize userstr: %v", err))
-	}
-	identity := canUserStr.Identity()
-
-	workspace, err := p.prepareWorkspaceWithUserStr(ctx, canUserStr)
-	if err != nil {
-		return p.sendHandshakeErr(msgStream, "", err)
-	}
-
-	deploymentName, err := p.resolveDeploymentNameFromPod(ctx, userstr.Namespace(""), userstr.Pod())
-	if err != nil {
-		return p.sendHandshakeErr(msgStream, workspace.Name, err)
-	}
-
-	tokenResp, err := p.server.Identity.GetUserAccessToken(ctx, &identityv1.GetUserAccessTokenRequest{
-		Username: identity.Username(),
-	})
-	if err != nil {
-		return p.sendHandshakeErr(msgStream, workspace.Name, status.Errorf(codes.Unauthenticated,
-			"failed to retrieve identity token for user %s: %v", identity.Username(), err))
-	}
-	if _, err := p.server.tokenVerifier.VerifyToken(tokenResp.AccessToken); err != nil {
-		return p.sendHandshakeErr(msgStream, workspace.Name, status.Errorf(codes.Unauthenticated,
-			"identity token for user %s is invalid: %v", identity.Username(), err))
-	}
-	workspace.SetIdentityToken(tokenResp.AccessToken)
-
-	// Send the initial handshake so the client knows the canonical workspace name.
-	if err := stream.Send(&provisionerv1.InjectWorkspaceResponse{
-		Data: &provisionerv1.InjectWorkspaceResponse_Handshake{
-			Handshake: &provisionerv1.HandshakeResponse{
-				Workspace: workspace.Name,
-			},
-		},
-	}); err != nil {
-		return fmt.Errorf("failed to send inject handshake: %w", err)
-	}
-
-	messages := make(chan models.WorkspaceStreamEvent, 100)
-	done := make(chan *models.WorkspaceStatus)
-	errorChan := make(chan error)
-	progressPct := 0
-	provisioningMilestones := []int{20, 40, 60, 75}
-	provisioningStep := 0
-
-	go func() {
-		defer close(done)
-		defer close(errorChan)
-
-		st, err := workspace.Inject(ctx, &ws.InjectOptions{
-			Namespace:            userstr.Namespace(""),
-			DeploymentName:       deploymentName,
-			WorkspaceCanonicalId: canUserStr.CanonicalId(),
-			Timeout:              timeout,
-			Messages:             messages,
-		})
-		if err != nil {
-			errorChan <- err
-			return
-		}
-		done <- st
-	}()
-
-	for {
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-
-		case msg, ok := <-messages:
-			if !ok {
-				continue
-			}
-			if msg.Type == models.WorkspaceStreamEventTypeStatus {
-				if err := p.sendInjectEvent(stream, &provisionerv1.ProvisionEvent{
-					Type:       string(models.WorkspaceStreamEventTypeStatus),
-					Timestamp:  msg.Timestamp,
-					ObjectName: msg.ObjectName,
-					Status:     string(msg.Status),
-					Message:    msg.Message,
-				}); err != nil {
-					p.log.Error().Err(err).Msg("failed to send inject status event")
-				}
-			}
-
-			if req.SendEvents && msg.Type == models.WorkspaceStreamEventTypeEvent {
-				if err := p.sendInjectEvent(stream, &provisionerv1.ProvisionEvent{
-					Type:       string(models.WorkspaceStreamEventTypeEvent),
-					Timestamp:  msg.Timestamp,
-					ObjectName: msg.ObjectName,
-					Message:    msg.Message,
-				}); err != nil {
-					p.log.Error().Err(err).Msg("failed to send inject event message")
-				}
-			}
-
-			if req.SendProgress && msg.Type == models.WorkspaceStreamEventTypeStatus {
-				var newPerc int
-				switch msg.Status {
-				case models.WorkspaceStatusProvisioning:
-					if provisioningStep < len(provisioningMilestones) {
-						newPerc = provisioningMilestones[provisioningStep]
-						provisioningStep++
-					}
-				case models.WorkspaceStatusPulling:
-					newPerc = 50
-				case models.WorkspaceStatusRunning:
-					newPerc = 100
-				}
-				if newPerc > progressPct {
-					progressPct = newPerc
-					if err := p.sendInjectEvent(stream, &provisionerv1.ProvisionEvent{
-						Type:       string(models.WorkspaceStreamEventTypeProgress),
-						Timestamp:  time.Now().Format("2006-01-02 15:04:05"),
-						ObjectName: workspace.Name,
-						Status:     fmt.Sprintf("%d", progressPct),
-						Message:    fmt.Sprintf("%d%% complete", progressPct),
-					}); err != nil {
-						p.log.Error().Err(err).Msg("failed to send inject progress event")
-					}
-				}
-			}
-
-		case st := <-done:
-			finalStatus := models.WorkspaceStatusUnknown
-			if st != nil {
-				finalStatus = st.Status
-			}
-			if err := p.sendInjectEvent(stream, &provisionerv1.ProvisionEvent{
-				Type:       string(models.WorkspaceStreamEventTypeStatus),
-				Timestamp:  time.Now().Format("2006-01-02 15:04:05"),
-				ObjectName: workspace.Name,
-				Status:     string(finalStatus),
-				Message:    st.Message,
-			}); err != nil {
-				p.log.Error().Err(err).Msg("failed to send final inject status event")
-			}
-			if req.SendProgress && progressPct < 100 {
-				_ = p.sendInjectEvent(stream, &provisionerv1.ProvisionEvent{
-					Type:       string(models.WorkspaceStreamEventTypeProgress),
-					Timestamp:  time.Now().Format("2006-01-02 15:04:05"),
-					ObjectName: workspace.Name,
-					Status:     "100",
-					Message:    "100% complete",
-				})
-			}
-			// Send the final WorkspaceStatus message.
-			_ = stream.Send(&provisionerv1.InjectWorkspaceResponse{
-				Data: &provisionerv1.InjectWorkspaceResponse_Status{
-					Status: gapi.WorkspaceStatusToProto(st),
-				},
-			})
-			return nil
-
-		case err := <-errorChan:
-			if err != nil {
-				_ = p.sendInjectEvent(stream, &provisionerv1.ProvisionEvent{
-					Type:       string(models.WorkspaceStreamEventTypeStatus),
-					Timestamp:  time.Now().Format("2006-01-02 15:04:05"),
-					ObjectName: workspace.Name,
-					Status:     string(models.WorkspaceStatusError),
-					Message:    err.Error(),
-				})
-			}
-			return nil
 		}
 	}
 }

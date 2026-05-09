@@ -1,6 +1,7 @@
 {{- $podman := .Values.podman | default dict -}}
 {{- $defaultSecurityContext := dict "runAsUser" 0 "runAsGroup" 0 -}}
 {{- $securityContext := merge (dict) (.Values.securityContext | default dict) $defaultSecurityContext -}}
+{{- $releaseName := .Release.Name }}
 
 apiVersion: v1
 kind: Pod
@@ -265,7 +266,7 @@ spec:
       claimName: pvc-{{ $storageName }}{{- if $storage.id }}-{{ $storage.id }}{{- end }}
     {{- else }}
     persistentVolumeClaim:
-      claimName: pvc-{{ .Release.Name }}-{{ $storageName }}
+      claimName: pvc-{{ $releaseName }}-{{ $storageName }}
     {{- end }}
   {{- end }}
   {{- end }}
@@ -275,14 +276,14 @@ spec:
   {{- if and $storage (kindIs "map" $storage) ($storage.enabled | default false) }}
   - name: storage-podman-{{ $storageName }}
     persistentVolumeClaim:
-      claimName: pvc-{{ .Release.Name }}-podman-{{ $storageName }}
+      claimName: pvc-{{ $releaseName }}-podman-{{ $storageName }}
   {{- end }}
   {{- end }}
   {{- end }}
   {{- if .Values.extFiles }}
   - name: main-ext-files-volume
     configMap:
-      name: {{ .Release.Name }}-main-ext-files
+      name: {{ $releaseName }}-main-ext-files
       items:
         {{- range $path, $content := .Values.extFiles }}
         - key: {{ $path | replace "/" "__" | quote }}
@@ -295,7 +296,7 @@ spec:
   {{- if $podman.extFiles }}
   - name: podman-ext-files-volume
     configMap:
-      name: {{ .Release.Name }}-podman-ext-files
+      name: {{ $releaseName }}-podman-ext-files
       items:
         {{- range $path, $content := $podman.extFiles }}
         - key: {{ $path | replace "/" "__" | quote }}

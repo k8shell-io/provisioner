@@ -553,7 +553,7 @@ func (w *Workspace) Template(ctx context.Context) (string, error) {
 	values["__manifesthash__"] = ""
 
 	out, err := w.client.Template(ctx, helm.WORKSPACE_CHART_NAME, helm.InstallOptions{
-		ReleaseName: w.blueprint.Name,
+		ReleaseName: w.Name,
 		Values:      values,
 	})
 	if err != nil {
