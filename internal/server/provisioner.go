@@ -16,6 +16,7 @@ import (
 	"github.com/k8shell-io/common/pkg/gapi"
 	"github.com/k8shell-io/common/pkg/models"
 	natsc "github.com/k8shell-io/common/pkg/nats"
+	"github.com/k8shell-io/common/pkg/userstr"
 	ws "github.com/k8shell-io/provisioner/internal/workspace"
 	"github.com/rs/zerolog"
 	"google.golang.org/grpc"
@@ -302,7 +303,7 @@ func (p *ProvisionerService) ProvisionWorkspaceStream(
 		timeout = 20
 	}
 
-	userstr, err := models.NewUserStr(req.Userstr, false)
+	userstr, err := userstr.ParseUserStr(req.Userstr)
 	if err != nil {
 		return p.sendHandshakeErr(msgStream, "", status.Errorf(codes.InvalidArgument,
 			"Invalid userstr format: %v", err))
@@ -313,6 +314,7 @@ func (p *ProvisionerService) ProvisionWorkspaceStream(
 		return p.sendHandshakeErr(msgStream, "", status.Errorf(codes.InvalidArgument,
 			"Failed to canonicalize userstr: %v", err))
 	}
+	identity := canUserStr.Identity()
 
 	workspace, err := p.prepareWorkspaceWithUserStr(ctx, canUserStr)
 	if err != nil {
@@ -320,15 +322,15 @@ func (p *ProvisionerService) ProvisionWorkspaceStream(
 	}
 
 	tokenResp, err := p.server.Identity.GetUserAccessToken(ctx, &identityv1.GetUserAccessTokenRequest{
-		Username: canUserStr.Identity.Username,
+		Username: identity.Username(),
 	})
 	if err != nil {
 		return p.sendHandshakeErr(msgStream, workspace.Name, status.Errorf(codes.Unauthenticated,
-			"failed to retrieve identity token for user %s: %v", canUserStr.Identity.Username, err))
+			"failed to retrieve identity token for user %s: %v", identity.Username(), err))
 	}
 	if _, err := p.server.tokenVerifier.VerifyToken(tokenResp.AccessToken); err != nil {
 		return p.sendHandshakeErr(msgStream, workspace.Name, status.Errorf(codes.Unauthenticated,
-			"identity token for user %s is invalid: %v", canUserStr.Identity.Username, err))
+			"identity token for user %s is invalid: %v", identity.Username(), err))
 	}
 	workspace.SetIdentityToken(tokenResp.AccessToken)
 
@@ -358,7 +360,7 @@ func (p *ProvisionerService) ProvisionWorkspaceStream(
 	}
 
 	if p.server.provisionJobsKV != nil {
-		job = NewProvisionJob(workspace.Name, canUserStr.Identity.Username, p.server.provisionJobsKV, p.log)
+		job = NewProvisionJob(workspace.Name, identity.Username(), p.server.provisionJobsKV, p.log)
 		workspace.SetJobId(job.ID)
 		job.SetStatus(models.ProvisionJobRunning)
 	}
@@ -520,12 +522,17 @@ func (p *ProvisionerService) prepareWorkspaceWithPod(ctx context.Context, pod *c
 		return nil, status.Errorf(codes.Internal, "Workspace pod is missing userstr annotation")
 	}
 
-	userstr, err := models.NewCanonicalUserStrFromBase64(userstrb64)
+	parsedUserStr, err := userstr.ParseUserStr("b64-" + userstrb64)
 	if err != nil {
 		return nil, status.Errorf(codes.InvalidArgument, "Invalid userstr format: %v", err)
 	}
 
-	workspace, err := p.prepareWorkspaceWithUserStr(ctx, userstr)
+	canonicalUserStr, err := parsedUserStr.Canonicalize()
+	if err != nil {
+		return nil, status.Errorf(codes.InvalidArgument, "Invalid userstr format: %v", err)
+	}
+
+	workspace, err := p.prepareWorkspaceWithUserStr(ctx, canonicalUserStr)
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "Failed to prepare workspace for upgrade check: %v", err)
 	}
@@ -536,9 +543,13 @@ func (p *ProvisionerService) prepareWorkspaceWithPod(ctx context.Context, pod *c
 // prepareWorkspace prepares the workspace object for provisioning/upgrade
 // based on the user string and blueprint information
 func (p *ProvisionerService) prepareWorkspaceWithUserStr(ctx context.Context,
-	userStr *models.CanonicalUserStr) (*ws.Workspace, error) {
+	userStr *userstr.CanonicalUserStr) (*ws.Workspace, error) {
 
-	userpb, err := p.server.Identity.FindUser(ctx, &identityv1.FindUserRequest{Username: userStr.Identity.Username})
+	identity := userStr.Identity()
+	canonicalUserStr := userStr.CanonicalUserStr()
+	workspaceName := userStr.WorkspaceName()
+
+	userpb, err := p.server.Identity.FindUser(ctx, &identityv1.FindUserRequest{Username: identity.Username()})
 	if err != nil {
 		return nil, status.Errorf(codes.NotFound, "Failed to get user: %v", err)
 	}
@@ -547,32 +558,32 @@ func (p *ProvisionerService) prepareWorkspaceWithUserStr(ctx context.Context,
 	var blueprintObj *models.Blueprint
 	var resolvedBpName string
 	switch {
-	case userStr.Identity.BlueprintKind == models.BlueprintKindCustom:
-		blueprintpb, err := p.server.Identity.GetBlueprintByUserStr(ctx, &identityv1.UserStr{Userstr: userStr.CanonicalUserStr})
+	case identity.BlueprintKind() == userstr.BlueprintKindCustom:
+		blueprintpb, err := p.server.Identity.GetBlueprintByUserStr(ctx, &identityv1.UserStr{Userstr: canonicalUserStr})
 		if err != nil {
 			return nil, status.Errorf(codes.InvalidArgument, "failed to get blueprint by userstr: %v", err)
 		}
 
-		p.log.Debug().Str("userstr", userStr.CanonicalUserStr).Str("blueprint",
+		p.log.Debug().Str("userstr", canonicalUserStr).Str("blueprint",
 			string(blueprintpb.Blueprint)).Msg("Retrieved k8shell file for userstr")
 
 		var parsedCustomBlueprint *models.CustomBlueprint
 		useDefault := false
 
 		if len(blueprintpb.Blueprint) == 0 {
-			p.log.Info().Str("userstr", userStr.CanonicalUserStr).
+			p.log.Info().Str("userstr", canonicalUserStr).
 				Msg("custom blueprint not found (empty response); falling back to default custom blueprint")
 			useDefault = true
 		} else {
 			var k8shellFile models.K8shellFile
 			if err := yaml.Unmarshal(blueprintpb.Blueprint, &k8shellFile); err != nil {
-				p.log.Warn().Str("userstr", userStr.CanonicalUserStr).Err(err).
+				p.log.Warn().Str("userstr", canonicalUserStr).Err(err).
 					Msg("failed to parse k8shell file; falling back to default custom blueprint")
 				useDefault = true
 			} else {
 				customBp, validationErrors := models.ValidateK8shellFile(k8shellFile)
 				if len(validationErrors) > 0 {
-					p.log.Warn().Str("userstr", userStr.CanonicalUserStr).
+					p.log.Warn().Str("userstr", canonicalUserStr).
 						Strs("errors", validationErrors).
 						Msg("k8shell file validation failed; falling back to default custom blueprint")
 					useDefault = true
@@ -582,7 +593,7 @@ func (p *ProvisionerService) prepareWorkspaceWithUserStr(ctx context.Context,
 			}
 		}
 
-		p.log.Debug().Str("userstr", userStr.CanonicalUserStr).Bool("useDefault", useDefault).
+		p.log.Debug().Str("userstr", canonicalUserStr).Bool("useDefault", useDefault).
 			Msg("Custom blueprint parsing result")
 
 		if useDefault {
@@ -590,26 +601,26 @@ func (p *ProvisionerService) prepareWorkspaceWithUserStr(ctx context.Context,
 			if defaultBp == "" {
 				return nil, status.Errorf(codes.NotFound,
 					"custom blueprint not found for userstr %s and no defaultCustomBlueprint is configured",
-					userStr.CanonicalUserStr)
+					canonicalUserStr)
 			}
-			p.log.Info().Str("userstr", userStr.CanonicalUserStr).Str("default", defaultBp).
+			p.log.Info().Str("userstr", canonicalUserStr).Str("default", defaultBp).
 				Msg("using default custom blueprint")
 
 			defaultBpMetadata := &models.BlueprintMetadata{
-				Name:        userStr.Identity.Blueprint,
-				RepoName:    userStr.Identity.RepoName,
-				RepoOwner:   userStr.Identity.RepoOwner,
-				RepoRef:     userStr.Identity.RepoRef,
+				Name:        identity.Blueprint(),
+				RepoName:    identity.RepoName(),
+				RepoOwner:   identity.RepoOwner(),
+				RepoRef:     identity.RepoRef(),
 				RepoAddress: blueprintpb.RepoAddress,
 			}
-			scope, errx := p.server.GetBlueprintScope(defaultBp, user, defaultBpMetadata, userStr.WorkspaceName)
+			scope, errx := p.server.GetBlueprintScope(defaultBp, user, defaultBpMetadata, workspaceName)
 			if errx != nil {
 				return nil, convertToGRPCError(errx)
 			}
 			if !user.HasBlueprint(defaultBp) {
 				return nil, status.Errorf(codes.PermissionDenied,
 					"Access denied: user %s is not authorized to use default blueprint %s",
-					userStr.Identity.Username, defaultBp)
+					identity.Username(), defaultBp)
 			}
 			blueprintObj, err = p.server.bpManager.GetBlueprint(defaultBp, scope)
 			if err != nil {
@@ -620,19 +631,19 @@ func (p *ProvisionerService) prepareWorkspaceWithUserStr(ctx context.Context,
 			break
 		}
 
-		parsedCustomBlueprint.Name = userStr.Identity.Blueprint
-		parsedCustomBlueprint.Metadata.Name = userStr.Identity.Blueprint
-		parsedCustomBlueprint.Metadata.RepoName = userStr.Identity.RepoName
-		parsedCustomBlueprint.Metadata.RepoOwner = userStr.Identity.RepoOwner
-		parsedCustomBlueprint.Metadata.RepoRef = userStr.Identity.RepoRef
+		parsedCustomBlueprint.Name = identity.Blueprint()
+		parsedCustomBlueprint.Metadata.Name = identity.Blueprint()
+		parsedCustomBlueprint.Metadata.RepoName = identity.RepoName()
+		parsedCustomBlueprint.Metadata.RepoOwner = identity.RepoOwner()
+		parsedCustomBlueprint.Metadata.RepoRef = identity.RepoRef()
 		parsedCustomBlueprint.Metadata.RepoAddress = blueprintpb.RepoAddress
 
 		if !user.HasBlueprint(parsedCustomBlueprint.Template) {
 			return nil, status.Errorf(codes.PermissionDenied,
-				"Access denied: user %s is not authorized to use blueprint's template %s", userStr.Identity.Username, parsedCustomBlueprint.Template)
+				"Access denied: user %s is not authorized to use blueprint's template %s", identity.Username(), parsedCustomBlueprint.Template)
 		}
 
-		scope, errx := p.server.GetBlueprintScope(parsedCustomBlueprint.Metadata.Name, user, &parsedCustomBlueprint.Metadata, userStr.WorkspaceName)
+		scope, errx := p.server.GetBlueprintScope(parsedCustomBlueprint.Metadata.Name, user, &parsedCustomBlueprint.Metadata, workspaceName)
 		if errx != nil {
 			return nil, convertToGRPCError(errx)
 		}
@@ -644,9 +655,9 @@ func (p *ProvisionerService) prepareWorkspaceWithUserStr(ctx context.Context,
 
 		user = scope.User
 
-	case userStr.Identity.BlueprintKind == models.BlueprintKindImplicit || userStr.Identity.BlueprintKind == models.BlueprintKindExplicit:
-		bpName := userStr.Identity.Blueprint
-		if userStr.Identity.BlueprintKind == models.BlueprintKindImplicit {
+	case identity.BlueprintKind() == userstr.BlueprintKindImplicit || identity.BlueprintKind() == userstr.BlueprintKindExplicit:
+		bpName := identity.Blueprint()
+		if identity.BlueprintKind() == userstr.BlueprintKindImplicit {
 			bpName, err = p.server.bpManager.GetDefaultUserBlueprint(user)
 			if err != nil {
 				return nil, status.Errorf(codes.InvalidArgument,
@@ -659,29 +670,29 @@ func (p *ProvisionerService) prepareWorkspaceWithUserStr(ctx context.Context,
 				"blueprint name is required in userstr of kind explicit or implicit")
 		}
 
-		scope, errx := p.server.GetBlueprintScope(bpName, user, nil, userStr.WorkspaceName)
+		scope, errx := p.server.GetBlueprintScope(bpName, user, nil, workspaceName)
 		if errx != nil {
 			return nil, convertToGRPCError(errx)
 		}
 
 		if !user.HasBlueprint(bpName) {
 			return nil, status.Errorf(codes.PermissionDenied,
-				"Access denied: user %s is not authorized to use blueprint %s", userStr.Identity.Username, bpName)
+				"Access denied: user %s is not authorized to use blueprint %s", identity.Username(), bpName)
 		}
 
 		blueprintObj, err = p.server.bpManager.GetBlueprint(bpName, scope)
 		if err != nil {
-			return nil, status.Errorf(codes.NotFound, "Blueprint %s not found", userStr.Identity.Blueprint)
+			return nil, status.Errorf(codes.NotFound, "Blueprint %s not found", identity.Blueprint())
 		}
 
 		if blueprintObj.IsTemplate {
 			return nil, status.Errorf(codes.InvalidArgument,
-				"Blueprint %s is a template and cannot be used to provision a workspace", userStr.Identity.Blueprint)
+				"Blueprint %s is a template and cannot be used to provision a workspace", identity.Blueprint())
 		}
 		resolvedBpName = bpName
 	}
 
-	workspace, err := ws.NewWorkspace(userStr.WorkspaceName, blueprintObj, user, userStr,
+	workspace, err := ws.NewWorkspace(workspaceName, blueprintObj, user, userStr,
 		p.server.helm, p.server.Identity, p.server.config)
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "Failed to create workspace: %v", err)
@@ -808,7 +819,7 @@ func (p *ProvisionerService) UpgradeWorkspaceStream(
 	time.Sleep(time.Duration(2) * time.Second)
 
 	return p.ProvisionWorkspaceStream(&provisionerv1.ProvisionWorkspaceRequest{
-		Userstr:      wl.UserStr.CanonicalUserStr,
+		Userstr:      wl.UserStr.CanonicalUserStr(),
 		Timeout:      req.Timeout,
 		SendEvents:   req.SendEvents,
 		SendProgress: req.SendProgress,
@@ -1060,7 +1071,7 @@ func (p *ProvisionerService) InjectWorkspaceStream(
 		timeout = 120
 	}
 
-	userstr, err := models.NewUserStr(req.Userstr, false)
+	userstr, err := userstr.ParseUserStr(req.Userstr)
 	if err != nil {
 		return p.sendHandshakeErr(msgStream, "", status.Errorf(codes.InvalidArgument,
 			"invalid userstr format: %v", err))
@@ -1085,17 +1096,18 @@ func (p *ProvisionerService) InjectWorkspaceStream(
 	if err != nil {
 		return p.sendHandshakeErr(msgStream, "", err)
 	}
+	identity := canUserStr.Identity()
 
 	tokenResp, err := p.server.Identity.GetUserAccessToken(ctx, &identityv1.GetUserAccessTokenRequest{
-		Username: canUserStr.Identity.Username,
+		Username: identity.Username(),
 	})
 	if err != nil {
 		return p.sendHandshakeErr(msgStream, workspace.Name, status.Errorf(codes.Unauthenticated,
-			"failed to retrieve identity token for user %s: %v", canUserStr.Identity.Username, err))
+			"failed to retrieve identity token for user %s: %v", identity.Username(), err))
 	}
 	if _, err := p.server.tokenVerifier.VerifyToken(tokenResp.AccessToken); err != nil {
 		return p.sendHandshakeErr(msgStream, workspace.Name, status.Errorf(codes.Unauthenticated,
-			"identity token for user %s is invalid: %v", canUserStr.Identity.Username, err))
+			"identity token for user %s is invalid: %v", identity.Username(), err))
 	}
 	workspace.SetIdentityToken(tokenResp.AccessToken)
 
@@ -1253,7 +1265,7 @@ func (p *ProvisionerService) EjectWorkspace(
 		return nil, status.Errorf(codes.InvalidArgument, "deployment_name is required")
 	}
 
-	userstr, err := models.NewUserStr(req.Userstr, false)
+	userstr, err := userstr.ParseUserStr(req.Userstr)
 	if err != nil {
 		return nil, status.Errorf(codes.InvalidArgument, "invalid userstr format: %v", err)
 	}

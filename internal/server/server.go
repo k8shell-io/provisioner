@@ -161,20 +161,12 @@ func NewServer(configFile string, appVersion string, commit string) (*Server, er
 		return nil, fmt.Errorf("failed to register gRPC service: %w", err)
 	}
 
-	models.SetRefResolver(server)
-
 	server.log.Info().Msgf("Ensuring workspace base, namespace %s", server.config.TargetNamespace)
 	if err := server.helm.EnsureBase(context.Background()); err != nil {
 		return nil, fmt.Errorf("failed to ensure base namespace: %w", err)
 	}
 
 	return server, nil
-}
-
-// ResolvePullRequestRef
-// Implements models.IssueRepoRefResolver
-func (s Server) ResolvePullRequestRef(username string, repoOwner, repoName string, issueNumber int) (string, error) {
-	return "", fmt.Errorf("Pull Request resolving is not supported. You need to provide cannonizied user string.")
 }
 
 func (s *Server) GetBlueprintScope(blueprintName string, user *models.User,

@@ -14,6 +14,7 @@ import (
 	"github.com/k8shell-io/common/pkg/gapi"
 	log "github.com/k8shell-io/common/pkg/logger"
 	"github.com/k8shell-io/common/pkg/models"
+	"github.com/k8shell-io/common/pkg/userstr"
 	"github.com/k8shell-io/provisioner/internal/config"
 	"github.com/k8shell-io/provisioner/internal/helm"
 	"github.com/rs/zerolog"
@@ -41,7 +42,7 @@ type Workspace struct {
 	blueprint      *models.Blueprint
 	blueprintChain []string // ordered inheritance chain from root ancestor to this blueprint
 	user           *models.User
-	userStr        *models.CanonicalUserStr
+	userStr        *userstr.CanonicalUserStr
 	workspaceLock  *WorkspaceLock
 }
 
@@ -74,8 +75,42 @@ type WorkspaceLabels struct {
 	RepoName     string
 	RepoRef      string
 	AppVersion   string
-	UserStr      *models.CanonicalUserStr
+	UserStr      *userstr.CanonicalUserStr
 	JobId        string
+}
+
+func canonicalUserStrToBase64(c *userstr.CanonicalUserStr) string {
+	if c == nil || c.CanonicalUserStr() == "" {
+		return ""
+	}
+	return base64.RawURLEncoding.EncodeToString([]byte(c.CanonicalUserStr()))
+}
+
+func parseCanonicalUserStrFromBase64(s string) (*userstr.CanonicalUserStr, error) {
+	if s == "" {
+		return nil, fmt.Errorf("empty userstr")
+	}
+
+	var (
+		raw *userstr.UserStr
+		err error
+	)
+
+	lower := strings.ToLower(s)
+	if strings.HasPrefix(lower, "b64-") || strings.HasPrefix(lower, "base64-") {
+		raw, err = userstr.ParseUserStr(s)
+	} else {
+		decoded, derr := base64.RawURLEncoding.DecodeString(s)
+		if derr != nil {
+			return nil, fmt.Errorf("base64 decode failed: %w", derr)
+		}
+		raw, err = userstr.ParseUserStr(string(decoded))
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	return raw.Canonicalize()
 }
 
 // ParseWorkspaceMetadata parses the label set and annotations attached to a workspace pod
@@ -99,19 +134,20 @@ func ParseWorkspaceMetadata(labels map[string]string, annotations map[string]str
 		return nil, fmt.Errorf("missing annotation k8shell.io/userstr")
 	}
 
-	canUser, err := models.NewCanonicalUserStrFromBase64(userstrB64)
+	canUser, err := parseCanonicalUserStrFromBase64(userstrB64)
 	if err != nil {
 		return nil, fmt.Errorf("parse k8shell.io/userstr: %w", err)
 	}
+	identity := canUser.Identity()
 
 	return &WorkspaceLabels{
 		Workspace:    labels["k8shell.io/workspace"],
 		Username:     username,
 		Organization: labels["k8shell.io/organization"],
 		Blueprint:    blueprint,
-		RepoOwner:    canUser.Identity.RepoOwner,
-		RepoName:     canUser.Identity.RepoName,
-		RepoRef:      canUser.Identity.RepoRef,
+		RepoOwner:    identity.RepoOwner(),
+		RepoName:     identity.RepoName(),
+		RepoRef:      identity.RepoRef(),
 		AppVersion:   labels["k8shell.io/k8shelld-version"],
 		JobId:        labels["k8shell.io/job-id"],
 		UserStr:      canUser,
@@ -320,7 +356,7 @@ func NewWorkspace(
 	workspaceName string,
 	blueprint *models.Blueprint,
 	user *models.User,
-	userStr *models.CanonicalUserStr,
+	userStr *userstr.CanonicalUserStr,
 	helmClient *helm.Client,
 	identityClient *identity.IdentityClient,
 	config *config.Config,
@@ -439,7 +475,7 @@ func (w *Workspace) Values() (map[string]interface{}, error) {
 
 	userstrB64 := ""
 	if w.userStr != nil {
-		userstrB64 = w.userStr.Base64()
+		userstrB64 = canonicalUserStrToBase64(w.userStr)
 	}
 
 	values["__user__"] = userValues
@@ -610,10 +646,11 @@ func WorkspaceDetailsFromInjectedPod(pod *corev1.Pod) *models.WorkspaceDetails {
 	if !ok || userstrB64 == "" {
 		return nil // userstr is required; not injected yet on this pod
 	}
-	canUser, err := models.NewCanonicalUserStrFromBase64(userstrB64)
+	canUser, err := parseCanonicalUserStrFromBase64(userstrB64)
 	if err != nil {
 		return nil
 	}
+	identity := canUser.Identity()
 
 	var splash string
 	if s, ok := pod.Annotations["workspace.k8shell.io/splash"]; ok {
@@ -656,9 +693,9 @@ func WorkspaceDetailsFromInjectedPod(pod *corev1.Pod) *models.WorkspaceDetails {
 		WorkspaceStatus: *snapToWorkspaceStatus(&snap),
 		Name:            pod.Name,
 		Username:        pod.Labels["k8shell.io/username"],
-		RepoOwner:       canUser.Identity.RepoOwner,
-		RepoName:        canUser.Identity.RepoName,
-		RepoRef:         canUser.Identity.RepoRef,
+		RepoOwner:       identity.RepoOwner(),
+		RepoName:        identity.RepoName(),
+		RepoRef:         identity.RepoRef(),
 		Blueprint:       pod.Labels["k8shell.io/blueprint"],
 		Organization:    pod.Labels["k8shell.io/organization"],
 		JobId:           pod.Labels["k8shell.io/job-id"],
@@ -712,19 +749,20 @@ func WorkspaceDetailsFromPod(pod *corev1.Pod) *models.WorkspaceDetails {
 	if !ok || userstrB64 == "" {
 		return nil // userstr is required
 	}
-	canUser, err := models.NewCanonicalUserStrFromBase64(userstrB64)
+	canUser, err := parseCanonicalUserStrFromBase64(userstrB64)
 	if err != nil {
 		return nil // failed to parse userstr
 	}
+	identity := canUser.Identity()
 
 	snap := AnalyzePod(pod, nil, defaultCrashLoopThreshold)
 	wsDetails := &models.WorkspaceDetails{
 		WorkspaceStatus: *snapToWorkspaceStatus(&snap),
 		Name:            nameLabel,
 		Username:        pod.Labels["k8shell.io/username"],
-		RepoOwner:       canUser.Identity.RepoOwner,
-		RepoName:        canUser.Identity.RepoName,
-		RepoRef:         canUser.Identity.RepoRef,
+		RepoOwner:       identity.RepoOwner(),
+		RepoName:        identity.RepoName(),
+		RepoRef:         identity.RepoRef(),
 		Blueprint:       pod.Labels["k8shell.io/blueprint"],
 		Organization:    pod.Labels["k8shell.io/organization"],
 		JobId:           pod.Labels["k8shell.io/job-id"],
