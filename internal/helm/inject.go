@@ -85,9 +85,10 @@ func (c *Client) WorkspaceResourcesFromTemplate(ctx context.Context, values map[
 // InjectionSpecFromTemplate renders the workspace Helm chart, extracts the Pod
 // document, and returns its containers/initContainers/volumes renamed with the
 // given prefix to avoid conflicts with the target Deployment's own containers.
-func (c *Client) InjectionSpecFromTemplate(ctx context.Context, values map[string]interface{}, workspaceName string) (*InjectionSpec, error) {
+func (c *Client) InjectionSpecFromTemplate(ctx context.Context,
+	values map[string]interface{}, workspaceCanonicalId string) (*InjectionSpec, error) {
 	rendered, err := c.Template(ctx, WORKSPACE_CHART_NAME, InstallOptions{
-		ReleaseName: workspaceName,
+		ReleaseName: workspaceCanonicalId,
 		Values:      values,
 	})
 	if err != nil {
@@ -110,10 +111,10 @@ func (c *Client) InjectionSpecFromTemplate(ctx context.Context, values map[strin
 		}
 	}
 	if !found {
-		return nil, fmt.Errorf("pod document not found in rendered workspace chart for %s", workspaceName)
+		return nil, fmt.Errorf("pod document not found in rendered workspace chart for %s", workspaceCanonicalId)
 	}
 
-	prefix := "k8shell-" + workspaceName + "-"
+	prefix := workspaceCanonicalId + "-"
 
 	// Secret-backed volumes are excluded from injection: the referenced secrets
 	// are unlikely to exist in the target Deployment's namespace. Volume mounts
@@ -175,7 +176,7 @@ func (c *Client) InjectionSpecFromTemplate(ctx context.Context, values map[strin
 	// have these labels with different values in its selector, which would cause
 	// Kubernetes to reject the patch with "selector does not match template labels".
 	podLabelAllowlist := map[string]bool{
-		"k8shell.io/workspace":      true,
+		"k8shell.io/workspace":      false,
 		"k8shell.io/username":       true,
 		"k8shell.io/organization":   true,
 		"k8shell.io/blueprint":      true,
@@ -188,6 +189,7 @@ func (c *Client) InjectionSpecFromTemplate(ctx context.Context, values map[strin
 			podLabels[k] = v
 		}
 	}
+	podLabels["k8shell.io/canonical-id"] = workspaceCanonicalId
 
 	// Copy key annotations needed for workspace discovery on injected pods.
 	podAnnotations := make(map[string]string)

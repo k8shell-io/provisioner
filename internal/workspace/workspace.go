@@ -480,7 +480,6 @@ func (w *Workspace) Values() (map[string]interface{}, error) {
 
 	values["__user__"] = userValues
 	values["__username__"] = w.user.Username
-	values["__workspace__"] = w.Name
 	values["__blueprint__"] = w.blueprint.Name
 	values["__organization__"] = w.user.Organization
 	values["__networkpolicy__"] = w.blueprint.Network.NetworkPolicyClass
@@ -637,35 +636,13 @@ func WorkspaceDetailsFromInjectedPod(pod *corev1.Pod) *models.WorkspaceDetails {
 		return nil
 	}
 
-	originalWorkspaceName := pod.Labels["k8shell.io/workspace"]
-	if originalWorkspaceName == "" {
+	canonicalId := pod.Labels["k8shell.io/canonical-id"]
+	if canonicalId == "" {
 		return nil
 	}
 
-	userstrB64, ok := pod.Annotations["k8shell.io/userstr"]
-	if !ok || userstrB64 == "" {
-		return nil // userstr is required; not injected yet on this pod
-	}
-	canUser, err := parseCanonicalUserStrFromBase64(userstrB64)
-	if err != nil {
-		return nil
-	}
-	identity := canUser.Identity()
-
-	var splash string
-	if s, ok := pod.Annotations["workspace.k8shell.io/splash"]; ok {
-		if decoded, derr := base64.StdEncoding.DecodeString(s); derr == nil {
-			splash = string(decoded)
-		}
-	}
-
-	appVersion := pod.Labels["k8shell.io/k8shelld-version"]
-	if appVersion == "" {
-		appVersion = "1.0.0"
-	}
-
-	// The workspace main container is prefixed with "k8shell-<originalWorkspaceName>-".
-	mainContainerName := "k8shell-" + originalWorkspaceName + "-main"
+	// The workspace main container is prefixed with "k8shell-<canonicalId>-".
+	mainContainerName := canonicalId + "-k8shell-main"
 	var cpu, memory string
 	var port int
 	for _, c := range pod.Spec.Containers {
@@ -685,30 +662,8 @@ func WorkspaceDetailsFromInjectedPod(pod *corev1.Pod) *models.WorkspaceDetails {
 		port = models.WORKSPACE_PORT
 	}
 
-	tlsEnabled := podMountsSecret(pod, originalWorkspaceName+"-tls")
-
-	snap := AnalyzePod(pod, nil, defaultCrashLoopThreshold)
-
-	return &models.WorkspaceDetails{
-		WorkspaceStatus: *snapToWorkspaceStatus(&snap),
-		Name:            pod.Name,
-		Username:        pod.Labels["k8shell.io/username"],
-		RepoOwner:       identity.RepoOwner(),
-		RepoName:        identity.RepoName(),
-		RepoRef:         identity.RepoRef(),
-		Blueprint:       pod.Labels["k8shell.io/blueprint"],
-		Organization:    pod.Labels["k8shell.io/organization"],
-		JobId:           pod.Labels["k8shell.io/job-id"],
-		ServerName:      pod.Name + "." + pod.Namespace,
-		PodIP:           pod.Status.PodIP,
-		Port:            port,
-		TLSEnabled:      tlsEnabled,
-		Splash:          splash,
-		AppVersion:      appVersion,
-		CPU:             cpu,
-		Memory:          memory,
-		Hostname:        podHostname(pod),
-	}
+	tlsEnabled := podMountsSecret(pod, canonicalId+"-tls")
+	return workspaceDetailsFromPodCore(pod, pod.Name, canonicalId, cpu, memory, port, tlsEnabled)
 }
 
 func WorkspaceDetailsFromPod(pod *corev1.Pod) *models.WorkspaceDetails {
@@ -720,19 +675,6 @@ func WorkspaceDetailsFromPod(pod *corev1.Pod) *models.WorkspaceDetails {
 		return nil
 	}
 
-	var splash string
-	if splashAnnotation, exists := pod.Annotations["workspace.k8shell.io/splash"]; exists {
-		if decoded, derr := base64.StdEncoding.DecodeString(splashAnnotation); derr == nil {
-			splash = string(decoded)
-		}
-	}
-
-	appVersion, exists := pod.Labels["k8shell.io/k8shelld-version"]
-	if !exists {
-		appVersion = "1.0.0"
-	}
-
-	serverName := pod.Name + "." + pod.Namespace
 	port := getPodContainerPort(pod, models.WORKSPACE_PORT)
 	tlsEnabled := podMountsSecret(pod, pod.Name+"-tls")
 
@@ -743,6 +685,27 @@ func WorkspaceDetailsFromPod(pod *corev1.Pod) *models.WorkspaceDetails {
 
 	cpu := pod.Spec.Containers[0].Resources.Limits.Cpu().String()
 	memory := pod.Spec.Containers[0].Resources.Limits.Memory().String()
+
+	return workspaceDetailsFromPodCore(pod, nameLabel, nameLabel, cpu, memory, port, tlsEnabled)
+}
+
+func workspaceDetailsFromPodCore(
+	pod *corev1.Pod,
+	workspaceName string,
+	serverHost string,
+	cpu string,
+	memory string,
+	port int,
+	tlsEnabled bool,
+) *models.WorkspaceDetails {
+	if pod == nil {
+		return nil
+	}
+
+	appVersion := pod.Labels["k8shell.io/k8shelld-version"]
+	if appVersion == "" {
+		appVersion = "1.0.0"
+	}
 
 	// Parse userstr to get original repo values
 	userstrB64, ok := pod.Annotations["k8shell.io/userstr"]
@@ -756,9 +719,9 @@ func WorkspaceDetailsFromPod(pod *corev1.Pod) *models.WorkspaceDetails {
 	identity := canUser.Identity()
 
 	snap := AnalyzePod(pod, nil, defaultCrashLoopThreshold)
-	wsDetails := &models.WorkspaceDetails{
+	return &models.WorkspaceDetails{
 		WorkspaceStatus: *snapToWorkspaceStatus(&snap),
-		Name:            nameLabel,
+		Name:            workspaceName,
 		Username:        pod.Labels["k8shell.io/username"],
 		RepoOwner:       identity.RepoOwner(),
 		RepoName:        identity.RepoName(),
@@ -766,16 +729,14 @@ func WorkspaceDetailsFromPod(pod *corev1.Pod) *models.WorkspaceDetails {
 		Blueprint:       pod.Labels["k8shell.io/blueprint"],
 		Organization:    pod.Labels["k8shell.io/organization"],
 		JobId:           pod.Labels["k8shell.io/job-id"],
-		ServerName:      serverName,
+		ServerName:      serverHost + "." + pod.Namespace,
 		PodIP:           pod.Status.PodIP,
 		Port:            port,
 		TLSEnabled:      tlsEnabled,
-		Splash:          splash,
 		AppVersion:      appVersion,
 		CPU:             cpu,
 		Memory:          memory,
 		Hostname:        podHostname(pod),
+		Namespace:       pod.Namespace,
 	}
-
-	return wsDetails
 }

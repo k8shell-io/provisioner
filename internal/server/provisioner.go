@@ -25,6 +25,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	k8sErrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/kubernetes"
 )
 
 type ProvisionJobServer struct {
@@ -1077,26 +1078,27 @@ func (p *ProvisionerService) InjectWorkspaceStream(
 			"invalid userstr format: %v", err))
 	}
 
+	if userstr.Namespace("") == "" || userstr.Pod() == "" {
+		return p.sendHandshakeErr(msgStream, "", status.Errorf(codes.InvalidArgument,
+			"userstr must include both pod and namespace for injection"))
+	}
+
 	canUserStr, err := userstr.Canonicalize()
 	if err != nil {
 		return p.sendHandshakeErr(msgStream, "", status.Errorf(codes.InvalidArgument,
 			"failed to canonicalize userstr: %v", err))
 	}
-
-	if req.Namespace == "" {
-		return p.sendHandshakeErr(msgStream, "", status.Errorf(codes.InvalidArgument,
-			"namespace is required"))
-	}
-	if req.DeploymentName == "" {
-		return p.sendHandshakeErr(msgStream, "", status.Errorf(codes.InvalidArgument,
-			"deployment_name is required"))
-	}
+	identity := canUserStr.Identity()
 
 	workspace, err := p.prepareWorkspaceWithUserStr(ctx, canUserStr)
 	if err != nil {
 		return p.sendHandshakeErr(msgStream, "", err)
 	}
-	identity := canUserStr.Identity()
+
+	deploymentName, err := p.resolveDeploymentNameFromPod(ctx, userstr.Namespace(""), userstr.Pod())
+	if err != nil {
+		return p.sendHandshakeErr(msgStream, workspace.Name, err)
+	}
 
 	tokenResp, err := p.server.Identity.GetUserAccessToken(ctx, &identityv1.GetUserAccessTokenRequest{
 		Username: identity.Username(),
@@ -1134,10 +1136,11 @@ func (p *ProvisionerService) InjectWorkspaceStream(
 		defer close(errorChan)
 
 		st, err := workspace.Inject(ctx, &ws.InjectOptions{
-			Namespace:      req.Namespace,
-			DeploymentName: req.DeploymentName,
-			Timeout:        timeout,
-			Messages:       messages,
+			Namespace:            userstr.Namespace(""),
+			DeploymentName:       deploymentName,
+			WorkspaceCanonicalId: canUserStr.CanonicalId(),
+			Timeout:              timeout,
+			Messages:             messages,
 		})
 		if err != nil {
 			errorChan <- err
@@ -1249,6 +1252,46 @@ func (p *ProvisionerService) InjectWorkspaceStream(
 			return nil
 		}
 	}
+}
+
+// resolveDeploymentNameFromPod attempts to find the owning Deployment of a Pod by traversing its owner reference chain.
+func (p *ProvisionerService) resolveDeploymentNameFromPod(ctx context.Context, namespace, podName string) (string, error) {
+	pod, err := p.server.helm.KubeClient().CoreV1().Pods(namespace).Get(ctx, podName, metav1.GetOptions{})
+	if err != nil {
+		if k8sErrors.IsNotFound(err) {
+			return "", status.Errorf(codes.NotFound, "pod %s/%s not found", namespace, podName)
+		}
+		return "", status.Errorf(codes.Internal, "failed to get pod %s/%s: %v", namespace, podName, err)
+	}
+
+	if deploymentName := deploymentNameFromOwnerChain(ctx, namespace, pod.OwnerReferences,
+		p.server.helm.KubeClient()); deploymentName != "" {
+		return deploymentName, nil
+	}
+
+	return "", status.Errorf(codes.NotFound, "could not determine deployment for pod %s/%s", namespace, podName)
+}
+
+// deploymentNameFromOwnerChain traverses the owner reference chain of a pod to find the owning Deployment, if it exists.
+func deploymentNameFromOwnerChain(ctx context.Context, namespace string, owners []metav1.OwnerReference,
+	kubeClient kubernetes.Interface) string {
+	for _, owner := range owners {
+		switch owner.Kind {
+		case "Deployment":
+			return owner.Name
+		case "ReplicaSet":
+			rs, err := kubeClient.AppsV1().ReplicaSets(namespace).Get(ctx, owner.Name, metav1.GetOptions{})
+			if err != nil {
+				continue
+			}
+			for _, rsOwner := range rs.OwnerReferences {
+				if rsOwner.Kind == "Deployment" {
+					return rsOwner.Name
+				}
+			}
+		}
+	}
+	return ""
 }
 
 // EjectWorkspace removes a previously injected workspace from a Deployment and

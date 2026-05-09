@@ -2,7 +2,7 @@
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
-  name: np-{{ .Values.__workspace__ }}-organization
+  name: np-{{ .Release.Name }}-organization
   namespace: {{ .Release.Namespace }} 
   labels:
     {{- include "workspace.labels" . | nindent 4 }}  

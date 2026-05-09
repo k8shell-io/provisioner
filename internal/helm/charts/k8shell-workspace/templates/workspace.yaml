@@ -5,7 +5,7 @@
 apiVersion: v1
 kind: Pod
 metadata:
-  name: {{ .Values.__workspace__ }}
+  name: {{ .Release.Name }}
   namespace: {{ .Release.Namespace }}
   annotations:
     {{- if .Values.splash }}
@@ -82,7 +82,7 @@ spec:
       - name: IMAGE
         value:  {{ include "workspace.mainImage" . }}
       - name: WORKSPACE
-        value: {{ .Values.__workspace__ }}
+        value: {{ .Release.Name }}
       - name: BLUEPRINT
         value: {{ .Values.__blueprint__ }}
       - name: USERNAME
@@ -151,7 +151,7 @@ spec:
         # readOnly: true
       {{- end }}
       {{- if .Values.__certmanager__.enabled }}
-      - name: {{ .Values.__workspace__ }}-cert
+      - name: {{ .Release.Name }}-cert
         mountPath: /etc/tls/k8shelld
         readOnly: true
       {{- end }}
@@ -226,7 +226,7 @@ spec:
     emptyDir: {}
   - name: config-volume
     configMap:
-      name: {{ .Values.__workspace__ }}-k8shelld-config
+      name: {{ .Release.Name }}-k8shelld-config
       items:
       - key: config.yaml
         path: config.yaml
@@ -234,7 +234,7 @@ spec:
         path: blueprint.yaml
   - name: main-volume
     configMap:
-      name: {{ .Values.__workspace__ }}-files
+      name: {{ .Release.Name }}-files
       defaultMode: 0755
       items:
       - key: README
@@ -265,7 +265,7 @@ spec:
       claimName: pvc-{{ $storageName }}{{- if $storage.id }}-{{ $storage.id }}{{- end }}
     {{- else }}
     persistentVolumeClaim:
-      claimName: pvc-{{ $.Values.__workspace__ }}-{{ $storageName }}
+      claimName: pvc-{{ .Release.Name }}-{{ $storageName }}
     {{- end }}
   {{- end }}
   {{- end }}
@@ -275,14 +275,14 @@ spec:
   {{- if and $storage (kindIs "map" $storage) ($storage.enabled | default false) }}
   - name: storage-podman-{{ $storageName }}
     persistentVolumeClaim:
-      claimName: pvc-{{ $.Values.__workspace__ }}-podman-{{ $storageName }}
+      claimName: pvc-{{ .Release.Name }}-podman-{{ $storageName }}
   {{- end }}
   {{- end }}
   {{- end }}
   {{- if .Values.extFiles }}
   - name: main-ext-files-volume
     configMap:
-      name: {{ .Values.__workspace__ }}-main-ext-files
+      name: {{ .Release.Name }}-main-ext-files
       items:
         {{- range $path, $content := .Values.extFiles }}
         - key: {{ $path | replace "/" "__" | quote }}
@@ -295,7 +295,7 @@ spec:
   {{- if $podman.extFiles }}
   - name: podman-ext-files-volume
     configMap:
-      name: {{ .Values.__workspace__ }}-podman-ext-files
+      name: {{ .Release.Name }}-podman-ext-files
       items:
         {{- range $path, $content := $podman.extFiles }}
         - key: {{ $path | replace "/" "__" | quote }}
@@ -312,9 +312,9 @@ spec:
           path: registry-ca.pem
   {{- end }}
   {{- if .Values.__certmanager__.enabled }}
-  - name: {{ .Values.__workspace__ }}-cert
+  - name: {{ .Release.Name }}-cert
     secret:
-      secretName: {{ .Values.__workspace__ }}-tls
+      secretName: {{ .Release.Name }}-tls
   {{- end }}
 
   {{- if .Values.affinity }}

@@ -3,14 +3,14 @@
 {{/* labels for helm resources */}}
 {{- define "workspace.labels" -}}
 k8shell.io/type: workspace
-k8shell.io/workspace: "{{ .Values.__workspace__ }}"
+k8shell.io/workspace: "{{ .Release.Name }}"
 {{- end -}}
 
 {{/* labels for helm resources */}}
 {{- define "workspace.workspaceLabels" -}}
 k8shell.io/type: workspace
 k8shell.io/k8shelld-version: {{ .Values.__appversion__ }}
-k8shell.io/workspace: "{{ .Values.__workspace__ }}"
+k8shell.io/workspace: "{{ .Release.Name }}"
 k8shell.io/blueprint: "{{ .Values.__blueprint__ }}"
 k8shell.io/username: "{{ .Values.__username__ }}"
 k8shell.io/organization: "{{ .Values.__organization__ }}"
@@ -94,7 +94,7 @@ k8shell.io/job-id: "{{ .Values.__jobid__ }}"
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
-  name: "pvc-{{ .ctx.Values.__workspace__ }}-{{ .pvcPrefix }}{{ .name }}"
+  name: "pvc-{{ .Release.Name }}-{{ .pvcPrefix }}{{ .name }}"
   namespace: {{ .ctx.Release.Namespace }} 
   {{- if .storage.claimSpecAnnotations }}
   annotations:

@@ -95,7 +95,8 @@ blueprints:
       memory: 16Gi
 
     securityContext:
-      privileged: true
+      capabilities:
+        add: ["SYS_PTRACE"]
 
     podman:
       enabled: true
