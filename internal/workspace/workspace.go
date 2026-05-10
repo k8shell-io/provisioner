@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/k8shell-io/common/pkg/api/client/identity"
@@ -55,6 +56,9 @@ type GetWorkspacesOptions struct {
 	Organization string
 	Blueprint    string
 	Workspace    string
+	// InjectionNamespaces controls where injected workspaces are discovered.
+	// Use "*" for cluster-wide discovery.
+	InjectionNamespaces []string
 }
 
 // GetWorkspacesResult defines the result structure for GetWorkspaces function,
@@ -154,11 +158,12 @@ func ParseWorkspaceMetadata(labels map[string]string, annotations map[string]str
 }
 
 // FindWorkspace finds a workspace by name and returns its status
-func FindWorkspace(ctx context.Context, helmClient *helm.Client, workspace string) (*models.WorkspaceDetails,
+func FindWorkspace(ctx context.Context, helmClient *helm.Client, workspace string, injectionNamespaces []string) (*models.WorkspaceDetails,
 	*corev1.Pod, error) {
 
 	ws, err := GetWorkspaces(ctx, helmClient, GetWorkspacesOptions{
-		Workspace: workspace,
+		Workspace:           workspace,
+		InjectionNamespaces: injectionNamespaces,
 	})
 	if err != nil {
 		return nil, nil, err
@@ -277,18 +282,96 @@ func GetWorkspaces(
 	}
 	injectedSelector := getSelector(injectedLabels)
 
-	injectedList, err := v1.Pods("").List(ctx, metav1.ListOptions{
-		LabelSelector: injectedSelector,
-	})
-	if err == nil {
+	shouldListClusterWide := false
+	injectedNamespaces := make([]string, 0, len(opts.InjectionNamespaces))
+	seenNamespaces := make(map[string]struct{}, len(opts.InjectionNamespaces))
+	for _, ns := range opts.InjectionNamespaces {
+		ns = strings.TrimSpace(ns)
+		if ns == "" {
+			continue
+		}
+		if ns == "*" {
+			shouldListClusterWide = true
+			break
+		}
+		if _, exists := seenNamespaces[ns]; exists {
+			continue
+		}
+		seenNamespaces[ns] = struct{}{}
+		injectedNamespaces = append(injectedNamespaces, ns)
+	}
+
+	injectedItems := make([]corev1.Pod, 0)
+	if shouldListClusterWide {
+		injectedList, err := v1.Pods("").List(ctx, metav1.ListOptions{
+			LabelSelector: injectedSelector,
+		})
+		if err != nil {
+			if strings.Contains(err.Error(), "unable to parse") {
+				return nil, fmt.Errorf("%w: %s", models.ErrInvalidParameters, injectedSelector)
+			}
+			return nil, fmt.Errorf("failed to list injected workspace pods cluster-wide: %w", err)
+		}
+		injectedItems = append(injectedItems, injectedList.Items...)
+	} else {
+		listCtx, cancelLists := context.WithCancel(ctx)
+		defer cancelLists()
+
+		resultsCh := make(chan []corev1.Pod, len(injectedNamespaces))
+		errCh := make(chan error, 1)
+		var wg sync.WaitGroup
+		var once sync.Once
+
+		for _, ns := range injectedNamespaces {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+
+				injectedList, err := v1.Pods(ns).List(listCtx, metav1.ListOptions{
+					LabelSelector: injectedSelector,
+				})
+				if err != nil {
+					wrappedErr := fmt.Errorf("failed to list injected workspace pods in namespace %q: %w", ns, err)
+					if strings.Contains(err.Error(), "unable to parse") {
+						wrappedErr = fmt.Errorf("%w: %s", models.ErrInvalidParameters, injectedSelector)
+					}
+					once.Do(func() {
+						errCh <- wrappedErr
+						cancelLists()
+					})
+					return
+				}
+
+				select {
+				case resultsCh <- injectedList.Items:
+				case <-listCtx.Done():
+				}
+			}()
+		}
+
+		wg.Wait()
+		close(resultsCh)
+
+		select {
+		case err := <-errCh:
+			return nil, err
+		default:
+		}
+
+		for items := range resultsCh {
+			injectedItems = append(injectedItems, items...)
+		}
+	}
+
+	if len(injectedItems) > 0 {
 		type wsd struct {
 			ws *models.WorkspaceDetails
 			p  *corev1.Pod
 		}
 
-		seen := make(map[string]*wsd, len(injectedList.Items))
-		for i := range injectedList.Items {
-			ip := &injectedList.Items[i]
+		seen := make(map[string]*wsd, len(injectedItems))
+		for i := range injectedItems {
+			ip := &injectedItems[i]
 			if ip.Namespace == namespace {
 				continue
 			}
@@ -304,10 +387,10 @@ func GetWorkspaces(
 				continue
 			}
 
-			prev, exists := seen[d.Name]
-			if !exists || d.Status == models.WorkspaceStatusRunning {
-				seen[d.Name] = &wsd{ws: d, p: ip}
-				_ = prev
+			key := ip.Namespace + "/" + ip.Labels["k8shell.io/canonical-id"]
+			prev, exists := seen[key]
+			if !exists || (prev.ws.Status != models.WorkspaceStatusRunning && d.Status == models.WorkspaceStatusRunning) {
+				seen[key] = &wsd{ws: d, p: ip}
 			}
 		}
 		for _, d := range seen {

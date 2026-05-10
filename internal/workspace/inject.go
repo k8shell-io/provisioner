@@ -47,6 +47,12 @@ func (w *Workspace) Inject(ctx context.Context, opts *InjectOptions) (*models.Wo
 	if opts.Namespace == "" {
 		return nil, fmt.Errorf("inject options: namespace is required")
 	}
+	if w.config == nil {
+		return nil, fmt.Errorf("inject options: workspace config is required")
+	}
+	if !w.config.AllowsInjectionNamespace(opts.Namespace) {
+		return nil, fmt.Errorf("inject options: namespace %q is not allowed by config injectNamespaces", opts.Namespace)
+	}
 	if opts.DeploymentName == "" {
 		return nil, fmt.Errorf("inject options: deploymentName is required")
 	}

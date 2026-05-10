@@ -110,7 +110,7 @@ func NewProvisionerService(server *Server) *ProvisionerService {
 // FindWorkspace retrieves the details of a specific workspace
 func (p *ProvisionerService) FindWorkspace(ctx context.Context,
 	req *provisionerv1.FindWorkspaceRequest) (*commonv1.WorkspaceDetails, error) {
-	s, _, err := ws.FindWorkspace(ctx, p.server.helm, req.Workspace)
+	s, _, err := ws.FindWorkspace(ctx, p.server.helm, req.Workspace, p.server.config.InjectNamespaces)
 	if err != nil {
 		if errors.Is(err, models.ErrWorkspaceNotFound) {
 			return nil, status.Errorf(codes.NotFound, "Workspace %s not found", req.Workspace)
@@ -140,10 +140,11 @@ func (p *ProvisionerService) GetWorkspaces(
 
 	workspaces, err := ws.GetWorkspaces(ctx, p.server.helm,
 		ws.GetWorkspacesOptions{
-			Username:     req.Username,
-			Blueprint:    req.Blueprint,
-			Organization: req.Organization,
-			Workspace:    req.Workspace,
+			Username:            req.Username,
+			Blueprint:           req.Blueprint,
+			Organization:        req.Organization,
+			Workspace:           req.Workspace,
+			InjectionNamespaces: p.server.config.InjectNamespaces,
 		})
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "Failed to list workspaces: %v", err)
@@ -319,21 +320,12 @@ func (p *ProvisionerService) ProvisionWorkspaceStream(
 		return p.sendHandshakeErr(msgStream, "", err)
 	}
 
-	tokenResp, err := p.server.Identity.GetUserAccessToken(ctx, &identityv1.GetUserAccessTokenRequest{
-		Username: identity.Username(),
-	})
-	if err != nil {
-		return p.sendHandshakeErr(msgStream, workspace.Name, status.Errorf(codes.Unauthenticated,
-			"failed to retrieve identity token for user %s: %v", identity.Username(), err))
-	}
-	if _, err := p.server.tokenVerifier.VerifyToken(tokenResp.AccessToken); err != nil {
-		return p.sendHandshakeErr(msgStream, workspace.Name, status.Errorf(codes.Unauthenticated,
-			"identity token for user %s is invalid: %v", identity.Username(), err))
-	}
-	workspace.SetIdentityToken(tokenResp.AccessToken)
-
 	deploymentName := ""
 	if injectMode {
+		if !p.server.config.AllowsInjectionNamespace(workspaceNamespace) {
+			return p.sendHandshakeErr(msgStream, workspace.Name, status.Errorf(codes.PermissionDenied,
+				"namespace %s is not allowed for injection", workspaceNamespace))
+		}
 		deploymentName, err = p.resolveDeploymentNameFromPod(ctx, workspaceNamespace, podName)
 		if err != nil {
 			return p.sendHandshakeErr(msgStream, workspace.Name, err)
@@ -720,7 +712,7 @@ func (p *ProvisionerService) UpgradeWorkspaceResources(ctx context.Context,
 		return nil, status.Errorf(codes.InvalidArgument, "at least one of cpu or memory must be specified")
 	}
 
-	_, pod, err := ws.FindWorkspace(ctx, p.server.helm, name)
+	_, pod, err := ws.FindWorkspace(ctx, p.server.helm, name, p.server.config.InjectNamespaces)
 	if err != nil {
 		if errors.Is(err, models.ErrWorkspaceNotFound) {
 			return nil, status.Errorf(codes.NotFound, "Workspace %s not found", name)
@@ -771,7 +763,7 @@ func (p *ProvisionerService) UpgradeWorkspaceStream(
 	}
 
 	ctx := stream.Context()
-	_, pod, err := ws.FindWorkspace(ctx, p.server.helm, name)
+	_, pod, err := ws.FindWorkspace(ctx, p.server.helm, name, p.server.config.InjectNamespaces)
 	if err != nil {
 		if errors.Is(err, models.ErrWorkspaceNotFound) {
 			return p.sendHandshakeErr(msgStream, name, status.Errorf(codes.NotFound,
