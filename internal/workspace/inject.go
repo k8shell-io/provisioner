@@ -76,22 +76,26 @@ func (w *Workspace) Inject(ctx context.Context, opts *InjectOptions) (*models.Wo
 		return nil, fmt.Errorf("failed to render workspace resources: %w", err)
 	}
 
+	spec, err := w.client.InjectionSpecFromTemplate(ctx, values, opts.WorkspaceCanonicalId)
+	if err != nil {
+		return nil, fmt.Errorf("failed to build injection spec: %w", err)
+	}
+
 	resourceLabels := map[string]string{
 		"k8shell.io/canonical-id":  opts.WorkspaceCanonicalId,
 		"k8shell.io/inject-target": opts.DeploymentName,
 		"k8shell.io/managed-by":    "k8shell-provisioner",
 	}
 
+	startTime := time.Now()
 	if err := w.client.ApplyNamespacedResources(ctx, opts.Namespace, resources, resourceLabels); err != nil {
 		return nil, fmt.Errorf("failed to apply workspace resources to namespace %s: %w", opts.Namespace, err)
 	}
 
-	spec, err := w.client.InjectionSpecFromTemplate(ctx, values, opts.WorkspaceCanonicalId)
-	if err != nil {
-		return nil, fmt.Errorf("failed to build injection spec: %w", err)
+	if err := w.ensureSharedStorages(ctx, opts.Namespace); err != nil {
+		return nil, fmt.Errorf("failed to ensure shared storages: %w", err)
 	}
 
-	startTime := time.Now()
 	if err := w.client.InjectIntoDeployment(ctx, opts.Namespace, opts.DeploymentName, w.Name, spec); err != nil {
 		return nil, fmt.Errorf("failed to inject into deployment %s/%s: %w", opts.Namespace, opts.DeploymentName, err)
 	}
@@ -103,14 +107,14 @@ func (w *Workspace) Inject(ctx context.Context, opts *InjectOptions) (*models.Wo
 		Msg("deployment patched, waiting for pods to become running")
 
 	// Watch the pods that belong to the Deployment in the target namespace.
-	// PodWatcher identifies pods by the k8shell.io/workspace label that was
+	// PodWatcher identifies pods by the k8shell.io/canonical-id label that was
 	// added to the Deployment's pod template during injection.
 	provisionOpts := &ProvisionOptions{
 		Timeout:  opts.Timeout,
 		Messages: opts.Messages,
 	}
 	pw := NewPodWatcher(w.client.KubeClient(), opts.Namespace, w.Name, w.log)
-	snap, err := pw.WatchByLabel(ctx, "k8shell.io/workspace="+w.Name, provisionOpts)
+	snap, err := pw.WatchByLabel(ctx, "k8shell.io/canonical-id="+opts.WorkspaceCanonicalId, provisionOpts)
 	if err != nil {
 		return nil, fmt.Errorf("error watching injected pods: %w", err)
 	}

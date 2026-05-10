@@ -175,7 +175,7 @@ func (w *Workspace) unlock() error {
 
 // doInstallation performs the actual installation of the workspace
 func (w *Workspace) doInstallation(ctx context.Context, opts *ProvisionOptions) (*models.WorkspaceStatus, error) {
-	if err := w.ensureSharedStorages(ctx); err != nil {
+	if err := w.ensureSharedStorages(ctx, w.client.TargetNamespace()); err != nil {
 		return nil, fmt.Errorf("failed to ensure shared storages: %w", err)
 	}
 
@@ -263,12 +263,11 @@ func (w *Workspace) doStart(ctx context.Context, opts *ProvisionOptions) (*model
 // Shared PVCs are named pvc-<storageName> and are not workspace-scoped, allowing multiple
 // workspaces to reference the same PVC. If a shared PVC already exists, it is left untouched.
 // A warning is logged when an existing PVC has different capacity or storage class.
-func (w *Workspace) ensureSharedStorages(ctx context.Context) error {
+func (w *Workspace) ensureSharedStorages(ctx context.Context, namespace string) error {
 	if w.blueprint == nil {
 		return nil
 	}
 
-	namespace := w.client.TargetNamespace()
 	kubeClient := w.client.KubeClient()
 
 	for name, storage := range w.blueprint.Storages {

@@ -100,10 +100,6 @@ spec:
       - name: JWT_VERIFIER_SIGNING_METHOD
         value: {{ .Values.__jwtverifiersigningmethod__ | quote }}
       {{- end }}
-      {{- if .Values.__identitytoken__ }}
-      - name: IDENTITY_TOKEN
-        value: {{ .Values.__identitytoken__ | quote }}
-      {{- end }}
       {{- if .Values.env }}    
       {{- range $envName, $envValue := .Values.env }}            
       - name: {{ $envName }}

@@ -37,7 +37,6 @@ type Workspace struct {
 
 	Name           string
 	JobId          string
-	identityToken  string
 	log            *zerolog.Logger
 	blueprint      *models.Blueprint
 	blueprintChain []string // ordered inheritance chain from root ancestor to this blueprint
@@ -419,10 +418,6 @@ func (w *Workspace) SetJobId(jobId string) {
 	w.JobId = jobId
 }
 
-func (w *Workspace) SetIdentityToken(token string) {
-	w.identityToken = token
-}
-
 // SetBlueprintChain stores the inheritance chain for this workspace's blueprint.
 func (w *Workspace) SetBlueprintChain(chain []string) {
 	w.blueprintChain = chain
@@ -486,7 +481,6 @@ func (w *Workspace) Values() (map[string]interface{}, error) {
 	values["__registry__"] = w.client.Registry.ToValues()
 	values["__jwtverifierpublickey__"] = w.client.JWTVerifierPublicKey
 	values["__jwtverifiersigningmethod__"] = w.config.JWTVerifier.SigningMethod
-	values["__identitytoken__"] = w.identityToken
 	values["__namespace__"] = getNamespace()
 	values["__certmanager__"] = cmValues
 	values["__appversion__"] = w.appVersion()
