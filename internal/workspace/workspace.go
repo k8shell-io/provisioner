@@ -369,7 +369,6 @@ func GetWorkspaces(
 			p  *corev1.Pod
 		}
 
-		seen := make(map[string]*wsd, len(injectedItems))
 		for i := range injectedItems {
 			ip := &injectedItems[i]
 			if ip.Namespace == namespace {
@@ -387,15 +386,8 @@ func GetWorkspaces(
 				continue
 			}
 
-			key := ip.Namespace + "/" + ip.Labels["k8shell.io/canonical-id"]
-			prev, exists := seen[key]
-			if !exists || (prev.ws.Status != models.WorkspaceStatusRunning && d.Status == models.WorkspaceStatusRunning) {
-				seen[key] = &wsd{ws: d, p: ip}
-			}
-		}
-		for _, d := range seen {
-			out = append(out, d.ws)
-			pods = append(pods, *d.p)
+			out = append(out, d)
+			pods = append(pods, *ip)
 		}
 	}
 
