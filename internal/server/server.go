@@ -39,6 +39,8 @@ func NewServer(configFile string, appVersion string, commit string) (*Server, er
 		log: log.NewLogger("server"),
 	}
 
+	server.log.Info().Str("version", appVersion).Str("commit", commit).Msg("Starting provisioner")
+
 	var err error
 	server.log.Info().Msgf("Loading server configuration from %s", configFile)
 	server.config, err = config.NewConfig(configFile)
