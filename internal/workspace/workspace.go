@@ -25,6 +25,7 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	k8sErrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/kubernetes"
 )
 
 // Default page size for GetWorkspaces pagination when limit is not specified or invalid
@@ -59,6 +60,8 @@ type GetWorkspacesOptions struct {
 	// InjectionNamespaces controls where injected workspaces are discovered.
 	// Use "*" for cluster-wide discovery.
 	InjectionNamespaces []string
+	// InjectTarget filters injected workspaces by the deployment they were injected into.
+	InjectTarget string
 }
 
 // GetWorkspacesResult defines the result structure for GetWorkspaces function,
@@ -205,6 +208,41 @@ func podMatchesWorkspaceFilters(p *corev1.Pod, opts GetWorkspacesOptions, inject
 	}
 
 	return true
+}
+
+// podBelongsToDeployment checks whether pod is owned (directly or via a ReplicaSet) by the named Deployment.
+// rsCache maps ReplicaSet name to its owning Deployment name ("" if none); pass a non-nil map to share the
+// cache across multiple pods in the same namespace and avoid redundant API calls.
+func podBelongsToDeployment(ctx context.Context, kubeClient kubernetes.Interface, pod *corev1.Pod, deploymentName string, rsCache map[string]string) bool {
+	for _, owner := range pod.OwnerReferences {
+		switch owner.Kind {
+		case "Deployment":
+			if owner.Name == deploymentName {
+				return true
+			}
+		case "ReplicaSet":
+			owner := owner.Name
+			deploy, cached := rsCache[owner]
+			if !cached {
+				rs, err := kubeClient.AppsV1().ReplicaSets(pod.Namespace).Get(ctx, owner, metav1.GetOptions{})
+				if err != nil {
+					rsCache[owner] = ""
+					continue
+				}
+				for _, rsOwner := range rs.OwnerReferences {
+					if rsOwner.Kind == "Deployment" {
+						deploy = rsOwner.Name
+						break
+					}
+				}
+				rsCache[owner] = deploy
+			}
+			if deploy == deploymentName {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func GetWorkspaces(
@@ -369,6 +407,7 @@ func GetWorkspaces(
 			p  *corev1.Pod
 		}
 
+		rsCache := make(map[string]string)
 		for i := range injectedItems {
 			ip := &injectedItems[i]
 			if ip.Namespace == namespace {
@@ -378,6 +417,10 @@ func GetWorkspaces(
 				continue
 			}
 			if !podMatchesWorkspaceFilters(ip, opts, true) {
+				continue
+			}
+			if opts.InjectTarget != "" && !podBelongsToDeployment(ctx, helmClient.KubeClient(), ip,
+				opts.InjectTarget, rsCache) {
 				continue
 			}
 

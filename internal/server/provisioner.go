@@ -170,6 +170,66 @@ func (p *ProvisionerService) GetWorkspaces(
 	}, nil
 }
 
+// GetWorkspacesByUserStr returns workspaces matching the given userstr
+func (p *ProvisionerService) GetWorkspacesByUserStr(
+	ctx context.Context,
+	req *provisionerv1.GetWorkspacesByUserStrRequest,
+) (*provisionerv1.GetWorkspacesResponse, error) {
+	if req.Userstr == "" {
+		return nil, status.Errorf(codes.InvalidArgument, "userstr is required")
+	}
+
+	parsedUserStr, err := userstr.ParseUserStr(req.Userstr)
+	if err != nil {
+		return nil, status.Errorf(codes.InvalidArgument, "invalid userstr format: %v", err)
+	}
+
+	canUserStr, err := parsedUserStr.Canonicalize()
+	if err != nil {
+		return nil, status.Errorf(codes.InvalidArgument, "failed to canonicalize userstr: %v", err)
+	}
+
+	identity := canUserStr.Identity()
+	opts := ws.GetWorkspacesOptions{
+		Username:            identity.Username(),
+		InjectionNamespaces: p.server.config.InjectNamespaces,
+	}
+
+	workspaceName := canUserStr.WorkspaceName()
+	if workspaceName != "" {
+		opts.Workspace = workspaceName
+	} else {
+		deployName := parsedUserStr.Deploy()
+		if deployName == "" {
+			return nil, status.Errorf(codes.InvalidArgument,
+				"userstr must specify a deployment name when workspace name cannot be determined (deploy=)")
+		}
+		namespace := parsedUserStr.Namespace("")
+		if namespace != "" && !p.server.config.AllowsInjectionNamespace(namespace) {
+			return nil, status.Errorf(codes.PermissionDenied,
+				"namespace %s is not allowed for injection", namespace)
+		}
+		if namespace != "" {
+			opts.InjectionNamespaces = []string{namespace}
+		}
+		opts.InjectTarget = deployName
+	}
+
+	workspaces, err := ws.GetWorkspaces(ctx, p.server.helm, opts)
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "failed to list workspaces: %v", err)
+	}
+
+	var protoWorkspaces []*commonv1.WorkspaceDetails
+	for _, w := range workspaces.Workspaces {
+		protoWorkspaces = append(protoWorkspaces, gapi.WorkspaceDetailsToProto(w))
+	}
+
+	return &provisionerv1.GetWorkspacesResponse{
+		Workspaces: protoWorkspaces,
+	}, nil
+}
+
 func (p *ProvisionerService) GetUserBlueprints(ctx context.Context,
 	req *provisionerv1.GetUserBlueprintsRequest,
 ) (*provisionerv1.GetUserBlueprintsResponse, error) {
