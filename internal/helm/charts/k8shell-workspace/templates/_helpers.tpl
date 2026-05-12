@@ -14,7 +14,9 @@ k8shell.io/workspace: "{{ .Release.Name }}"
 k8shell.io/blueprint: "{{ .Values.__blueprint__ }}"
 k8shell.io/username: "{{ .Values.__username__ }}"
 k8shell.io/organization: "{{ .Values.__organization__ }}"
+{{- if and .Values.network .Values.network.networkPolicyClass }}
 k8shell.io/network-policy: "{{ .Values.network.networkPolicyClass }}"
+{{- end }}
 {{- if and .Values.subdomain .Values.hostname }}
 k8shell.io/subdomain: "{{ .Values.subdomain }}"
 {{- end }}
