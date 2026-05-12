@@ -195,15 +195,10 @@ func (p *ProvisionerService) GetWorkspacesByUserStr(
 		InjectionNamespaces: p.server.config.InjectNamespaces,
 	}
 
-	workspaceName := canUserStr.WorkspaceName()
-	if workspaceName != "" {
-		opts.Workspace = workspaceName
+	if parsedUserStr.Deploy() == "" {
+		opts.Workspace = canUserStr.WorkspaceName()
 	} else {
 		deployName := parsedUserStr.Deploy()
-		if deployName == "" {
-			return nil, status.Errorf(codes.InvalidArgument,
-				"userstr must specify a deployment name when workspace name cannot be determined (deploy=)")
-		}
 		namespace := parsedUserStr.Namespace("")
 		if namespace != "" && !p.server.config.AllowsInjectionNamespace(namespace) {
 			return nil, status.Errorf(codes.PermissionDenied,
