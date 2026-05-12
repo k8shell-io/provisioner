@@ -265,6 +265,10 @@ func sanitizeBlueprintForInjection(bp *models.Blueprint) (*models.Blueprint, err
 		copy.Podman.Storages[name] = s
 	}
 
+	// Disable network policies — the target namespace already has its own
+	// network policies and injecting workspace ones would conflict.
+	copy.Network.NetworkPolicyClass = ""
+
 	return &copy, nil
 }
 

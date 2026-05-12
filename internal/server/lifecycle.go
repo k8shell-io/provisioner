@@ -26,13 +26,16 @@ func (p *ProvisionerService) DeleteWorkspace(ctx context.Context,
 		return nil, status.Errorf(codes.InvalidArgument, "delay seconds cannot be greater than 60 seconds")
 	}
 
-	if _, pod, findErr := ws.FindWorkspace(ctx, p.server.helm, name, p.server.config.InjectNamespaces); findErr == nil && pod.Labels[helm.LabelInjected] == "true" {
+	_, pod, findErr := ws.FindWorkspace(ctx, p.server.helm, name, p.server.config.InjectNamespaces)
+	if findErr == nil && pod.Labels[helm.LabelInjected] == "true" {
 		owner, err := ws.FindOwnerWorkload(ctx, p.server.helm.KubeClient(), pod)
 		if err != nil {
-			return nil, status.Errorf(codes.Internal, "failed to find owning workload for injected workspace %s: %v", name, err)
+			return nil, status.Errorf(codes.Internal,
+				"failed to find owning workload for injected workspace %s: %v", name, err)
 		}
 		if owner == nil {
-			return nil, status.Errorf(codes.Internal, "could not determine owning workload for injected workspace %s", name)
+			return nil, status.Errorf(codes.Internal,
+				"could not determine owning workload for injected workspace %s", name)
 		}
 		workspace, err := p.prepareWorkspaceWithPod(ctx, pod)
 		if err != nil {
