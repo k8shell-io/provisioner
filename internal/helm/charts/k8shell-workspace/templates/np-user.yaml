@@ -1,4 +1,4 @@
-{{- if eq .Values.network.networkPolicyClass "user" }}
+{{- if and .Values.network (eq .Values.network.networkPolicyClass "user") }}
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
