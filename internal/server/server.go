@@ -220,6 +220,15 @@ func (s *Server) Serve() error {
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
 
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	// Start injection watcher when specific namespaces are configured (not cluster-wide).
+	if len(s.config.InjectNamespaces) > 0 && !s.config.IsClusterWideInjectionEnabled() {
+		watcher := NewInjectionWatcher(s.helm, s.config.InjectNamespaces)
+		go watcher.Run(ctx)
+	}
+
 	errChan := make(chan error, 1)
 	go func() {
 		s.log.Info().Msg("Starting gRPC server")
@@ -231,6 +240,7 @@ func (s *Server) Serve() error {
 	select {
 	case sig := <-sigChan:
 		s.log.Info().Msgf("Received signal %v, shutting down gracefully", sig)
+		cancel()
 		s.grpc.Stop()
 		s.log.Info().Msg("Server shutdown complete")
 		return nil

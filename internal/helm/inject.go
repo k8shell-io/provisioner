@@ -48,9 +48,9 @@ type InjectionSpec struct {
 // WorkspaceResourcesFromTemplate renders the workspace Helm chart and extracts
 // all non-Pod YAML documents (ConfigMaps, PVCs, NetworkPolicies, Certs, etc.)
 // as raw YAML strings, keyed by "kind/name".
-func (c *Client) WorkspaceResourcesFromTemplate(ctx context.Context, values map[string]interface{}, workspaceName string) (map[string]string, error) {
+func (c *Client) WorkspaceResourcesFromTemplate(ctx context.Context, values map[string]interface{}, workspaceCanonicalId string) (map[string]string, error) {
 	rendered, err := c.Template(ctx, WORKSPACE_CHART_NAME, InstallOptions{
-		ReleaseName: workspaceName,
+		ReleaseName: workspaceCanonicalId,
 		Values:      values,
 	})
 	if err != nil {
@@ -74,7 +74,7 @@ func (c *Client) WorkspaceResourcesFromTemplate(ctx context.Context, values map[
 			continue
 		}
 		if meta.Kind == "Pod" {
-			continue // Pod spec handled separately via InjectionSpecFromTemplate
+			continue
 		}
 		key := meta.Kind + "/" + meta.Metadata.Name
 		resources[key] = doc
@@ -468,25 +468,35 @@ func (c *Client) ApplyNamespacedResources(ctx context.Context, namespace string,
 }
 
 // DeleteNamespacedWorkspaceResources deletes all resources in namespace that
-// carry the k8shell.io/workspace label matching workspaceName.
-func (c *Client) DeleteNamespacedWorkspaceResources(ctx context.Context, namespace, workspaceName string) error {
-	selector := "k8shell.io/workspace=" + workspaceName
+// carry the k8shell.io/canonical-id label matching canonicalId.
+func (c *Client) DeleteNamespacedWorkspaceResources(ctx context.Context, namespace, canonicalId string) error {
+	selector := "k8shell.io/canonical-id=" + canonicalId
 	listOpts := metav1.ListOptions{LabelSelector: selector}
 	deleteOpts := metav1.DeleteOptions{}
 
 	kc := c.kubeClient
 
 	if err := kc.CoreV1().ConfigMaps(namespace).DeleteCollection(ctx, deleteOpts, listOpts); err != nil && !k8serrors.IsNotFound(err) {
-		return fmt.Errorf("failed to delete configmaps for workspace %s: %w", workspaceName, err)
+		return fmt.Errorf("failed to delete configmaps for canonical-id %s: %w", canonicalId, err)
 	}
-	if err := kc.CoreV1().PersistentVolumeClaims(namespace).DeleteCollection(ctx, deleteOpts, listOpts); err != nil && !k8serrors.IsNotFound(err) {
-		return fmt.Errorf("failed to delete PVCs for workspace %s: %w", workspaceName, err)
+	pvcs, err := kc.CoreV1().PersistentVolumeClaims(namespace).List(ctx, listOpts)
+	if err != nil && !k8serrors.IsNotFound(err) {
+		return fmt.Errorf("failed to list PVCs for canonical-id %s: %w", canonicalId, err)
+	}
+	for i := range pvcs.Items {
+		pvc := &pvcs.Items[i]
+		if pvc.Labels["k8shell.io/storage-type"] == "shared" {
+			continue
+		}
+		if err := kc.CoreV1().PersistentVolumeClaims(namespace).Delete(ctx, pvc.Name, deleteOpts); err != nil && !k8serrors.IsNotFound(err) {
+			return fmt.Errorf("failed to delete PVC %s for canonical-id %s: %w", pvc.Name, canonicalId, err)
+		}
 	}
 	if err := kc.NetworkingV1().NetworkPolicies(namespace).DeleteCollection(ctx, deleteOpts, listOpts); err != nil && !k8serrors.IsNotFound(err) {
-		return fmt.Errorf("failed to delete network policies for workspace %s: %w", workspaceName, err)
+		return fmt.Errorf("failed to delete network policies for canonical-id %s: %w", canonicalId, err)
 	}
 
-	c.log.Info().Str("namespace", namespace).Str("workspace", workspaceName).
+	c.log.Info().Str("namespace", namespace).Str("canonical-id", canonicalId).
 		Msg("deleted namespaced workspace resources")
 	return nil
 }

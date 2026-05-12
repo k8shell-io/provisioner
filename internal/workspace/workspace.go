@@ -256,7 +256,7 @@ func GetWorkspaces(
 	out := make([]*models.WorkspaceDetails, 0)
 	pods := make([]corev1.Pod, 0)
 
-	if opts.Workspace != "" {
+	if opts.Workspace != "" && opts.InjectTarget == "" {
 		p, err := v1.Pods(namespace).Get(ctx, opts.Workspace, metav1.GetOptions{})
 		if err != nil && !apierrors.IsNotFound(err) {
 			return nil, fmt.Errorf("failed to get workspace pod %q: %w", opts.Workspace, err)
@@ -267,7 +267,7 @@ func GetWorkspaces(
 				pods = append(pods, *p)
 			}
 		}
-	} else {
+	} else if opts.InjectTarget == "" {
 		labels := map[string]string{
 			"k8shell.io/type": "workspace",
 		}

@@ -175,7 +175,7 @@ func (w *Workspace) unlock() error {
 
 // doInstallation performs the actual installation of the workspace
 func (w *Workspace) doInstallation(ctx context.Context, opts *ProvisionOptions) (*models.WorkspaceStatus, error) {
-	if err := w.ensureSharedStorages(ctx, w.client.TargetNamespace()); err != nil {
+	if err := w.ensureSharedStorages(ctx, w.client.TargetNamespace(), ""); err != nil {
 		return nil, fmt.Errorf("failed to ensure shared storages: %w", err)
 	}
 
@@ -263,7 +263,7 @@ func (w *Workspace) doStart(ctx context.Context, opts *ProvisionOptions) (*model
 // Shared PVCs are named pvc-<storageName> and are not workspace-scoped, allowing multiple
 // workspaces to reference the same PVC. If a shared PVC already exists, it is left untouched.
 // A warning is logged when an existing PVC has different capacity or storage class.
-func (w *Workspace) ensureSharedStorages(ctx context.Context, namespace string) error {
+func (w *Workspace) ensureSharedStorages(ctx context.Context, namespace string, prefix string) error {
 	if w.blueprint == nil {
 		return nil
 	}
@@ -275,7 +275,7 @@ func (w *Workspace) ensureSharedStorages(ctx context.Context, namespace string) 
 			continue
 		}
 
-		pvcName := "pvc-" + name
+		pvcName := "pvc-" + prefix + name
 		if storage.Id != "" {
 			pvcName += "-" + storage.Id
 		}

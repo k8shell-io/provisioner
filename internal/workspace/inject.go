@@ -100,7 +100,7 @@ func (w *Workspace) Inject(ctx context.Context, opts *InjectOptions) (*models.Wo
 		return nil, fmt.Errorf("failed to apply workspace resources to namespace %s: %w", opts.Namespace, err)
 	}
 
-	if err := w.ensureSharedStorages(ctx, opts.Namespace); err != nil {
+	if err := w.ensureSharedStorages(ctx, opts.Namespace, opts.WorkspaceCanonicalId+"-"); err != nil {
 		return nil, fmt.Errorf("failed to ensure shared storages: %w", err)
 	}
 
