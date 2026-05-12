@@ -30,6 +30,9 @@ const (
 	// AnnotationInjectedSharePID records the original shareProcessNamespace value
 	// before injection so it can be restored on eject.
 	AnnotationInjectedSharePID = "k8shell.io/injected-share-pid"
+	// AnnotationInjectedCanonicalId records the canonical workspace ID used to
+	// label injected resources, so they can be found and deleted on eject.
+	AnnotationInjectedCanonicalId = "k8shell.io/injected-canonical-id"
 )
 
 // InjectionSpec holds the containers, init containers, volumes, and pod-template
@@ -226,7 +229,7 @@ func (c *Client) GetDeployment(ctx context.Context, namespace, name string) (*ap
 // in the Deployment's annotations so it can be reversed later.
 //
 // It fails if the Deployment is already injected with any workspace.
-func (c *Client) InjectIntoDeployment(ctx context.Context, namespace, deploymentName, workspaceName string, spec *InjectionSpec) error {
+func (c *Client) InjectIntoDeployment(ctx context.Context, namespace, deploymentName, workspaceName, canonicalId string, spec *InjectionSpec) error {
 	dep, err := c.kubeClient.AppsV1().Deployments(namespace).Get(ctx, deploymentName, metav1.GetOptions{})
 	if err != nil {
 		return fmt.Errorf("failed to get deployment %s/%s: %w", namespace, deploymentName, err)
@@ -290,6 +293,7 @@ func (c *Client) InjectIntoDeployment(ctx context.Context, namespace, deployment
 	var patch depPatch
 	patch.Metadata.Annotations = map[string]string{
 		AnnotationInjectedWorkspace:      workspaceName,
+		AnnotationInjectedCanonicalId:    canonicalId,
 		AnnotationInjectedContainers:     strings.Join(containerNames, ","),
 		AnnotationInjectedInitContainers: strings.Join(initNames, ","),
 		AnnotationInjectedVolumes:        strings.Join(volumeNames, ","),
@@ -333,21 +337,23 @@ func (c *Client) InjectIntoDeployment(ctx context.Context, namespace, deployment
 // EjectFromDeployment reverses a previous InjectIntoDeployment call. It reads
 // the injection tracking annotations from the Deployment, removes the named
 // containers/initContainers/volumes from the pod template, and clears the
-// annotations.
-func (c *Client) EjectFromDeployment(ctx context.Context, namespace, deploymentName, workspaceName string) error {
+// annotations. It returns the canonical ID of the ejected workspace so the
+// caller can delete the associated namespaced resources.
+func (c *Client) EjectFromDeployment(ctx context.Context, namespace, deploymentName, workspaceName string) (string, error) {
 	dep, err := c.kubeClient.AppsV1().Deployments(namespace).Get(ctx, deploymentName, metav1.GetOptions{})
 	if err != nil {
 		if k8serrors.IsNotFound(err) {
-			return nil // already gone — nothing to eject
+			return "", nil // already gone — nothing to eject
 		}
-		return fmt.Errorf("failed to get deployment %s/%s: %w", namespace, deploymentName, err)
+		return "", fmt.Errorf("failed to get deployment %s/%s: %w", namespace, deploymentName, err)
 	}
 
 	ann := dep.Annotations
 	if ann[AnnotationInjectedWorkspace] != workspaceName {
-		return fmt.Errorf("deployment %s/%s is not injected with workspace %q (found %q)",
+		return "", fmt.Errorf("deployment %s/%s is not injected with workspace %q (found %q)",
 			namespace, deploymentName, workspaceName, ann[AnnotationInjectedWorkspace])
 	}
+	canonicalId := ann[AnnotationInjectedCanonicalId]
 
 	removeSet := func(csv string) map[string]bool {
 		m := make(map[string]bool)
@@ -426,6 +432,7 @@ func (c *Client) EjectFromDeployment(ctx context.Context, namespace, deploymentN
 	// would need null, but StrategicMergePatch with "" effectively clears them).
 	patch.Metadata.Annotations = map[string]string{
 		AnnotationInjectedWorkspace:      "",
+		AnnotationInjectedCanonicalId:    "",
 		AnnotationInjectedContainers:     "",
 		AnnotationInjectedInitContainers: "",
 		AnnotationInjectedVolumes:        "",
@@ -444,19 +451,19 @@ func (c *Client) EjectFromDeployment(ctx context.Context, namespace, deploymentN
 
 	patchBytes, err := json.Marshal(patch)
 	if err != nil {
-		return fmt.Errorf("failed to marshal eject patch: %w", err)
+		return "", fmt.Errorf("failed to marshal eject patch: %w", err)
 	}
 
 	_, err = c.kubeClient.AppsV1().Deployments(namespace).Patch(
 		ctx, deploymentName, types.StrategicMergePatchType, patchBytes, metav1.PatchOptions{},
 	)
 	if err != nil {
-		return fmt.Errorf("failed to patch deployment %s/%s during eject: %w", namespace, deploymentName, err)
+		return "", fmt.Errorf("failed to patch deployment %s/%s during eject: %w", namespace, deploymentName, err)
 	}
 
 	c.log.Info().Str("namespace", namespace).Str("deployment", deploymentName).
 		Str("workspace", workspaceName).Msg("ejected workspace from deployment")
-	return nil
+	return canonicalId, nil
 }
 
 // ApplyNamespacedResources creates or updates each resource document in the

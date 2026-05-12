@@ -9,6 +9,9 @@ import (
 	"github.com/k8shell-io/common/pkg/models"
 	"github.com/k8shell-io/provisioner/internal/helm"
 	"gopkg.in/yaml.v3"
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/kubernetes"
 )
 
 // InjectOptions controls the behaviour of workspace injection into an existing Deployment.
@@ -104,7 +107,7 @@ func (w *Workspace) Inject(ctx context.Context, opts *InjectOptions) (*models.Wo
 		return nil, fmt.Errorf("failed to ensure shared storages: %w", err)
 	}
 
-	if err := w.client.InjectIntoDeployment(ctx, opts.Namespace, opts.DeploymentName, w.Name, spec); err != nil {
+	if err := w.client.InjectIntoDeployment(ctx, opts.Namespace, opts.DeploymentName, w.Name, opts.WorkspaceCanonicalId, spec); err != nil {
 		return nil, fmt.Errorf("failed to inject into deployment %s/%s: %w", opts.Namespace, opts.DeploymentName, err)
 	}
 
@@ -159,12 +162,13 @@ func (w *Workspace) Eject(ctx context.Context, opts *EjectOptions) error {
 		Msg("ejecting workspace from deployment")
 
 	// Step 1+2: read annotations and patch the Deployment.
-	if err := w.client.EjectFromDeployment(ctx, opts.Namespace, opts.DeploymentName, w.Name); err != nil {
+	canonicalId, err := w.client.EjectFromDeployment(ctx, opts.Namespace, opts.DeploymentName, w.Name)
+	if err != nil {
 		return fmt.Errorf("failed to eject from deployment %s/%s: %w", opts.Namespace, opts.DeploymentName, err)
 	}
 
 	// Step 3: delete all workspace resources in the target namespace.
-	if err := w.client.DeleteNamespacedWorkspaceResources(ctx, opts.Namespace, w.Name); err != nil {
+	if err := w.client.DeleteNamespacedWorkspaceResources(ctx, opts.Namespace, canonicalId); err != nil {
 		return fmt.Errorf("failed to delete workspace resources in namespace %s: %w", opts.Namespace, err)
 	}
 
@@ -262,4 +266,26 @@ func toStringSlice(value interface{}) []string {
 	default:
 		return nil
 	}
+}
+
+// FindOwnerDeploymentName traverses a pod's owner references (pod → ReplicaSet → Deployment)
+// and returns the owning Deployment name, or "" if the pod is not owned by a Deployment.
+func FindOwnerDeploymentName(ctx context.Context, kubeClient kubernetes.Interface, pod *corev1.Pod) (string, error) {
+	for _, owner := range pod.OwnerReferences {
+		switch owner.Kind {
+		case "Deployment":
+			return owner.Name, nil
+		case "ReplicaSet":
+			rs, err := kubeClient.AppsV1().ReplicaSets(pod.Namespace).Get(ctx, owner.Name, metav1.GetOptions{})
+			if err != nil {
+				continue
+			}
+			for _, rsOwner := range rs.OwnerReferences {
+				if rsOwner.Kind == "Deployment" {
+					return rsOwner.Name, nil
+				}
+			}
+		}
+	}
+	return "", nil
 }

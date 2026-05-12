@@ -34,6 +34,21 @@ type Server struct {
 	provisionJobsKV *natsc.JetStreamKV
 }
 
+// ProvisionerService implements the gRPC service for workspace provisioning
+type ProvisionerService struct {
+	server *Server
+	log    *zerolog.Logger
+	provisionerv1.UnimplementedProvisionerServiceServer
+}
+
+// NewProvisionerService creates a new instance of the ProvisionerService
+func NewProvisionerService(server *Server) *ProvisionerService {
+	return &ProvisionerService{
+		server: server,
+		log:    server.log,
+	}
+}
+
 func NewServer(configFile string, appVersion string, commit string) (*Server, error) {
 	server := &Server{
 		log: log.NewLogger("server"),
@@ -223,8 +238,8 @@ func (s *Server) Serve() error {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	// Start injection watcher when specific namespaces are configured (not cluster-wide).
-	if len(s.config.InjectNamespaces) > 0 && !s.config.IsClusterWideInjectionEnabled() {
+	// Start injection watcher whenever injection is configured.
+	if len(s.config.InjectNamespaces) > 0 {
 		watcher := NewInjectionWatcher(s.helm, s.config.InjectNamespaces)
 		go watcher.Run(ctx)
 	}
