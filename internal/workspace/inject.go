@@ -104,7 +104,7 @@ func (w *Workspace) Inject(ctx context.Context, opts *InjectOptions) (*models.Wo
 
 	resourceLabels := map[string]string{
 		"k8shell.io/canonical-id":  opts.WorkspaceCanonicalId,
-		"k8shell.io/inject-target": opts.WorkloadKind + "/" + opts.WorkloadName,
+		"k8shell.io/inject-target": opts.WorkloadKind + "." + opts.WorkloadName,
 		"k8shell.io/managed-by":    "k8shell-provisioner",
 	}
 
