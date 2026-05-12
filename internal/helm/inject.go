@@ -2,15 +2,12 @@ package helm
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"strings"
 
-	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	k8serrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/types"
 	sigsyaml "sigs.k8s.io/yaml"
 )
 
@@ -215,57 +212,15 @@ func (c *Client) InjectionSpecFromTemplate(ctx context.Context,
 	}, nil
 }
 
-// GetDeployment retrieves a Deployment from the given namespace.
-func (c *Client) GetDeployment(ctx context.Context, namespace, name string) (*appsv1.Deployment, error) {
-	dep, err := c.kubeClient.AppsV1().Deployments(namespace).Get(ctx, name, metav1.GetOptions{})
-	if err != nil {
-		return nil, fmt.Errorf("failed to get deployment %s/%s: %w", namespace, name, err)
-	}
-	return dep, nil
-}
-
-// InjectIntoDeployment patches the target Deployment to append the k8shell
-// containers, init containers, and volumes from spec, and records the injection
-// in the Deployment's annotations so it can be reversed later.
-//
-// It fails if the Deployment is already injected with any workspace.
-func (c *Client) InjectIntoDeployment(ctx context.Context, namespace, deploymentName, workspaceName, canonicalId string, spec *InjectionSpec) error {
-	dep, err := c.kubeClient.AppsV1().Deployments(namespace).Get(ctx, deploymentName, metav1.GetOptions{})
-	if err != nil {
-		return fmt.Errorf("failed to get deployment %s/%s: %w", namespace, deploymentName, err)
-	}
-
-	// Guard: one injection per Deployment at a time.
-	if existing := dep.Annotations[AnnotationInjectedWorkspace]; existing != "" {
-		return fmt.Errorf("deployment %s/%s is already injected with workspace %q; eject it first",
-			namespace, deploymentName, existing)
-	}
-
-	// Build the strategic merge patch.
-	type containerPatch struct {
-		Name string `json:"name"`
-	}
-	type specPatch struct {
-		ShareProcessNamespace *bool              `json:"shareProcessNamespace"`
-		InitContainers        []corev1.Container `json:"initContainers,omitempty"`
-		Containers            []corev1.Container `json:"containers"`
-		Volumes               []corev1.Volume    `json:"volumes,omitempty"`
-	}
-	type templateMeta struct {
-		Labels      map[string]string `json:"labels,omitempty"`
-		Annotations map[string]string `json:"annotations,omitempty"`
-	}
-	type templatePatch struct {
-		Metadata templateMeta `json:"metadata,omitempty"`
-		Spec     specPatch    `json:"spec"`
-	}
-	type depPatch struct {
-		Metadata struct {
-			Annotations map[string]string `json:"annotations"`
-		} `json:"metadata"`
-		Spec struct {
-			Template templatePatch `json:"template"`
-		} `json:"spec"`
+// InjectIntoWorkload injects the workspace into the workload identified by adapter,
+// appending containers, init containers, and volumes from spec, and recording the
+// injection in the workload's annotations so it can be reversed by EjectFromWorkload.
+// It fails if the workload is already injected with any workspace.
+func (c *Client) InjectIntoWorkload(ctx context.Context, adapter WorkloadAdapter, workspaceName, canonicalId string, spec *InjectionSpec) error {
+	// Guard: one injection per workload at a time.
+	if existing := adapter.GetAnnotations()[AnnotationInjectedWorkspace]; existing != "" {
+		return fmt.Errorf("%s %s/%s is already injected with workspace %q; eject it first",
+			adapter.Kind(), adapter.Namespace(), adapter.Name(), existing)
 	}
 
 	// Collect injected names for the tracking annotations.
@@ -283,75 +238,60 @@ func (c *Client) InjectIntoDeployment(ctx context.Context, namespace, deployment
 	}
 
 	// Record original shareProcessNamespace so eject can restore it.
-	origSharePID := dep.Spec.Template.Spec.ShareProcessNamespace
+	tpl := adapter.GetPodTemplate()
+	origSharePID := tpl.Spec.ShareProcessNamespace
 	origSharePIDStr := "false"
 	if origSharePID != nil && *origSharePID {
 		origSharePIDStr = "true"
 	}
+
+	// Set tracking annotations on the workload object.
+	adapter.SetAnnotation(AnnotationInjectedWorkspace, workspaceName)
+	adapter.SetAnnotation(AnnotationInjectedCanonicalId, canonicalId)
+	adapter.SetAnnotation(AnnotationInjectedContainers, strings.Join(containerNames, ","))
+	adapter.SetAnnotation(AnnotationInjectedInitContainers, strings.Join(initNames, ","))
+	adapter.SetAnnotation(AnnotationInjectedVolumes, strings.Join(volumeNames, ","))
+	adapter.SetAnnotation(AnnotationInjectedSharePID, origSharePIDStr)
+
+	// Mutate the pod template.
+	if tpl.Labels == nil {
+		tpl.Labels = make(map[string]string)
+	}
+	for k, v := range spec.PodLabels {
+		tpl.Labels[k] = v
+	}
+	tpl.Labels[LabelInjected] = "true"
+	if tpl.Annotations == nil {
+		tpl.Annotations = make(map[string]string)
+	}
+	for k, v := range spec.PodAnnotations {
+		tpl.Annotations[k] = v
+	}
 	trueVal := true
+	tpl.Spec.ShareProcessNamespace = &trueVal
+	tpl.Spec.InitContainers = append(tpl.Spec.InitContainers, spec.InitContainers...)
+	tpl.Spec.Containers = append(tpl.Spec.Containers, spec.Containers...)
+	tpl.Spec.Volumes = append(tpl.Spec.Volumes, spec.Volumes...)
+	adapter.SetPodTemplate(tpl)
 
-	var patch depPatch
-	patch.Metadata.Annotations = map[string]string{
-		AnnotationInjectedWorkspace:      workspaceName,
-		AnnotationInjectedCanonicalId:    canonicalId,
-		AnnotationInjectedContainers:     strings.Join(containerNames, ","),
-		AnnotationInjectedInitContainers: strings.Join(initNames, ","),
-		AnnotationInjectedVolumes:        strings.Join(volumeNames, ","),
-		AnnotationInjectedSharePID:       origSharePIDStr,
-	}
-	patch.Spec.Template.Metadata = templateMeta{
-		Labels:      spec.PodLabels,
-		Annotations: spec.PodAnnotations,
-	}
-	// Always stamp the injected marker so GetWorkspaces can discover injected
-	// pods cluster-wide without relying on k8shell.io/type which is not safe to
-	// carry over to arbitrary Deployments.
-	if patch.Spec.Template.Metadata.Labels == nil {
-		patch.Spec.Template.Metadata.Labels = make(map[string]string)
-	}
-	patch.Spec.Template.Metadata.Labels[LabelInjected] = "true"
-	patch.Spec.Template.Spec = specPatch{
-		ShareProcessNamespace: &trueVal,
-		InitContainers:        spec.InitContainers,
-		Containers:            spec.Containers,
-		Volumes:               spec.Volumes,
+	if err := adapter.Update(ctx, c.kubeClient); err != nil {
+		return fmt.Errorf("failed to update %s %s/%s: %w", adapter.Kind(), adapter.Namespace(), adapter.Name(), err)
 	}
 
-	patchBytes, err := json.Marshal(patch)
-	if err != nil {
-		return fmt.Errorf("failed to marshal injection patch: %w", err)
-	}
-
-	_, err = c.kubeClient.AppsV1().Deployments(namespace).Patch(
-		ctx, deploymentName, types.StrategicMergePatchType, patchBytes, metav1.PatchOptions{},
-	)
-	if err != nil {
-		return fmt.Errorf("failed to patch deployment %s/%s: %w", namespace, deploymentName, err)
-	}
-
-	c.log.Info().Str("namespace", namespace).Str("deployment", deploymentName).
-		Str("workspace", workspaceName).Msg("injected workspace into deployment")
+	c.log.Info().Str("kind", adapter.Kind()).Str("namespace", adapter.Namespace()).
+		Str("name", adapter.Name()).Str("workspace", workspaceName).Msg("injected workspace into workload")
 	return nil
 }
 
-// EjectFromDeployment reverses a previous InjectIntoDeployment call. It reads
-// the injection tracking annotations from the Deployment, removes the named
-// containers/initContainers/volumes from the pod template, and clears the
-// annotations. It returns the canonical ID of the ejected workspace so the
-// caller can delete the associated namespaced resources.
-func (c *Client) EjectFromDeployment(ctx context.Context, namespace, deploymentName, workspaceName string) (string, error) {
-	dep, err := c.kubeClient.AppsV1().Deployments(namespace).Get(ctx, deploymentName, metav1.GetOptions{})
-	if err != nil {
-		if k8serrors.IsNotFound(err) {
-			return "", nil // already gone — nothing to eject
-		}
-		return "", fmt.Errorf("failed to get deployment %s/%s: %w", namespace, deploymentName, err)
-	}
-
-	ann := dep.Annotations
+// EjectFromWorkload reverses a previous InjectIntoWorkload call. It reads the
+// injection tracking annotations, removes the named containers/initContainers/volumes
+// from the pod template, clears the annotations, and returns the canonical ID so
+// the caller can delete the associated namespaced resources.
+func (c *Client) EjectFromWorkload(ctx context.Context, adapter WorkloadAdapter, workspaceName string) (string, error) {
+	ann := adapter.GetAnnotations()
 	if ann[AnnotationInjectedWorkspace] != workspaceName {
-		return "", fmt.Errorf("deployment %s/%s is not injected with workspace %q (found %q)",
-			namespace, deploymentName, workspaceName, ann[AnnotationInjectedWorkspace])
+		return "", fmt.Errorf("%s %s/%s is not injected with workspace %q (found %q)",
+			adapter.Kind(), adapter.Namespace(), adapter.Name(), workspaceName, ann[AnnotationInjectedWorkspace])
 	}
 	canonicalId := ann[AnnotationInjectedCanonicalId]
 
@@ -369,13 +309,14 @@ func (c *Client) EjectFromDeployment(ctx context.Context, namespace, deploymentN
 	rmInit := removeSet(ann[AnnotationInjectedInitContainers])
 	rmVolumes := removeSet(ann[AnnotationInjectedVolumes])
 
-	// Filter containers, initContainers, volumes and pod labels.
-	newContainers := filterContainers(dep.Spec.Template.Spec.Containers, rmContainers)
-	newInit := filterContainers(dep.Spec.Template.Spec.InitContainers, rmInit)
-	newVolumes := filterVolumes(dep.Spec.Template.Spec.Volumes, rmVolumes)
+	tpl := adapter.GetPodTemplate()
 
-	// Remove only the labels that injection added. Removing all k8shell.io/ labels
-	// would break Deployments whose selector references pre-existing k8shell.io/ labels.
+	// Remove injected containers, init containers, volumes.
+	tpl.Spec.Containers = filterContainers(tpl.Spec.Containers, rmContainers)
+	tpl.Spec.InitContainers = filterContainers(tpl.Spec.InitContainers, rmInit)
+	tpl.Spec.Volumes = filterVolumes(tpl.Spec.Volumes, rmVolumes)
+
+	// Remove only the labels injection added (preserve selector-referenced labels).
 	injectedLabelKeys := map[string]bool{
 		LabelInjected:               true,
 		"k8shell.io/canonical-id":   true,
@@ -386,59 +327,55 @@ func (c *Client) EjectFromDeployment(ctx context.Context, namespace, deploymentN
 		"k8shell.io/network-policy": true,
 		"k8shell.io/subdomain":      true,
 	}
-	newPodLabels := make(map[string]string)
-	for k, v := range dep.Spec.Template.Labels {
-		if injectedLabelKeys[k] {
-			continue
+	newLabels := make(map[string]string)
+	for k, v := range tpl.Labels {
+		if !injectedLabelKeys[k] {
+			newLabels[k] = v
 		}
-		newPodLabels[k] = v
 	}
+	tpl.Labels = newLabels
 
-	// Remove the workspace annotations that were injected into the pod template.
+	// Remove workspace annotations injected into the pod template.
 	injectedAnnotationKeys := map[string]bool{
 		"k8shell.io/userstr":          true,
 		"workspace.k8shell.io/splash": true,
 	}
-	newPodAnnotations := make(map[string]string)
-	for k, v := range dep.Spec.Template.Annotations {
+	newAnnotations := make(map[string]string)
+	for k, v := range tpl.Annotations {
 		if !injectedAnnotationKeys[k] {
-			newPodAnnotations[k] = v
+			newAnnotations[k] = v
 		}
 	}
+	tpl.Annotations = newAnnotations
 
-	// Restore shareProcessNamespace to its original value.
+	// Restore shareProcessNamespace.
 	falseVal := false
 	restorePID := &falseVal
 	if ann[AnnotationInjectedSharePID] == "true" {
 		trueVal := true
 		restorePID = &trueVal
 	}
+	tpl.Spec.ShareProcessNamespace = restorePID
+	adapter.SetPodTemplate(tpl)
 
-	// Apply all changes directly to the deployment object and use Update so that
-	// array fields (containers, volumes) are fully replaced. Strategic merge patch
-	// merges arrays by the "name" key and cannot remove elements, so patching would
-	// leave the injected volumes in the pod template and new pods would fail to mount
-	// the already-deleted ConfigMaps.
-	dep.Spec.Template.Spec.Containers = newContainers
-	dep.Spec.Template.Spec.InitContainers = newInit
-	dep.Spec.Template.Spec.Volumes = newVolumes
-	dep.Spec.Template.Labels = newPodLabels
-	dep.Spec.Template.Annotations = newPodAnnotations
-	dep.Spec.Template.Spec.ShareProcessNamespace = restorePID
-	dep.Annotations[AnnotationInjectedWorkspace] = ""
-	dep.Annotations[AnnotationInjectedCanonicalId] = ""
-	dep.Annotations[AnnotationInjectedContainers] = ""
-	dep.Annotations[AnnotationInjectedInitContainers] = ""
-	dep.Annotations[AnnotationInjectedVolumes] = ""
-	dep.Annotations[AnnotationInjectedSharePID] = ""
-
-	_, err = c.kubeClient.AppsV1().Deployments(namespace).Update(ctx, dep, metav1.UpdateOptions{})
-	if err != nil {
-		return "", fmt.Errorf("failed to update deployment %s/%s during eject: %w", namespace, deploymentName, err)
+	// Clear tracking annotations.
+	for _, key := range []string{
+		AnnotationInjectedWorkspace,
+		AnnotationInjectedCanonicalId,
+		AnnotationInjectedContainers,
+		AnnotationInjectedInitContainers,
+		AnnotationInjectedVolumes,
+		AnnotationInjectedSharePID,
+	} {
+		adapter.SetAnnotation(key, "")
 	}
 
-	c.log.Info().Str("namespace", namespace).Str("deployment", deploymentName).
-		Str("workspace", workspaceName).Msg("ejected workspace from deployment")
+	if err := adapter.Update(ctx, c.kubeClient); err != nil {
+		return "", fmt.Errorf("failed to update %s %s/%s during eject: %w", adapter.Kind(), adapter.Namespace(), adapter.Name(), err)
+	}
+
+	c.log.Info().Str("kind", adapter.Kind()).Str("namespace", adapter.Namespace()).
+		Str("name", adapter.Name()).Str("workspace", workspaceName).Msg("ejected workspace from workload")
 	return canonicalId, nil
 }
 

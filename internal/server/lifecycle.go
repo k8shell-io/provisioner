@@ -27,21 +27,22 @@ func (p *ProvisionerService) DeleteWorkspace(ctx context.Context,
 	}
 
 	if _, pod, findErr := ws.FindWorkspace(ctx, p.server.helm, name, p.server.config.InjectNamespaces); findErr == nil && pod.Labels[helm.LabelInjected] == "true" {
-		deploymentName, err := ws.FindOwnerDeploymentName(ctx, p.server.helm.KubeClient(), pod)
+		owner, err := ws.FindOwnerWorkload(ctx, p.server.helm.KubeClient(), pod)
 		if err != nil {
-			return nil, status.Errorf(codes.Internal, "failed to find deployment for injected workspace %s: %v", name, err)
+			return nil, status.Errorf(codes.Internal, "failed to find owning workload for injected workspace %s: %v", name, err)
 		}
-		if deploymentName == "" {
-			return nil, status.Errorf(codes.Internal, "could not determine owning deployment for injected workspace %s", name)
+		if owner == nil {
+			return nil, status.Errorf(codes.Internal, "could not determine owning workload for injected workspace %s", name)
 		}
 		workspace, err := p.prepareWorkspaceWithPod(ctx, pod)
 		if err != nil {
 			return nil, err
 		}
 		ejectOpts := &ws.EjectOptions{
-			Namespace:      pod.Namespace,
-			DeploymentName: deploymentName,
-			Timeout:        60,
+			Namespace:    pod.Namespace,
+			WorkloadName: owner.Name,
+			WorkloadKind: owner.Kind,
+			Timeout:      60,
 		}
 		if req.DelaySeconds > 0 {
 			bgCtx := context.WithoutCancel(ctx)
@@ -224,7 +225,7 @@ func (p *ProvisionerService) StopWorkspace(ctx context.Context,
 	}, nil
 }
 
-// EjectWorkspace removes a previously injected workspace from a Deployment and
+// EjectWorkspace removes a previously injected workspace from a workload and
 // deletes all supporting resources (ConfigMaps, PVCs, NetworkPolicies) in the
 // target namespace.
 func (p *ProvisionerService) EjectWorkspace(
@@ -234,17 +235,21 @@ func (p *ProvisionerService) EjectWorkspace(
 	if req.Namespace == "" {
 		return nil, status.Errorf(codes.InvalidArgument, "namespace is required")
 	}
-	if req.DeploymentName == "" {
-		return nil, status.Errorf(codes.InvalidArgument, "deployment_name is required")
+	if req.WorkloadName == "" {
+		return nil, status.Errorf(codes.InvalidArgument, "workload_name is required")
+	}
+	workloadKind := req.WorkloadKind
+	if workloadKind == "" {
+		workloadKind = "Deployment"
 	}
 
-	dep, err := p.server.helm.GetDeployment(ctx, req.Namespace, req.DeploymentName)
+	adapter, err := p.server.helm.GetWorkloadAdapter(ctx, req.Namespace, workloadKind, req.WorkloadName)
 	if err != nil {
-		return nil, status.Errorf(codes.NotFound, "deployment %s/%s not found: %v", req.Namespace, req.DeploymentName, err)
+		return nil, status.Errorf(codes.NotFound, "workload %s/%s/%s not found: %v", workloadKind, req.Namespace, req.WorkloadName, err)
 	}
-	workspaceName := dep.Annotations[helm.AnnotationInjectedWorkspace]
+	workspaceName := adapter.GetAnnotations()[helm.AnnotationInjectedWorkspace]
 	if workspaceName == "" {
-		return nil, status.Errorf(codes.FailedPrecondition, "deployment %s/%s does not have an injected workspace", req.Namespace, req.DeploymentName)
+		return nil, status.Errorf(codes.FailedPrecondition, "%s %s/%s does not have an injected workspace", workloadKind, req.Namespace, req.WorkloadName)
 	}
 
 	workspace, err := ws.NewWorkspaceForEject(workspaceName, p.server.helm)
@@ -258,9 +263,10 @@ func (p *ProvisionerService) EjectWorkspace(
 	}
 
 	if err := workspace.Eject(ctx, &ws.EjectOptions{
-		Namespace:      req.Namespace,
-		DeploymentName: req.DeploymentName,
-		Timeout:        timeout,
+		Namespace:    req.Namespace,
+		WorkloadName: req.WorkloadName,
+		WorkloadKind: workloadKind,
+		Timeout:      timeout,
 	}); err != nil {
 		return nil, status.Errorf(codes.Internal, "failed to eject workspace %s: %v", workspaceName, err)
 	}

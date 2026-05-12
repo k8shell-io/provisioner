@@ -59,14 +59,12 @@ func (p *ProvisionerService) waitForWorkspacePodGone(ctx context.Context, name s
 	}
 }
 
-// verifyDeploymentExists checks that a Deployment with the given name exists in namespace.
-func (p *ProvisionerService) verifyDeploymentExists(ctx context.Context, namespace, deploymentName string) error {
-	_, err := p.server.helm.KubeClient().AppsV1().Deployments(namespace).Get(ctx, deploymentName, metav1.GetOptions{})
+// verifyWorkloadExists checks that a supported workload (Deployment, StatefulSet, DaemonSet)
+// with the given kind, namespace, and name exists.
+func (p *ProvisionerService) verifyWorkloadExists(ctx context.Context, namespace, kind, name string) error {
+	_, err := p.server.helm.GetWorkloadAdapter(ctx, namespace, kind, name)
 	if err != nil {
-		if k8sErrors.IsNotFound(err) {
-			return status.Errorf(codes.NotFound, "deployment %s/%s not found", namespace, deploymentName)
-		}
-		return status.Errorf(codes.Internal, "failed to get deployment %s/%s: %v", namespace, deploymentName, err)
+		return status.Errorf(codes.NotFound, "%s %s/%s not found: %v", kind, namespace, name, err)
 	}
 	return nil
 }

@@ -14,12 +14,15 @@ import (
 	"k8s.io/client-go/kubernetes"
 )
 
-// InjectOptions controls the behaviour of workspace injection into an existing Deployment.
+// InjectOptions controls the behaviour of workspace injection into an existing workload.
 type InjectOptions struct {
-	// Namespace is the namespace that contains the target Deployment.
+	// Namespace is the namespace that contains the target workload.
 	Namespace string
-	// DeploymentName is the name of the existing Deployment to inject into.
-	DeploymentName string
+	// WorkloadName is the name of the existing workload to inject into.
+	WorkloadName string
+	// WorkloadKind is the kind of the target workload (Deployment, StatefulSet, DaemonSet).
+	// Defaults to "Deployment" when empty.
+	WorkloadKind string
 	// WorkspaceCanonicalId is the canonical identifier of the workspace,
 	// used for tracking and labeling injected resources.
 	WorkspaceCanonicalId string
@@ -32,19 +35,22 @@ type InjectOptions struct {
 	Messages chan models.WorkspaceStreamEvent
 }
 
-// EjectOptions controls the behaviour of workspace ejection from a Deployment.
+// EjectOptions controls the behaviour of workspace ejection from a workload.
 type EjectOptions struct {
-	// Namespace is the namespace that contains the target Deployment.
+	// Namespace is the namespace that contains the target workload.
 	Namespace string
-	// DeploymentName is the name of the Deployment to eject from.
-	DeploymentName string
+	// WorkloadName is the name of the workload to eject from.
+	WorkloadName string
+	// WorkloadKind is the kind of the target workload (Deployment, StatefulSet, DaemonSet).
+	// Defaults to "Deployment" when empty.
+	WorkloadKind string
 	// Timeout is the maximum number of seconds to wait for the rolling update
 	// that removes the injected containers. 0 means use the default (60 s).
 	Timeout int
 }
 
 // Inject provisions the k8shell workspace by injecting the workspace containers and volumes into an
-// existing Deployment. The target Deployment is identified by the namespace and name provided in the InjectOptions
+// existing workload. The target workload is identified by the namespace and name provided in the InjectOptions
 func (w *Workspace) Inject(ctx context.Context, opts *InjectOptions) (*models.WorkspaceStatus, error) {
 	if opts == nil {
 		return nil, fmt.Errorf("inject options are required")
@@ -58,8 +64,11 @@ func (w *Workspace) Inject(ctx context.Context, opts *InjectOptions) (*models.Wo
 	if !w.config.AllowsInjectionNamespace(opts.Namespace) {
 		return nil, fmt.Errorf("inject options: namespace %q is not allowed by config injectNamespaces", opts.Namespace)
 	}
-	if opts.DeploymentName == "" {
-		return nil, fmt.Errorf("inject options: deploymentName is required")
+	if opts.WorkloadName == "" {
+		return nil, fmt.Errorf("inject options: workloadName is required")
+	}
+	if opts.WorkloadKind == "" {
+		opts.WorkloadKind = "Deployment"
 	}
 	if opts.Timeout == 0 {
 		opts.Timeout = 120
@@ -68,8 +77,9 @@ func (w *Workspace) Inject(ctx context.Context, opts *InjectOptions) (*models.Wo
 	w.log.Info().
 		Str("workspace", w.Name).
 		Str("namespace", opts.Namespace).
-		Str("deployment", opts.DeploymentName).
-		Msg("injecting workspace into deployment")
+		Str("kind", opts.WorkloadKind).
+		Str("workload", opts.WorkloadName).
+		Msg("injecting workspace into workload")
 
 	var err error
 	w.blueprint, err = sanitizeBlueprintForInjection(w.blueprint)
@@ -94,7 +104,7 @@ func (w *Workspace) Inject(ctx context.Context, opts *InjectOptions) (*models.Wo
 
 	resourceLabels := map[string]string{
 		"k8shell.io/canonical-id":  opts.WorkspaceCanonicalId,
-		"k8shell.io/inject-target": opts.DeploymentName,
+		"k8shell.io/inject-target": opts.WorkloadKind + "/" + opts.WorkloadName,
 		"k8shell.io/managed-by":    "k8shell-provisioner",
 	}
 
@@ -107,15 +117,22 @@ func (w *Workspace) Inject(ctx context.Context, opts *InjectOptions) (*models.Wo
 		return nil, fmt.Errorf("failed to ensure shared storages: %w", err)
 	}
 
-	if err := w.client.InjectIntoDeployment(ctx, opts.Namespace, opts.DeploymentName, w.Name, opts.WorkspaceCanonicalId, spec); err != nil {
-		return nil, fmt.Errorf("failed to inject into deployment %s/%s: %w", opts.Namespace, opts.DeploymentName, err)
+	adapter, err := w.client.GetWorkloadAdapter(ctx, opts.Namespace, opts.WorkloadKind, opts.WorkloadName)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get workload adapter for %s/%s/%s: %w", opts.WorkloadKind,
+			opts.Namespace, opts.WorkloadName, err)
+	}
+	if err := w.client.InjectIntoWorkload(ctx, adapter, w.Name, opts.WorkspaceCanonicalId, spec); err != nil {
+		return nil, fmt.Errorf("failed to inject into %s %s/%s: %w", opts.WorkloadKind, opts.Namespace,
+			opts.WorkloadName, err)
 	}
 
 	w.log.Info().
 		Str("workspace", w.Name).
-		Str("deployment", opts.DeploymentName).
+		Str("kind", opts.WorkloadKind).
+		Str("workload", opts.WorkloadName).
 		Str("namespace", opts.Namespace).
-		Msg("deployment patched, waiting for pods to become running")
+		Msg("workload patched, waiting for pods to become running")
 
 	// Watch the pods that belong to the Deployment in the target namespace.
 	// PodWatcher identifies pods by the k8shell.io/canonical-id label that was
@@ -141,8 +158,8 @@ func (w *Workspace) Inject(ctx context.Context, opts *InjectOptions) (*models.Wo
 }
 
 // Eject reverses a previous Inject call:
-//  1. Reads injection tracking annotations from the Deployment.
-//  2. Patches the Deployment to remove the injected containers/volumes (rolling update fires).
+//  1. Reads injection tracking annotations from the workload.
+//  2. Updates the workload to remove the injected containers/volumes (rolling update fires).
 //  3. Deletes all workspace-labeled resources from the target namespace.
 func (w *Workspace) Eject(ctx context.Context, opts *EjectOptions) error {
 	if opts == nil {
@@ -151,20 +168,31 @@ func (w *Workspace) Eject(ctx context.Context, opts *EjectOptions) error {
 	if opts.Namespace == "" {
 		return fmt.Errorf("eject options: namespace is required")
 	}
-	if opts.DeploymentName == "" {
-		return fmt.Errorf("eject options: deploymentName is required")
+	if opts.WorkloadName == "" {
+		return fmt.Errorf("eject options: workloadName is required")
+	}
+	if opts.WorkloadKind == "" {
+		opts.WorkloadKind = "Deployment"
 	}
 
 	w.log.Info().
 		Str("workspace", w.Name).
 		Str("namespace", opts.Namespace).
-		Str("deployment", opts.DeploymentName).
-		Msg("ejecting workspace from deployment")
+		Str("kind", opts.WorkloadKind).
+		Str("workload", opts.WorkloadName).
+		Msg("ejecting workspace from workload")
 
-	// Step 1+2: read annotations and patch the Deployment.
-	canonicalId, err := w.client.EjectFromDeployment(ctx, opts.Namespace, opts.DeploymentName, w.Name)
+	adapter, err := w.client.GetWorkloadAdapter(ctx, opts.Namespace, opts.WorkloadKind, opts.WorkloadName)
 	if err != nil {
-		return fmt.Errorf("failed to eject from deployment %s/%s: %w", opts.Namespace, opts.DeploymentName, err)
+		return fmt.Errorf("failed to get workload adapter for %s/%s/%s: %w", opts.WorkloadKind, opts.Namespace,
+			opts.WorkloadName, err)
+	}
+
+	// Step 1+2: read annotations and update the workload.
+	canonicalId, err := w.client.EjectFromWorkload(ctx, adapter, w.Name)
+	if err != nil {
+		return fmt.Errorf("failed to eject from %s %s/%s: %w", opts.WorkloadKind, opts.Namespace,
+			opts.WorkloadName, err)
 	}
 
 	// Step 3: delete all workspace resources in the target namespace.
@@ -175,19 +203,23 @@ func (w *Workspace) Eject(ctx context.Context, opts *EjectOptions) error {
 	w.log.Info().
 		Str("workspace", w.Name).
 		Str("namespace", opts.Namespace).
-		Str("deployment", opts.DeploymentName).
+		Str("kind", opts.WorkloadKind).
+		Str("workload", opts.WorkloadName).
 		Msg("workspace ejected successfully")
 	return nil
 }
 
-// IsInjected returns true when the named Deployment in the given namespace
+// IsInjected returns true when the named workload in the given namespace
 // carries the injection annotation for this workspace.
-func (w *Workspace) IsInjected(ctx context.Context, namespace, deploymentName string) (bool, error) {
-	dep, err := w.client.GetDeployment(ctx, namespace, deploymentName)
+func (w *Workspace) IsInjected(ctx context.Context, namespace, workloadKind, workloadName string) (bool, error) {
+	if workloadKind == "" {
+		workloadKind = "Deployment"
+	}
+	adapter, err := w.client.GetWorkloadAdapter(ctx, namespace, workloadKind, workloadName)
 	if err != nil {
 		return false, err
 	}
-	return dep.Annotations[helm.AnnotationInjectedWorkspace] == w.Name, nil
+	return adapter.GetAnnotations()[helm.AnnotationInjectedWorkspace] == w.Name, nil
 }
 
 // sanitizeBlueprintForInjection returns a deep copy of bp with branches that
@@ -268,13 +300,24 @@ func toStringSlice(value interface{}) []string {
 	}
 }
 
-// FindOwnerDeploymentName traverses a pod's owner references (pod → ReplicaSet → Deployment)
-// and returns the owning Deployment name, or "" if the pod is not owned by a Deployment.
-func FindOwnerDeploymentName(ctx context.Context, kubeClient kubernetes.Interface, pod *corev1.Pod) (string, error) {
+// WorkloadOwner identifies the workload that owns a pod.
+type WorkloadOwner struct {
+	Kind string
+	Name string
+}
+
+// FindOwnerWorkload traverses a pod's owner references to determine which
+// supported workload (Deployment, StatefulSet, DaemonSet) owns it:
+//   - Pod → ReplicaSet → Deployment
+//   - Pod → StatefulSet (direct)
+//   - Pod → DaemonSet (direct)
+//
+// Returns nil (not an error) when the pod has no supported workload owner.
+func FindOwnerWorkload(ctx context.Context, kubeClient kubernetes.Interface, pod *corev1.Pod) (*WorkloadOwner, error) {
 	for _, owner := range pod.OwnerReferences {
 		switch owner.Kind {
-		case "Deployment":
-			return owner.Name, nil
+		case "StatefulSet", "DaemonSet":
+			return &WorkloadOwner{Kind: owner.Kind, Name: owner.Name}, nil
 		case "ReplicaSet":
 			rs, err := kubeClient.AppsV1().ReplicaSets(pod.Namespace).Get(ctx, owner.Name, metav1.GetOptions{})
 			if err != nil {
@@ -282,10 +325,10 @@ func FindOwnerDeploymentName(ctx context.Context, kubeClient kubernetes.Interfac
 			}
 			for _, rsOwner := range rs.OwnerReferences {
 				if rsOwner.Kind == "Deployment" {
-					return rsOwner.Name, nil
+					return &WorkloadOwner{Kind: "Deployment", Name: rsOwner.Name}, nil
 				}
 			}
 		}
 	}
-	return "", nil
+	return nil, nil
 }

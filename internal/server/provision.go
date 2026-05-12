@@ -96,8 +96,9 @@ func (p *ProvisionerService) ProvisionWorkspaceStream(
 
 	identity := canUserStr.Identity()
 	workspaceNamespace := parsedUserStr.Namespace("")
-	deployName := parsedUserStr.Deploy()
-	injectMode := workspaceNamespace != "" && deployName != ""
+	workloadName := parsedUserStr.WorkloadName()
+	workloadKind := parsedUserStr.WorkloadKind()
+	injectMode := workspaceNamespace != "" && workloadName != ""
 
 	timeout := int(req.Timeout)
 	if timeout <= 0 {
@@ -113,16 +114,16 @@ func (p *ProvisionerService) ProvisionWorkspaceStream(
 		return p.sendHandshakeErr(msgStream, "", err)
 	}
 
-	deploymentName := ""
+	workloadTargetName := ""
 	if injectMode {
 		if !p.server.config.AllowsInjectionNamespace(workspaceNamespace) {
 			return p.sendHandshakeErr(msgStream, workspace.Name, status.Errorf(codes.PermissionDenied,
 				"namespace %s is not allowed for injection", workspaceNamespace))
 		}
-		if err := p.verifyDeploymentExists(ctx, workspaceNamespace, deployName); err != nil {
+		if err := p.verifyWorkloadExists(ctx, workspaceNamespace, workloadKind, workloadName); err != nil {
 			return p.sendHandshakeErr(msgStream, workspace.Name, err)
 		}
-		deploymentName = deployName
+		workloadTargetName = workloadName
 	} else {
 		exists, st, err := workspace.ExistsAndRunning(ctx)
 		if err != nil {
@@ -177,7 +178,8 @@ func (p *ProvisionerService) ProvisionWorkspaceStream(
 		if injectMode {
 			st, runErr = workspace.Inject(ctx, &ws.InjectOptions{
 				Namespace:            workspaceNamespace,
-				DeploymentName:       deploymentName,
+				WorkloadName:         workloadTargetName,
+				WorkloadKind:         workloadKind,
 				WorkspaceCanonicalId: canUserStr.CanonicalId(),
 				JobId:                job.ID,
 				Timeout:              timeout,

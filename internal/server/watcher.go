@@ -7,14 +7,14 @@ import (
 	log "github.com/k8shell-io/common/pkg/logger"
 	"github.com/k8shell-io/provisioner/internal/helm"
 	"github.com/rs/zerolog"
-	appsv1 "k8s.io/api/apps/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/informers"
 	"k8s.io/client-go/tools/cache"
 )
 
-// InjectionWatcher watches Deployments across the configured injection namespaces
-// and cleans up workspace resources when a Deployment loses its injection annotation
-// (either updated away or deleted).
+// InjectionWatcher watches workloads (Deployment, StatefulSet, DaemonSet) across
+// the configured injection namespaces and cleans up workspace resources when a
+// workload loses its injection annotation (either updated away or deleted).
 type InjectionWatcher struct {
 	helmClient   *helm.Client
 	namespaces   []string
@@ -32,8 +32,8 @@ func NewInjectionWatcher(helmClient *helm.Client, namespaces []string) *Injectio
 	}
 }
 
-// Run starts one informer per injection namespace (or a single cluster-scoped
-// informer when namespaces contains "*") and blocks until ctx is cancelled.
+// Run starts one set of informers per injection namespace (or cluster-scoped
+// informers when namespaces contains "*") and blocks until ctx is cancelled.
 func (w *InjectionWatcher) Run(ctx context.Context) {
 	if len(w.namespaces) == 0 {
 		return
@@ -49,15 +49,8 @@ func (w *InjectionWatcher) Run(ctx context.Context) {
 
 	if clusterWide {
 		factory := informers.NewSharedInformerFactory(w.helmClient.KubeClient(), w.resyncPeriod)
-		w.startDeploymentInformer(ctx, factory)
+		w.startWorkloadInformers(ctx, factory, "")
 		factory.Start(ctx.Done())
-		go func() {
-			if !cache.WaitForCacheSync(ctx.Done(), factory.Apps().V1().Deployments().Informer().HasSynced) {
-				w.log.Error().Msg("cluster-wide deployment informer cache sync timed out")
-			} else {
-				w.log.Info().Msg("cluster-wide deployment informer synced")
-			}
-		}()
 		<-ctx.Done()
 		return
 	}
@@ -69,67 +62,74 @@ func (w *InjectionWatcher) Run(ctx context.Context) {
 			w.resyncPeriod,
 			informers.WithNamespace(ns),
 		)
-		w.startDeploymentInformer(ctx, factory)
+		w.startWorkloadInformers(ctx, factory, ns)
 		factory.Start(ctx.Done())
-		go func(ns string) {
-			if !cache.WaitForCacheSync(ctx.Done(), factory.Apps().V1().Deployments().Informer().HasSynced) {
-				w.log.Error().Str("namespace", ns).Msg("deployment informer cache sync timed out")
-			} else {
-				w.log.Info().Str("namespace", ns).Msg("deployment informer synced")
-			}
-		}(ns)
 	}
 
 	<-ctx.Done()
 }
 
-func (w *InjectionWatcher) startDeploymentInformer(ctx context.Context, factory informers.SharedInformerFactory) {
-	depInformer := factory.Apps().V1().Deployments().Informer()
-	depInformer.AddEventHandler(cache.ResourceEventHandlerFuncs{
-		UpdateFunc: func(oldObj, newObj interface{}) {
-			oldDep, ok := oldObj.(*appsv1.Deployment)
-			if !ok {
-				return
-			}
-			newDep, ok := newObj.(*appsv1.Deployment)
-			if !ok {
-				return
-			}
-			oldWorkspace := oldDep.Annotations[helm.AnnotationInjectedWorkspace]
-			newWorkspace := newDep.Annotations[helm.AnnotationInjectedWorkspace]
-			if oldWorkspace != "" && newWorkspace != oldWorkspace {
-				canonicalId := oldDep.Annotations[helm.AnnotationInjectedCanonicalId]
-				w.cleanup(ctx, oldDep.Namespace, newDep.Name, oldWorkspace, canonicalId)
-			}
-		},
-		DeleteFunc: func(obj interface{}) {
-			dep, ok := obj.(*appsv1.Deployment)
-			if !ok {
-				tombstone, ok := obj.(cache.DeletedFinalStateUnknown)
-				if !ok {
+// startWorkloadInformers registers one informer per supported workload kind on factory.
+// ns is used only for log messages ("" = cluster-wide).
+func (w *InjectionWatcher) startWorkloadInformers(ctx context.Context, factory informers.SharedInformerFactory, ns string) {
+	for _, kind := range helm.SupportedWorkloadKinds() {
+		kind := kind
+		// Build a prototype adapter to obtain the informer for this kind.
+		proto, err := helm.ProtoAdapter(kind, w.helmClient.KubeClient())
+		if err != nil {
+			w.log.Error().Str("kind", kind).Err(err).Msg("failed to create prototype adapter")
+			continue
+		}
+		informer := proto.NewInformer(factory)
+		informer.AddEventHandler(cache.ResourceEventHandlerFuncs{
+			UpdateFunc: func(oldObj, newObj interface{}) {
+				oldMeta, ok1 := oldObj.(metav1.Object)
+				newMeta, ok2 := newObj.(metav1.Object)
+				if !ok1 || !ok2 {
 					return
 				}
-				dep, ok = tombstone.Obj.(*appsv1.Deployment)
-				if !ok {
-					return
+				oldWorkspace := oldMeta.GetAnnotations()[helm.AnnotationInjectedWorkspace]
+				newWorkspace := newMeta.GetAnnotations()[helm.AnnotationInjectedWorkspace]
+				if oldWorkspace != "" && newWorkspace != oldWorkspace {
+					canonicalId := oldMeta.GetAnnotations()[helm.AnnotationInjectedCanonicalId]
+					w.cleanup(ctx, oldMeta.GetNamespace(), kind, newMeta.GetName(), oldWorkspace, canonicalId)
 				}
-			}
-			workspace := dep.Annotations[helm.AnnotationInjectedWorkspace]
-			if workspace != "" {
-				canonicalId := dep.Annotations[helm.AnnotationInjectedCanonicalId]
-				w.cleanup(ctx, dep.Namespace, dep.Name, workspace, canonicalId)
-			}
-		},
-	})
+			},
+			DeleteFunc: func(obj interface{}) {
+				meta, ok := obj.(metav1.Object)
+				if !ok {
+					tombstone, ok := obj.(cache.DeletedFinalStateUnknown)
+					if !ok {
+						return
+					}
+					meta, ok = tombstone.Obj.(metav1.Object)
+					if !ok {
+						return
+					}
+				}
+				workspace := meta.GetAnnotations()[helm.AnnotationInjectedWorkspace]
+				if workspace != "" {
+					canonicalId := meta.GetAnnotations()[helm.AnnotationInjectedCanonicalId]
+					w.cleanup(ctx, meta.GetNamespace(), kind, meta.GetName(), workspace, canonicalId)
+				}
+			},
+		})
+		logCtx := w.log.Info().Str("kind", kind)
+		if ns != "" {
+			logCtx = logCtx.Str("namespace", ns)
+		}
+		logCtx.Msg("started workload informer")
+	}
 }
 
-func (w *InjectionWatcher) cleanup(ctx context.Context, namespace, deploymentName, workspaceName, canonicalId string) {
+func (w *InjectionWatcher) cleanup(ctx context.Context, namespace, kind, workloadName, workspaceName, canonicalId string) {
 	w.log.Info().
 		Str("namespace", namespace).
-		Str("deployment", deploymentName).
+		Str("kind", kind).
+		Str("workload", workloadName).
 		Str("workspace", workspaceName).
 		Str("canonical-id", canonicalId).
-		Msg("deployment injection removed, cleaning up workspace resources")
+		Msg("workload injection removed, cleaning up workspace resources")
 
 	if canonicalId == "" {
 		w.log.Warn().

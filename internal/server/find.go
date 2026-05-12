@@ -13,7 +13,6 @@ import (
 	ws "github.com/k8shell-io/provisioner/internal/workspace"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 // FindWorkspace retrieves the details of a specific workspace
@@ -105,10 +104,10 @@ func (p *ProvisionerService) GetWorkspacesByUserStr(
 		InjectionNamespaces: p.server.config.InjectNamespaces,
 	}
 
-	if parsedUserStr.Deploy() == "" {
+	if parsedUserStr.WorkloadName() == "" {
 		opts.Workspace = canUserStr.WorkspaceName()
 	} else {
-		deployName := parsedUserStr.Deploy()
+		workloadName := parsedUserStr.WorkloadName()
 		namespace := parsedUserStr.Namespace("")
 		if namespace != "" && !p.server.config.AllowsInjectionNamespace(namespace) {
 			return nil, status.Errorf(codes.PermissionDenied,
@@ -117,7 +116,7 @@ func (p *ProvisionerService) GetWorkspacesByUserStr(
 		if namespace != "" {
 			opts.InjectionNamespaces = []string{namespace}
 		}
-		opts.InjectTarget = deployName
+		opts.InjectTarget = workloadName
 	}
 
 	workspaces, err := ws.GetWorkspaces(ctx, p.server.helm, opts)
@@ -160,40 +159,5 @@ func (p *ProvisionerService) GetUserBlueprints(ctx context.Context,
 
 	return &provisionerv1.GetUserBlueprintsResponse{
 		Blueprints: protoBlueprints,
-	}, nil
-}
-
-func (p *ProvisionerService) CanUpgradeWorkspace(ctx context.Context,
-	req *provisionerv1.CanUpgradeWorkspaceRequest,
-) (*provisionerv1.CanUpgradeWorkspaceResponse, error) {
-	name := req.Workspace
-	if name == "" {
-		return nil, status.Errorf(codes.InvalidArgument, "workspace name is required")
-	}
-
-	pod, err := p.server.helm.KubeClient().CoreV1().Pods(
-		p.server.helm.TargetNamespace()).Get(ctx, name, metav1.GetOptions{})
-	if err != nil {
-		return nil, status.Errorf(codes.Internal, "Failed to get workspace pod: %v", err)
-	}
-
-	workspace, err := p.prepareWorkspaceWithPod(ctx, pod)
-	if err != nil {
-		return nil, err
-	}
-
-	canUpgrade, err := workspace.CanUpgrade(ctx, pod)
-	if err != nil {
-		return nil, status.Errorf(codes.Internal, "Failed to check if workspace can be upgraded: %v", err)
-	}
-
-	message := "Workspace can be upgraded"
-	if !canUpgrade {
-		message = "Workspace is up to date."
-	}
-
-	return &provisionerv1.CanUpgradeWorkspaceResponse{
-		CanUpgrade: canUpgrade,
-		Message:    message,
 	}, nil
 }
