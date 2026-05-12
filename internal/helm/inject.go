@@ -167,14 +167,16 @@ func (c *Client) InjectionSpecFromTemplate(ctx context.Context,
 			continue
 		}
 		v.Name = prefix + v.Name
+		if v.PersistentVolumeClaim != nil {
+			cn := v.PersistentVolumeClaim.ClaimName
+			if strings.HasPrefix(cn, "pvc-") && !strings.HasPrefix(cn, "pvc-"+prefix) {
+				v.PersistentVolumeClaim = v.PersistentVolumeClaim.DeepCopy()
+				v.PersistentVolumeClaim.ClaimName = "pvc-" + prefix + strings.TrimPrefix(cn, "pvc-")
+			}
+		}
 		volumes = append(volumes, v)
 	}
 
-	// Only propagate specific k8shell.io/ labels needed for workspace discovery.
-	// Helm-managed labels (app.kubernetes.io/*, helm.sh/chart, etc.) and
-	// k8shell.io/type must not be carried over: the target Deployment may already
-	// have these labels with different values in its selector, which would cause
-	// Kubernetes to reject the patch with "selector does not match template labels".
 	podLabelAllowlist := map[string]bool{
 		"k8shell.io/workspace":      false,
 		"k8shell.io/username":       true,
