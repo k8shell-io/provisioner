@@ -86,7 +86,8 @@ func (c *Client) WorkspaceResourcesFromTemplate(ctx context.Context, values map[
 // document, and returns its containers/initContainers/volumes renamed with the
 // given prefix to avoid conflicts with the target Deployment's own containers.
 func (c *Client) InjectionSpecFromTemplate(ctx context.Context,
-	values map[string]interface{}, workspaceCanonicalId string, jobId string) (*InjectionSpec, error) {
+	values map[string]interface{}, workspaceCanonicalId string, jobId string,
+	sharedPvcPrefix string) (*InjectionSpec, error) {
 	rendered, err := c.Template(ctx, WORKSPACE_CHART_NAME, InstallOptions{
 		ReleaseName: workspaceCanonicalId,
 		Values:      values,
@@ -169,9 +170,9 @@ func (c *Client) InjectionSpecFromTemplate(ctx context.Context,
 		v.Name = prefix + v.Name
 		if v.PersistentVolumeClaim != nil {
 			cn := v.PersistentVolumeClaim.ClaimName
-			if strings.HasPrefix(cn, "pvc-") && !strings.HasPrefix(cn, "pvc-"+prefix) {
+			if strings.HasPrefix(cn, "pvc-") && !strings.HasPrefix(cn, "pvc-"+sharedPvcPrefix) {
 				v.PersistentVolumeClaim = v.PersistentVolumeClaim.DeepCopy()
-				v.PersistentVolumeClaim.ClaimName = "pvc-" + prefix + strings.TrimPrefix(cn, "pvc-")
+				v.PersistentVolumeClaim.ClaimName = "pvc-" + sharedPvcPrefix + strings.TrimPrefix(cn, "pvc-")
 			}
 		}
 		volumes = append(volumes, v)

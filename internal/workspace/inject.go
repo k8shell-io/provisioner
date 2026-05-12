@@ -84,7 +84,7 @@ func (w *Workspace) Inject(ctx context.Context, opts *InjectOptions) (*models.Wo
 		return nil, fmt.Errorf("failed to render workspace resources: %w", err)
 	}
 
-	spec, err := w.client.InjectionSpecFromTemplate(ctx, values, opts.WorkspaceCanonicalId, opts.JobId)
+	spec, err := w.client.InjectionSpecFromTemplate(ctx, values, opts.WorkspaceCanonicalId, opts.JobId, "k8shell-")
 	if err != nil {
 		return nil, fmt.Errorf("failed to build injection spec: %w", err)
 	}
@@ -100,7 +100,7 @@ func (w *Workspace) Inject(ctx context.Context, opts *InjectOptions) (*models.Wo
 		return nil, fmt.Errorf("failed to apply workspace resources to namespace %s: %w", opts.Namespace, err)
 	}
 
-	if err := w.ensureSharedStorages(ctx, opts.Namespace, opts.WorkspaceCanonicalId+"-"); err != nil {
+	if err := w.ensureSharedStorages(ctx, opts.Namespace, "k8shell-"); err != nil {
 		return nil, fmt.Errorf("failed to ensure shared storages: %w", err)
 	}
 
