@@ -468,6 +468,19 @@ func FindWorkspaceHelmRelease(_ context.Context, helmClient *helm.Client, name s
 
 // *** Workspace methods
 
+// NewWorkspaceForEject creates a minimal workspace object sufficient to call Eject.
+// Only the workspace name and helm client are required; no user, blueprint, or identity needed.
+func NewWorkspaceForEject(name string, helmClient *helm.Client) (*Workspace, error) {
+	if name == "" {
+		return nil, fmt.Errorf("workspace name is required")
+	}
+	return &Workspace{
+		Name:   name,
+		log:    log.NewLogger("workspace"),
+		client: helmClient,
+	}, nil
+}
+
 // NewWorkspace creates a new workspace with the specified Helm chart
 func NewWorkspace(
 	workspaceName string,

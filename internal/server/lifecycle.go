@@ -7,7 +7,6 @@ import (
 	"time"
 
 	provisionerv1 "github.com/k8shell-io/common/pkg/api/gen/go/provisioner/v1"
-	"github.com/k8shell-io/common/pkg/userstr"
 	"github.com/k8shell-io/provisioner/internal/helm"
 	ws "github.com/k8shell-io/provisioner/internal/workspace"
 	"google.golang.org/grpc/codes"
@@ -239,19 +238,18 @@ func (p *ProvisionerService) EjectWorkspace(
 		return nil, status.Errorf(codes.InvalidArgument, "deployment_name is required")
 	}
 
-	userstr, err := userstr.ParseUserStr(req.Userstr)
+	dep, err := p.server.helm.GetDeployment(ctx, req.Namespace, req.DeploymentName)
 	if err != nil {
-		return nil, status.Errorf(codes.InvalidArgument, "invalid userstr format: %v", err)
+		return nil, status.Errorf(codes.NotFound, "deployment %s/%s not found: %v", req.Namespace, req.DeploymentName, err)
+	}
+	workspaceName := dep.Annotations[helm.AnnotationInjectedWorkspace]
+	if workspaceName == "" {
+		return nil, status.Errorf(codes.FailedPrecondition, "deployment %s/%s does not have an injected workspace", req.Namespace, req.DeploymentName)
 	}
 
-	canUserStr, err := userstr.Canonicalize()
+	workspace, err := ws.NewWorkspaceForEject(workspaceName, p.server.helm)
 	if err != nil {
-		return nil, status.Errorf(codes.InvalidArgument, "failed to canonicalize userstr: %v", err)
-	}
-
-	workspace, err := p.prepareWorkspaceWithUserStr(ctx, canUserStr)
-	if err != nil {
-		return nil, err
+		return nil, status.Errorf(codes.Internal, "failed to prepare workspace %s: %v", workspaceName, err)
 	}
 
 	timeout := int(req.TimeoutSeconds)
@@ -264,10 +262,10 @@ func (p *ProvisionerService) EjectWorkspace(
 		DeploymentName: req.DeploymentName,
 		Timeout:        timeout,
 	}); err != nil {
-		return nil, status.Errorf(codes.Internal, "failed to eject workspace %s: %v", workspace.Name, err)
+		return nil, status.Errorf(codes.Internal, "failed to eject workspace %s: %v", workspaceName, err)
 	}
 
 	return &provisionerv1.EjectWorkspaceResponse{
-		Workspace: workspace.Name,
+		Workspace: workspaceName,
 	}, nil
 }

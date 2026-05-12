@@ -374,9 +374,21 @@ func (c *Client) EjectFromDeployment(ctx context.Context, namespace, deploymentN
 	newInit := filterContainers(dep.Spec.Template.Spec.InitContainers, rmInit)
 	newVolumes := filterVolumes(dep.Spec.Template.Spec.Volumes, rmVolumes)
 
+	// Remove only the labels that injection added. Removing all k8shell.io/ labels
+	// would break Deployments whose selector references pre-existing k8shell.io/ labels.
+	injectedLabelKeys := map[string]bool{
+		LabelInjected:               true,
+		"k8shell.io/canonical-id":   true,
+		"k8shell.io/job-id":         true,
+		"k8shell.io/username":       true,
+		"k8shell.io/organization":   true,
+		"k8shell.io/blueprint":      true,
+		"k8shell.io/network-policy": true,
+		"k8shell.io/subdomain":      true,
+	}
 	newPodLabels := make(map[string]string)
 	for k, v := range dep.Spec.Template.Labels {
-		if strings.HasPrefix(k, "k8shell.io/") {
+		if injectedLabelKeys[k] {
 			continue
 		}
 		newPodLabels[k] = v
@@ -394,31 +406,6 @@ func (c *Client) EjectFromDeployment(ctx context.Context, namespace, deploymentN
 		}
 	}
 
-	// Build a full replacement patch for spec.template (strategic merge patch
-	// cannot delete array elements by name — we must supply the complete lists).
-	type specPatch struct {
-		ShareProcessNamespace *bool              `json:"shareProcessNamespace"`
-		InitContainers        []corev1.Container `json:"initContainers"`
-		Containers            []corev1.Container `json:"containers"`
-		Volumes               []corev1.Volume    `json:"volumes"`
-	}
-	type templateMeta struct {
-		Labels      map[string]string `json:"labels"`
-		Annotations map[string]string `json:"annotations"`
-	}
-	type templatePatch struct {
-		Metadata templateMeta `json:"metadata"`
-		Spec     specPatch    `json:"spec"`
-	}
-	type depPatch struct {
-		Metadata struct {
-			Annotations map[string]string `json:"annotations"`
-		} `json:"metadata"`
-		Spec struct {
-			Template templatePatch `json:"template"`
-		} `json:"spec"`
-	}
-
 	// Restore shareProcessNamespace to its original value.
 	falseVal := false
 	restorePID := &falseVal
@@ -427,38 +414,27 @@ func (c *Client) EjectFromDeployment(ctx context.Context, namespace, deploymentN
 		restorePID = &trueVal
 	}
 
-	var patch depPatch
-	// Nullify the tracking annotations (set to empty string; JSON Merge Patch
-	// would need null, but StrategicMergePatch with "" effectively clears them).
-	patch.Metadata.Annotations = map[string]string{
-		AnnotationInjectedWorkspace:      "",
-		AnnotationInjectedCanonicalId:    "",
-		AnnotationInjectedContainers:     "",
-		AnnotationInjectedInitContainers: "",
-		AnnotationInjectedVolumes:        "",
-		AnnotationInjectedSharePID:       "",
-	}
-	patch.Spec.Template.Metadata = templateMeta{
-		Labels:      newPodLabels,
-		Annotations: newPodAnnotations,
-	}
-	patch.Spec.Template.Spec = specPatch{
-		ShareProcessNamespace: restorePID,
-		InitContainers:        newInit,
-		Containers:            newContainers,
-		Volumes:               newVolumes,
-	}
+	// Apply all changes directly to the deployment object and use Update so that
+	// array fields (containers, volumes) are fully replaced. Strategic merge patch
+	// merges arrays by the "name" key and cannot remove elements, so patching would
+	// leave the injected volumes in the pod template and new pods would fail to mount
+	// the already-deleted ConfigMaps.
+	dep.Spec.Template.Spec.Containers = newContainers
+	dep.Spec.Template.Spec.InitContainers = newInit
+	dep.Spec.Template.Spec.Volumes = newVolumes
+	dep.Spec.Template.Labels = newPodLabels
+	dep.Spec.Template.Annotations = newPodAnnotations
+	dep.Spec.Template.Spec.ShareProcessNamespace = restorePID
+	dep.Annotations[AnnotationInjectedWorkspace] = ""
+	dep.Annotations[AnnotationInjectedCanonicalId] = ""
+	dep.Annotations[AnnotationInjectedContainers] = ""
+	dep.Annotations[AnnotationInjectedInitContainers] = ""
+	dep.Annotations[AnnotationInjectedVolumes] = ""
+	dep.Annotations[AnnotationInjectedSharePID] = ""
 
-	patchBytes, err := json.Marshal(patch)
+	_, err = c.kubeClient.AppsV1().Deployments(namespace).Update(ctx, dep, metav1.UpdateOptions{})
 	if err != nil {
-		return "", fmt.Errorf("failed to marshal eject patch: %w", err)
-	}
-
-	_, err = c.kubeClient.AppsV1().Deployments(namespace).Patch(
-		ctx, deploymentName, types.StrategicMergePatchType, patchBytes, metav1.PatchOptions{},
-	)
-	if err != nil {
-		return "", fmt.Errorf("failed to patch deployment %s/%s during eject: %w", namespace, deploymentName, err)
+		return "", fmt.Errorf("failed to update deployment %s/%s during eject: %w", namespace, deploymentName, err)
 	}
 
 	c.log.Info().Str("namespace", namespace).Str("deployment", deploymentName).
