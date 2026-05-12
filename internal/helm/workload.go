@@ -3,6 +3,7 @@ package helm
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -41,8 +42,11 @@ type WorkloadAdapter interface {
 }
 
 // GetWorkloadAdapter fetches the named workload of the given kind from the cluster
-// and returns the appropriate adapter. Returns an error for unknown kinds.
+// and returns the appropriate adapter. Kind matching is case-insensitive; name
+// is lowercased before the lookup (Kubernetes names are always lowercase).
 func (c *Client) GetWorkloadAdapter(ctx context.Context, namespace, kind, name string) (WorkloadAdapter, error) {
+	kind = normalizeKind(kind)
+	name = strings.ToLower(name)
 	switch kind {
 	case "Deployment":
 		dep, err := c.kubeClient.AppsV1().Deployments(namespace).Get(ctx, name, metav1.GetOptions{})
@@ -72,10 +76,25 @@ func SupportedWorkloadKinds() []string {
 	return []string{"Deployment", "StatefulSet", "DaemonSet"}
 }
 
+// normalizeKind converts a workload kind string to its canonical title-case form
+// (e.g. "deployment" → "Deployment") so callers don't need to match case exactly.
+func normalizeKind(kind string) string {
+	switch strings.ToLower(kind) {
+	case "deployment":
+		return "Deployment"
+	case "statefulset":
+		return "StatefulSet"
+	case "daemonset":
+		return "DaemonSet"
+	}
+	return kind // preserve unknown kinds so the switch default can report them
+}
+
 // ProtoAdapter returns a zero-value adapter for kind that can be used to call
 // NewInformer without needing a real cluster object. kubeClient is not used
 // here but is kept in the signature for symmetry with GetWorkloadAdapter.
 func ProtoAdapter(kind string, _ kubernetes.Interface) (WorkloadAdapter, error) {
+	kind = normalizeKind(kind)
 	switch kind {
 	case "Deployment":
 		return &DeploymentAdapter{dep: &appsv1.Deployment{}}, nil
