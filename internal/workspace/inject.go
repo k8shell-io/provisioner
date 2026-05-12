@@ -20,6 +20,8 @@ type InjectOptions struct {
 	// WorkspaceCanonicalId is the canonical identifier of the workspace,
 	// used for tracking and labeling injected resources.
 	WorkspaceCanonicalId string
+	// JobId is the identifier of the provisioning job, used for labeling injected resources.
+	JobId string
 	// Timeout is the maximum number of seconds to wait for the injected pods to
 	// become Running. 0 means use the default (120 s).
 	Timeout int
@@ -82,7 +84,7 @@ func (w *Workspace) Inject(ctx context.Context, opts *InjectOptions) (*models.Wo
 		return nil, fmt.Errorf("failed to render workspace resources: %w", err)
 	}
 
-	spec, err := w.client.InjectionSpecFromTemplate(ctx, values, opts.WorkspaceCanonicalId)
+	spec, err := w.client.InjectionSpecFromTemplate(ctx, values, opts.WorkspaceCanonicalId, opts.JobId)
 	if err != nil {
 		return nil, fmt.Errorf("failed to build injection spec: %w", err)
 	}

@@ -86,7 +86,7 @@ func (c *Client) WorkspaceResourcesFromTemplate(ctx context.Context, values map[
 // document, and returns its containers/initContainers/volumes renamed with the
 // given prefix to avoid conflicts with the target Deployment's own containers.
 func (c *Client) InjectionSpecFromTemplate(ctx context.Context,
-	values map[string]interface{}, workspaceCanonicalId string) (*InjectionSpec, error) {
+	values map[string]interface{}, workspaceCanonicalId string, jobId string) (*InjectionSpec, error) {
 	rendered, err := c.Template(ctx, WORKSPACE_CHART_NAME, InstallOptions{
 		ReleaseName: workspaceCanonicalId,
 		Values:      values,
@@ -190,6 +190,7 @@ func (c *Client) InjectionSpecFromTemplate(ctx context.Context,
 		}
 	}
 	podLabels["k8shell.io/canonical-id"] = workspaceCanonicalId
+	podLabels["k8shell.io/job-id"] = jobId
 
 	// Copy key annotations needed for workspace discovery on injected pods.
 	podAnnotations := make(map[string]string)

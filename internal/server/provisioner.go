@@ -445,6 +445,7 @@ func (p *ProvisionerService) ProvisionWorkspaceStream(
 				Namespace:            workspaceNamespace,
 				DeploymentName:       deploymentName,
 				WorkspaceCanonicalId: canUserStr.CanonicalId(),
+				JobId:                job.ID,
 				Timeout:              timeout,
 				Messages:             messages,
 			})
