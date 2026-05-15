@@ -25,7 +25,6 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	k8sErrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/client-go/kubernetes"
 )
 
 // Default page size for GetWorkspaces pagination when limit is not specified or invalid
@@ -60,8 +59,10 @@ type GetWorkspacesOptions struct {
 	// InjectionNamespaces controls where injected workspaces are discovered.
 	// Use "*" for cluster-wide discovery.
 	InjectionNamespaces []string
-	// InjectTarget filters injected workspaces by the deployment they were injected into.
-	InjectTarget string
+	// InjectWorkload and InjectKind filter injected workspaces by the workload they
+	// were injected into. InjectKind is optional; omitting it matches any kind.
+	InjectWorkload string
+	InjectKind     string
 }
 
 // GetWorkspacesResult defines the result structure for GetWorkspaces function,
@@ -125,37 +126,37 @@ func ParseWorkspaceMetadata(labels map[string]string, annotations map[string]str
 		return nil, fmt.Errorf("workspace labels are nil")
 	}
 
-	username, ok := labels["k8shell.io/username"]
+	username, ok := labels[helm.LabelUsername]
 	if !ok || username == "" {
-		return nil, fmt.Errorf("missing label k8shell.io/username")
+		return nil, fmt.Errorf("missing label %s", helm.LabelUsername)
 	}
 
-	blueprint, ok := labels["k8shell.io/blueprint"]
+	blueprint, ok := labels[helm.LabelBlueprint]
 	if !ok || blueprint == "" {
-		return nil, fmt.Errorf("missing label k8shell.io/blueprint")
+		return nil, fmt.Errorf("missing label %s", helm.LabelBlueprint)
 	}
 
-	userstrB64, ok := annotations["k8shell.io/userstr"]
+	userstrB64, ok := annotations[helm.AnnotationUserStr]
 	if !ok || userstrB64 == "" {
-		return nil, fmt.Errorf("missing annotation k8shell.io/userstr")
+		return nil, fmt.Errorf("missing annotation %s", helm.AnnotationUserStr)
 	}
 
 	canUser, err := parseCanonicalUserStrFromBase64(userstrB64)
 	if err != nil {
-		return nil, fmt.Errorf("parse k8shell.io/userstr: %w", err)
+		return nil, fmt.Errorf("parse %s: %w", helm.AnnotationUserStr, err)
 	}
 	identity := canUser.Identity()
 
 	return &WorkspaceLabels{
-		Workspace:    labels["k8shell.io/workspace"],
+		Workspace:    labels[helm.LabelWorkspace],
 		Username:     username,
-		Organization: labels["k8shell.io/organization"],
+		Organization: labels[helm.LabelOrganization],
 		Blueprint:    blueprint,
 		RepoOwner:    identity.RepoOwner(),
 		RepoName:     identity.RepoName(),
 		RepoRef:      identity.RepoRef(),
-		AppVersion:   labels["k8shell.io/k8shelld-version"],
-		JobId:        labels["k8shell.io/job-id"],
+		AppVersion:   labels[helm.LabelAppVersion],
+		JobId:        labels[helm.LabelJobId],
 		UserStr:      canUser,
 	}, nil
 }
@@ -192,57 +193,22 @@ func podMatchesWorkspaceFilters(p *corev1.Pod, opts GetWorkspacesOptions, inject
 			return false
 		}
 	} else {
-		if lbls["k8shell.io/type"] != "workspace" {
+		if lbls[helm.LabelType] != "workspace" {
 			return false
 		}
 	}
 
-	if opts.Username != "" && lbls["k8shell.io/username"] != opts.Username {
+	if opts.Username != "" && lbls[helm.LabelUsername] != opts.Username {
 		return false
 	}
-	if opts.Organization != "" && lbls["k8shell.io/organization"] != opts.Organization {
+	if opts.Organization != "" && lbls[helm.LabelOrganization] != opts.Organization {
 		return false
 	}
-	if opts.Blueprint != "" && lbls["k8shell.io/blueprint"] != opts.Blueprint {
+	if opts.Blueprint != "" && lbls[helm.LabelBlueprint] != opts.Blueprint {
 		return false
 	}
 
 	return true
-}
-
-// podBelongsToDeployment checks whether pod is owned (directly or via a ReplicaSet) by the named Deployment.
-// rsCache maps ReplicaSet name to its owning Deployment name ("" if none); pass a non-nil map to share the
-// cache across multiple pods in the same namespace and avoid redundant API calls.
-func podBelongsToDeployment(ctx context.Context, kubeClient kubernetes.Interface, pod *corev1.Pod, deploymentName string, rsCache map[string]string) bool {
-	for _, owner := range pod.OwnerReferences {
-		switch owner.Kind {
-		case "Deployment":
-			if owner.Name == deploymentName {
-				return true
-			}
-		case "ReplicaSet":
-			owner := owner.Name
-			deploy, cached := rsCache[owner]
-			if !cached {
-				rs, err := kubeClient.AppsV1().ReplicaSets(pod.Namespace).Get(ctx, owner, metav1.GetOptions{})
-				if err != nil {
-					rsCache[owner] = ""
-					continue
-				}
-				for _, rsOwner := range rs.OwnerReferences {
-					if rsOwner.Kind == "Deployment" {
-						deploy = rsOwner.Name
-						break
-					}
-				}
-				rsCache[owner] = deploy
-			}
-			if deploy == deploymentName {
-				return true
-			}
-		}
-	}
-	return false
 }
 
 func GetWorkspaces(
@@ -256,7 +222,7 @@ func GetWorkspaces(
 	out := make([]*models.WorkspaceDetails, 0)
 	pods := make([]corev1.Pod, 0)
 
-	if opts.Workspace != "" && opts.InjectTarget == "" {
+	if opts.Workspace != "" && opts.InjectWorkload == "" {
 		p, err := v1.Pods(namespace).Get(ctx, opts.Workspace, metav1.GetOptions{})
 		if err != nil && !apierrors.IsNotFound(err) {
 			return nil, fmt.Errorf("failed to get workspace pod %q: %w", opts.Workspace, err)
@@ -267,18 +233,18 @@ func GetWorkspaces(
 				pods = append(pods, *p)
 			}
 		}
-	} else if opts.InjectTarget == "" {
+	} else if opts.InjectWorkload == "" {
 		labels := map[string]string{
-			"k8shell.io/type": "workspace",
+			helm.LabelType: "workspace",
 		}
 		if opts.Username != "" {
-			labels["k8shell.io/username"] = opts.Username
+			labels[helm.LabelUsername] = opts.Username
 		}
 		if opts.Organization != "" {
-			labels["k8shell.io/organization"] = opts.Organization
+			labels[helm.LabelOrganization] = opts.Organization
 		}
 		if opts.Blueprint != "" {
-			labels["k8shell.io/blueprint"] = opts.Blueprint
+			labels[helm.LabelBlueprint] = opts.Blueprint
 		}
 		selector := getSelector(labels)
 
@@ -310,13 +276,13 @@ func GetWorkspaces(
 		helm.LabelInjected: "true",
 	}
 	if opts.Username != "" {
-		injectedLabels["k8shell.io/username"] = opts.Username
+		injectedLabels[helm.LabelUsername] = opts.Username
 	}
 	if opts.Organization != "" {
-		injectedLabels["k8shell.io/organization"] = opts.Organization
+		injectedLabels[helm.LabelOrganization] = opts.Organization
 	}
 	if opts.Blueprint != "" {
-		injectedLabels["k8shell.io/blueprint"] = opts.Blueprint
+		injectedLabels[helm.LabelBlueprint] = opts.Blueprint
 	}
 	injectedSelector := getSelector(injectedLabels)
 
@@ -402,7 +368,6 @@ func GetWorkspaces(
 	}
 
 	if len(injectedItems) > 0 {
-		rsCache := make(map[string]string)
 		for i := range injectedItems {
 			ip := &injectedItems[i]
 			if ip.Namespace == namespace {
@@ -414,9 +379,14 @@ func GetWorkspaces(
 			if !podMatchesWorkspaceFilters(ip, opts, true) {
 				continue
 			}
-			if opts.InjectTarget != "" && !podBelongsToDeployment(ctx, helmClient.KubeClient(), ip,
-				opts.InjectTarget, rsCache) {
-				continue
+			if opts.InjectWorkload != "" {
+				matches, err := podMatchesInjectTarget(ip, opts.InjectKind, opts.InjectWorkload)
+				if err != nil {
+					return nil, err
+				}
+				if !matches {
+					continue
+				}
 			}
 
 			d := WorkspaceDetailsFromInjectedPod(ip)
@@ -433,6 +403,19 @@ func GetWorkspaces(
 		Workspaces: out,
 		Pods:       pods,
 	}, nil
+}
+
+// podMatchesInjectTarget checks whether a pod's workload labels match the given
+// kind and name. Returns an error if the pod lacks the required workload labels.
+func podMatchesInjectTarget(pod *corev1.Pod, kind, name string) (bool, error) {
+	podKind := pod.Labels[helm.LabelWorkloadKind]
+	podName := pod.Labels[helm.LabelWorkloadName]
+	if podKind == "" || podName == "" {
+		return false, fmt.Errorf("pod %s/%s is missing workload labels", pod.Namespace, pod.Name)
+	}
+	nameMatch := strings.EqualFold(podName, name)
+	kindMatch := kind == "" || strings.EqualFold(podKind, kind)
+	return nameMatch && kindMatch, nil
 }
 
 // FindworkspaceByName finds a workspace by its name using Helm client and returns the corresponding release
@@ -507,8 +490,8 @@ func NewWorkspaceFromHelmRelease(ctx context.Context, name string, helmClient *h
 	if err != nil {
 		return nil, err
 	}
-	username := release.Labels["k8shell.io/username"]
-	blueprintName := release.Labels["k8shell.io/blueprint"]
+	username := release.Labels[helm.LabelUsername]
+	blueprintName := release.Labels[helm.LabelBlueprint]
 
 	userpb, err := identityClient.FindUser(ctx, &identityv1.FindUserRequest{Username: username})
 	if err != nil {
@@ -756,7 +739,7 @@ func WorkspaceDetailsFromInjectedPod(pod *corev1.Pod) *models.WorkspaceDetails {
 		return nil
 	}
 
-	canonicalId := pod.Labels["k8shell.io/canonical-id"]
+	canonicalId := pod.Labels[helm.LabelCanonicalId]
 	if canonicalId == "" {
 		return nil
 	}
@@ -798,7 +781,7 @@ func WorkspaceDetailsFromPod(pod *corev1.Pod) *models.WorkspaceDetails {
 	port := getPodContainerPort(pod, models.WORKSPACE_PORT)
 	tlsEnabled := podMountsSecret(pod, pod.Name+"-tls")
 
-	nameLabel := pod.Labels["k8shell.io/workspace"]
+	nameLabel := pod.Labels[helm.LabelWorkspace]
 	if nameLabel == "" {
 		nameLabel = pod.Name
 	}
@@ -822,13 +805,13 @@ func workspaceDetailsFromPodCore(
 		return nil
 	}
 
-	appVersion := pod.Labels["k8shell.io/k8shelld-version"]
+	appVersion := pod.Labels[helm.LabelAppVersion]
 	if appVersion == "" {
 		appVersion = "1.0.0"
 	}
 
 	// Parse userstr to get original repo values
-	userstrB64, ok := pod.Annotations["k8shell.io/userstr"]
+	userstrB64, ok := pod.Annotations[helm.AnnotationUserStr]
 	if !ok || userstrB64 == "" {
 		return nil // userstr is required
 	}
@@ -842,13 +825,13 @@ func workspaceDetailsFromPodCore(
 	return &models.WorkspaceDetails{
 		WorkspaceStatus: *snapToWorkspaceStatus(&snap),
 		Name:            workspaceName,
-		Username:        pod.Labels["k8shell.io/username"],
+		Username:        pod.Labels[helm.LabelUsername],
 		RepoOwner:       identity.RepoOwner(),
 		RepoName:        identity.RepoName(),
 		RepoRef:         identity.RepoRef(),
-		Blueprint:       pod.Labels["k8shell.io/blueprint"],
-		Organization:    pod.Labels["k8shell.io/organization"],
-		JobId:           pod.Labels["k8shell.io/job-id"],
+		Blueprint:       pod.Labels[helm.LabelBlueprint],
+		Organization:    pod.Labels[helm.LabelOrganization],
+		JobId:           pod.Labels[helm.LabelJobId],
 		ServerName:      serverHost + "." + pod.Namespace,
 		PodIP:           pod.Status.PodIP,
 		Port:            port,

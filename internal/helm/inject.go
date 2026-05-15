@@ -28,6 +28,32 @@ const (
 	// AnnotationInjectedCanonicalId records the canonical workspace ID used to
 	// label injected resources, so they can be found and deleted on eject.
 	AnnotationInjectedCanonicalId = "k8shell.io/injected-canonical-id"
+
+	// LabelWorkloadKind and LabelWorkloadName are stamped onto the injected
+	// workload's pod template so the owning workload can be identified directly
+	// from any pod label selector, without traversing ReplicaSet owner refs.
+	LabelWorkloadKind = "k8shell.io/workload-kind"
+	LabelWorkloadName = "k8shell.io/workload-name"
+
+	// Common pod/release labels used across workspace resources.
+	LabelType         = "k8shell.io/type"
+	LabelWorkspace    = "k8shell.io/workspace"
+	LabelUsername     = "k8shell.io/username"
+	LabelOrganization = "k8shell.io/organization"
+	LabelBlueprint    = "k8shell.io/blueprint"
+	LabelCanonicalId  = "k8shell.io/canonical-id"
+	LabelJobId        = "k8shell.io/job-id"
+	LabelAppVersion   = "k8shell.io/k8shelld-version"
+	LabelStorageType  = "k8shell.io/storage-type"
+	LabelStorageName  = "k8shell.io/storage-name"
+	LabelSubdomain    = "k8shell.io/subdomain"
+	LabelInjectTarget = "k8shell.io/inject-target"
+	LabelManagedBy    = "k8shell.io/managed-by"
+
+	// AnnotationUserStr holds the base64-encoded canonical user string on a workspace pod.
+	AnnotationUserStr = "k8shell.io/userstr"
+	// AnnotationSplash is an optional workspace splash annotation forwarded to injected pods.
+	AnnotationSplash = "workspace.k8shell.io/splash"
 )
 
 // InjectionSpec holds the containers, init containers, volumes, and pod-template
@@ -178,9 +204,9 @@ func (c *Client) InjectionSpecFromTemplate(ctx context.Context,
 	}
 
 	podLabelAllowlist := map[string]bool{
-		"k8shell.io/username":     true,
-		"k8shell.io/organization": true,
-		"k8shell.io/blueprint":    true,
+		LabelUsername:     true,
+		LabelOrganization: true,
+		LabelBlueprint:    true,
 	}
 	podLabels := make(map[string]string)
 	for k, v := range pod.Labels {
@@ -188,12 +214,12 @@ func (c *Client) InjectionSpecFromTemplate(ctx context.Context,
 			podLabels[k] = v
 		}
 	}
-	podLabels["k8shell.io/canonical-id"] = workspaceCanonicalId
-	podLabels["k8shell.io/job-id"] = jobId
+	podLabels[LabelCanonicalId] = workspaceCanonicalId
+	podLabels[LabelJobId] = jobId
 
 	// Copy key annotations needed for workspace discovery on injected pods.
 	podAnnotations := make(map[string]string)
-	for _, key := range []string{"k8shell.io/userstr"} {
+	for _, key := range []string{AnnotationUserStr} {
 		if v, ok := pod.Annotations[key]; ok && v != "" {
 			podAnnotations[key] = v
 		}
@@ -257,6 +283,8 @@ func (c *Client) InjectIntoWorkload(ctx context.Context, adapter WorkloadAdapter
 		tpl.Labels[k] = v
 	}
 	tpl.Labels[LabelInjected] = "true"
+	tpl.Labels[LabelWorkloadKind] = adapter.Kind()
+	tpl.Labels[LabelWorkloadName] = adapter.Name()
 	if tpl.Annotations == nil {
 		tpl.Annotations = make(map[string]string)
 	}
@@ -316,12 +344,14 @@ func (c *Client) EjectFromWorkload(ctx context.Context, adapter WorkloadAdapter,
 
 	// Remove only the labels injection added (preserve selector-referenced labels).
 	injectedLabelKeys := map[string]bool{
-		LabelInjected:             true,
-		"k8shell.io/canonical-id": true,
-		"k8shell.io/job-id":       true,
-		"k8shell.io/username":     true,
-		"k8shell.io/organization": true,
-		"k8shell.io/blueprint":    true,
+		LabelInjected:     true,
+		LabelWorkloadKind: true,
+		LabelWorkloadName: true,
+		LabelCanonicalId:  true,
+		LabelJobId:        true,
+		LabelUsername:     true,
+		LabelOrganization: true,
+		LabelBlueprint:    true,
 	}
 	newLabels := make(map[string]string)
 	for k, v := range tpl.Labels {
@@ -333,8 +363,8 @@ func (c *Client) EjectFromWorkload(ctx context.Context, adapter WorkloadAdapter,
 
 	// Remove workspace annotations injected into the pod template.
 	injectedAnnotationKeys := map[string]bool{
-		"k8shell.io/userstr":          true,
-		"workspace.k8shell.io/splash": true,
+		AnnotationUserStr: true,
+		AnnotationSplash:  true,
 	}
 	newAnnotations := make(map[string]string)
 	for k, v := range tpl.Annotations {
@@ -388,7 +418,7 @@ func (c *Client) ApplyNamespacedResources(ctx context.Context, namespace string,
 // DeleteNamespacedWorkspaceResources deletes all resources in namespace that
 // carry the k8shell.io/canonical-id label matching canonicalId.
 func (c *Client) DeleteNamespacedWorkspaceResources(ctx context.Context, namespace, canonicalId string) error {
-	selector := "k8shell.io/canonical-id=" + canonicalId
+	selector := LabelCanonicalId + "=" + canonicalId
 	listOpts := metav1.ListOptions{LabelSelector: selector}
 	deleteOpts := metav1.DeleteOptions{}
 
@@ -403,7 +433,7 @@ func (c *Client) DeleteNamespacedWorkspaceResources(ctx context.Context, namespa
 	}
 	for i := range pvcs.Items {
 		pvc := &pvcs.Items[i]
-		if pvc.Labels["k8shell.io/storage-type"] == "shared" {
+		if pvc.Labels[LabelStorageType] == "shared" {
 			continue
 		}
 		if err := kc.CoreV1().PersistentVolumeClaims(namespace).Delete(ctx, pvc.Name, deleteOpts); err != nil && !k8serrors.IsNotFound(err) {

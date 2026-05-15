@@ -196,13 +196,13 @@ func (w *Workspace) doInstallation(ctx context.Context, opts *ProvisionOptions) 
 	labels := map[string]string{
 		"app.kubernetes.io/name":       helm.WORKSPACE_CHART_NAME,
 		"app.kubernetes.io/instance":   w.Name,
-		"k8shell.io/k8shelld-version":  w.appVersion(),
+		helm.LabelAppVersion:           w.appVersion(),
 		"app.kubernetes.io/managed-by": "k8shell-provisioner",
-		"k8shell.io/type":              "workspace",
-		"k8shell.io/workspace":         w.Name,
-		"k8shell.io/username":          w.user.Username,
-		"k8shell.io/blueprint":         w.blueprint.Name,
-		"k8shell.io/organization":      w.user.Organization,
+		helm.LabelType:                 "workspace",
+		helm.LabelWorkspace:            w.Name,
+		helm.LabelUsername:             w.user.Username,
+		helm.LabelBlueprint:            w.blueprint.Name,
+		helm.LabelOrganization:         w.user.Organization,
 	}
 
 	startTime := time.Now()
@@ -326,8 +326,8 @@ func (w *Workspace) ensureSharedStorages(ctx context.Context, namespace string, 
 				Labels: map[string]string{
 					"app.kubernetes.io/version":     w.client.AppVersion,
 					"app.kubernetes.io/managed-by":  "k8shell-provisioner",
-					"k8shell.io/storage-type":       "shared",
-					"k8shell.io/storage-name":       name,
+					helm.LabelStorageType:           "shared",
+					helm.LabelStorageName:           name,
 					"io.k8shell.provisioner/commit": w.client.Commit,
 				},
 				Annotations: storage.ClaimSpecAnnotations,
@@ -372,13 +372,13 @@ func (w *Workspace) createHeadlessService(ctx context.Context, values map[string
 			Namespace: namespace,
 			Labels: map[string]string{
 				"app.kubernetes.io/managed-by": "k8shell-provisioner",
-				"k8shell.io/subdomain":         subdomain,
+				helm.LabelSubdomain:            subdomain,
 			},
 		},
 		Spec: corev1.ServiceSpec{
 			ClusterIP: "None",
 			Selector: map[string]string{
-				"k8shell.io/subdomain": subdomain,
+				helm.LabelSubdomain: subdomain,
 			},
 		},
 	}

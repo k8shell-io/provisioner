@@ -15,6 +15,7 @@ import (
 	"github.com/k8shell-io/common/pkg/models"
 	natsc "github.com/k8shell-io/common/pkg/nats"
 	"github.com/k8shell-io/common/pkg/userstr"
+	"github.com/k8shell-io/provisioner/internal/helm"
 	ws "github.com/k8shell-io/provisioner/internal/workspace"
 	"github.com/rs/zerolog"
 	"google.golang.org/grpc/codes"
@@ -311,7 +312,7 @@ func (p *ProvisionerService) ProvisionWorkspaceStream(
 // prepareWorkspaceWithPod prepares the workspace object for provisioning/upgrade based on the workspace name
 func (p *ProvisionerService) prepareWorkspaceWithPod(ctx context.Context, pod *corev1.Pod) (*ws.Workspace, error) {
 
-	userstrb64 := pod.Annotations["k8shell.io/userstr"]
+	userstrb64 := pod.Annotations[helm.AnnotationUserStr]
 	if userstrb64 == "" {
 		return nil, status.Errorf(codes.Internal, "Workspace pod is missing userstr annotation")
 	}

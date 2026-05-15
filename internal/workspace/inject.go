@@ -10,7 +10,6 @@ import (
 	"github.com/k8shell-io/provisioner/internal/helm"
 	"gopkg.in/yaml.v3"
 	corev1 "k8s.io/api/core/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 )
 
@@ -49,8 +48,15 @@ type EjectOptions struct {
 	Timeout int
 }
 
+// WorkloadOwner identifies the workload that owns a pod injected with a workspace
+type WorkloadOwner struct {
+	Kind string
+	Name string
+}
+
 // Inject provisions the k8shell workspace by injecting the workspace containers and volumes into an
-// existing workload. The target workload is identified by the namespace and name provided in the InjectOptions
+// existing workload. The target workload is identified by the namespace and name provided
+// in the InjectOptions
 func (w *Workspace) Inject(ctx context.Context, opts *InjectOptions) (*models.WorkspaceStatus, error) {
 	if opts == nil {
 		return nil, fmt.Errorf("inject options are required")
@@ -103,9 +109,9 @@ func (w *Workspace) Inject(ctx context.Context, opts *InjectOptions) (*models.Wo
 	}
 
 	resourceLabels := map[string]string{
-		"k8shell.io/canonical-id":  opts.WorkspaceCanonicalId,
-		"k8shell.io/inject-target": opts.WorkloadKind + "." + opts.WorkloadName,
-		"k8shell.io/managed-by":    "k8shell-provisioner",
+		helm.LabelCanonicalId:  opts.WorkspaceCanonicalId,
+		helm.LabelInjectTarget: opts.WorkloadKind + "." + opts.WorkloadName,
+		helm.LabelManagedBy:    "k8shell-provisioner",
 	}
 
 	startTime := time.Now()
@@ -134,15 +140,12 @@ func (w *Workspace) Inject(ctx context.Context, opts *InjectOptions) (*models.Wo
 		Str("namespace", opts.Namespace).
 		Msg("workload patched, waiting for pods to become running")
 
-	// Watch the pods that belong to the Deployment in the target namespace.
-	// PodWatcher identifies pods by the k8shell.io/canonical-id label that was
-	// added to the Deployment's pod template during injection.
 	provisionOpts := &ProvisionOptions{
 		Timeout:  opts.Timeout,
 		Messages: opts.Messages,
 	}
 	pw := NewPodWatcher(w.client.KubeClient(), opts.Namespace, w.Name, w.log)
-	snap, err := pw.WatchByLabel(ctx, "k8shell.io/canonical-id="+opts.WorkspaceCanonicalId, provisionOpts)
+	snap, err := pw.WatchByLabel(ctx, helm.LabelCanonicalId+"="+opts.WorkspaceCanonicalId, provisionOpts)
 	if err != nil {
 		return nil, fmt.Errorf("error watching injected pods: %w", err)
 	}
@@ -226,7 +229,6 @@ func sanitizeBlueprintForInjection(bp *models.Blueprint) (*models.Blueprint, err
 		return nil, fmt.Errorf("blueprint is nil")
 	}
 
-	// Deep copy via YAML round-trip so we don't mutate the original.
 	raw, err := yaml.Marshal(bp)
 	if err != nil {
 		return nil, fmt.Errorf("marshal blueprint: %w", err)
@@ -237,7 +239,6 @@ func sanitizeBlueprintForInjection(bp *models.Blueprint) (*models.Blueprint, err
 	}
 	copy.Metadata = bp.Metadata
 
-	// Disable local storages that are incompatible with injection.
 	for name, s := range copy.Storages {
 		if !s.Enabled {
 			continue
@@ -255,15 +256,12 @@ func sanitizeBlueprintForInjection(bp *models.Blueprint) (*models.Blueprint, err
 		}
 	}
 
-	// Disable podman and all podman-defined storages.
 	copy.Podman.Enabled = false
 	for name, s := range copy.Podman.Storages {
 		s.Enabled = false
 		copy.Podman.Storages[name] = s
 	}
 
-	// Disable network policies — the target namespace already has its own
-	// network policies and injecting workspace ones would conflict.
 	copy.Network.NetworkPolicyClass = ""
 
 	return &copy, nil
@@ -301,35 +299,15 @@ func toStringSlice(value interface{}) []string {
 	}
 }
 
-// WorkloadOwner identifies the workload that owns a pod.
-type WorkloadOwner struct {
-	Kind string
-	Name string
-}
-
-// FindOwnerWorkload traverses a pod's owner references to determine which
-// supported workload (Deployment, StatefulSet, DaemonSet) owns it:
-//   - Pod → ReplicaSet → Deployment
-//   - Pod → StatefulSet (direct)
-//   - Pod → DaemonSet (direct)
-//
-// Returns nil (not an error) when the pod has no supported workload owner.
+// FindOwnerWorkload identifies the supported workload (Deployment, StatefulSet,
+// DaemonSet) that owns the given pod. It returns an error if the pod is missing
+// the identifying labels or if the
 func FindOwnerWorkload(ctx context.Context, kubeClient kubernetes.Interface, pod *corev1.Pod) (*WorkloadOwner, error) {
-	for _, owner := range pod.OwnerReferences {
-		switch owner.Kind {
-		case "StatefulSet", "DaemonSet":
-			return &WorkloadOwner{Kind: owner.Kind, Name: owner.Name}, nil
-		case "ReplicaSet":
-			rs, err := kubeClient.AppsV1().ReplicaSets(pod.Namespace).Get(ctx, owner.Name, metav1.GetOptions{})
-			if err != nil {
-				continue
-			}
-			for _, rsOwner := range rs.OwnerReferences {
-				if rsOwner.Kind == "Deployment" {
-					return &WorkloadOwner{Kind: "Deployment", Name: rsOwner.Name}, nil
-				}
-			}
+	// Fast path: labels stamped during injection.
+	if kind, ok := pod.Labels[helm.LabelWorkloadKind]; ok && kind != "" {
+		if name, ok := pod.Labels[helm.LabelWorkloadName]; ok && name != "" {
+			return &WorkloadOwner{Kind: kind, Name: name}, nil
 		}
 	}
-	return nil, nil
+	return nil, fmt.Errorf("pod %s/%s is missing workload owner labels", pod.Namespace, pod.Name)
 }

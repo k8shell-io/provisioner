@@ -107,6 +107,7 @@ func (p *ProvisionerService) GetWorkspacesByUserStr(
 	if parsedUserStr.WorkloadName() == "" {
 		opts.Workspace = canUserStr.WorkspaceName()
 	} else {
+		workloadKind := parsedUserStr.WorkloadKind()
 		workloadName := parsedUserStr.WorkloadName()
 		namespace := parsedUserStr.Namespace("")
 		if namespace != "" && !p.server.config.AllowsInjectionNamespace(namespace) {
@@ -116,7 +117,8 @@ func (p *ProvisionerService) GetWorkspacesByUserStr(
 		if namespace != "" {
 			opts.InjectionNamespaces = []string{namespace}
 		}
-		opts.InjectTarget = workloadName
+		opts.InjectWorkload = workloadName
+		opts.InjectKind = workloadKind
 	}
 
 	workspaces, err := ws.GetWorkspaces(ctx, p.server.helm, opts)
