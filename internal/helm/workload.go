@@ -25,6 +25,7 @@ type WorkloadAdapter interface {
 	// Annotations on the workload object (used for injection tracking).
 	GetAnnotations() map[string]string
 	SetAnnotation(key, value string)
+	DeleteAnnotation(key string)
 
 	// Pod template — containers, volumes, labels, annotations.
 	GetPodTemplate() *corev1.PodTemplateSpec
@@ -129,6 +130,9 @@ func (a *DeploymentAdapter) SetAnnotation(key, value string) {
 	}
 	a.dep.Annotations[key] = value
 }
+func (a *DeploymentAdapter) DeleteAnnotation(key string) {
+	delete(a.dep.Annotations, key)
+}
 func (a *DeploymentAdapter) GetPodTemplate() *corev1.PodTemplateSpec {
 	return &a.dep.Spec.Template
 }
@@ -168,6 +172,9 @@ func (a *StatefulSetAdapter) SetAnnotation(key, value string) {
 	}
 	a.ss.Annotations[key] = value
 }
+func (a *StatefulSetAdapter) DeleteAnnotation(key string) {
+	delete(a.ss.Annotations, key)
+}
 func (a *StatefulSetAdapter) GetPodTemplate() *corev1.PodTemplateSpec {
 	return &a.ss.Spec.Template
 }
@@ -206,6 +213,9 @@ func (a *DaemonSetAdapter) SetAnnotation(key, value string) {
 		a.ds.Annotations = make(map[string]string)
 	}
 	a.ds.Annotations[key] = value
+}
+func (a *DaemonSetAdapter) DeleteAnnotation(key string) {
+	delete(a.ds.Annotations, key)
 }
 func (a *DaemonSetAdapter) GetPodTemplate() *corev1.PodTemplateSpec {
 	return &a.ds.Spec.Template

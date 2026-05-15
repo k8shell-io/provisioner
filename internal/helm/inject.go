@@ -384,7 +384,7 @@ func (c *Client) EjectFromWorkload(ctx context.Context, adapter WorkloadAdapter,
 	tpl.Spec.ShareProcessNamespace = restorePID
 	adapter.SetPodTemplate(tpl)
 
-	// Clear tracking annotations.
+	// Delete tracking annotations from the workload object.
 	for _, key := range []string{
 		AnnotationInjectedCanonicalId,
 		AnnotationInjectedContainers,
@@ -392,7 +392,7 @@ func (c *Client) EjectFromWorkload(ctx context.Context, adapter WorkloadAdapter,
 		AnnotationInjectedVolumes,
 		AnnotationInjectedSharePID,
 	} {
-		adapter.SetAnnotation(key, "")
+		adapter.DeleteAnnotation(key)
 	}
 
 	if err := adapter.Update(ctx, c.kubeClient); err != nil {
