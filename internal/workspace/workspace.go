@@ -122,47 +122,6 @@ func parseCanonicalUserStrFromBase64(s string) (*userstr.CanonicalUserStr, error
 	return raw.Canonicalize()
 }
 
-// ParseWorkspaceMetadata parses the label set and annotations attached to a workspace pod
-func ParseWorkspaceMetadata(labels map[string]string, annotations map[string]string) (*WorkspaceLabels, error) {
-	if labels == nil {
-		return nil, fmt.Errorf("workspace labels are nil")
-	}
-
-	username, ok := labels[helm.LabelUsername]
-	if !ok || username == "" {
-		return nil, fmt.Errorf("missing label %s", helm.LabelUsername)
-	}
-
-	blueprint, ok := labels[helm.LabelBlueprint]
-	if !ok || blueprint == "" {
-		return nil, fmt.Errorf("missing label %s", helm.LabelBlueprint)
-	}
-
-	userstrB64, ok := annotations[helm.AnnotationUserStr]
-	if !ok || userstrB64 == "" {
-		return nil, fmt.Errorf("missing annotation %s", helm.AnnotationUserStr)
-	}
-
-	canUser, err := parseCanonicalUserStrFromBase64(userstrB64)
-	if err != nil {
-		return nil, fmt.Errorf("parse %s: %w", helm.AnnotationUserStr, err)
-	}
-	identity := canUser.Identity()
-
-	return &WorkspaceLabels{
-		Workspace:    labels[helm.LabelWorkspace],
-		Username:     username,
-		Organization: labels[helm.LabelOrganization],
-		Blueprint:    blueprint,
-		RepoOwner:    identity.RepoOwner(),
-		RepoName:     identity.RepoName(),
-		RepoRef:      identity.RepoRef(),
-		AppVersion:   labels[helm.LabelAppVersion],
-		JobId:        labels[helm.LabelJobId],
-		UserStr:      canUser,
-	}, nil
-}
-
 // FindWorkspace finds a workspace by name and returns its status
 func FindWorkspace(ctx context.Context, helmClient *helm.Client, workspace string, injectionNamespaces []string) (*models.WorkspaceDetails,
 	*corev1.Pod, error) {

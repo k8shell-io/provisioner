@@ -2,13 +2,12 @@
 
 {{/* labels for helm resources */}}
 {{- define "workspace.labels" -}}
-k8shell.io/workspace: "{{ .Release.Name }}"
+k8shell.io/canonical-id: "{{ .Values.__canonicalid__ }}"
 {{- end -}}
 
 {{/* labels for helm resources */}}
 {{- define "workspace.workspaceLabels" -}}
 k8shell.io/k8shelld-version: {{ .Values.__appversion__ }}
-k8shell.io/workspace: "{{ .Release.Name }}"
 k8shell.io/canonical-id: "{{ .Values.__canonicalid__ }}"
 k8shell.io/blueprint: "{{ .Values.__blueprint__ }}"
 k8shell.io/username: "{{ .Values.__username__ }}"

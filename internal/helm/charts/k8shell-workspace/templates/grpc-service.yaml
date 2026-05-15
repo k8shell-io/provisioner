@@ -8,7 +8,7 @@ metadata:
 spec:
   clusterIP: None
   selector:
-    k8shell.io/workspace: {{ .Release.Name }}
+    k8shell.io/canonical-id: "{{ .Values.__canonicalid__ }}"
   ports:
     - name: grpc-api
       port: 2822

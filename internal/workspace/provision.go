@@ -198,7 +198,6 @@ func (w *Workspace) doInstallation(ctx context.Context, opts *ProvisionOptions) 
 		"app.kubernetes.io/instance":   w.Name,
 		helm.LabelAppVersion:           w.appVersion(),
 		"app.kubernetes.io/managed-by": "k8shell-provisioner",
-		helm.LabelWorkspace:            w.Name,
 		helm.LabelUsername:             w.user.Username,
 		helm.LabelBlueprint:            w.blueprint.Name,
 		helm.LabelOrganization:         w.user.Organization,

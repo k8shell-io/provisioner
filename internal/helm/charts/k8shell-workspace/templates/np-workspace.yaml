@@ -10,7 +10,7 @@ spec:
   podSelector:
     matchLabels:
       k8shell.io/organization: {{ .Values.__organization__ }}
-      k8shell.io/workspace: {{ .Release.Name }}
+      k8shell.io/canonical-id: "{{ .Values.__canonicalid__ }}"
   policyTypes:
     - Ingress
     - Egress
