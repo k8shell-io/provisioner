@@ -101,9 +101,10 @@ func (p *ProvisionerService) GetWorkspacesByUserStr(
 	identity := canUserStr.Identity()
 	opts := ws.GetWorkspacesOptions{}
 
-	if parsedUserStr.WorkloadName() == "" {
+	if canUserStr.WorkspaceName() != "" {
 		opts.Username = identity.Username()
 		opts.WorkspaceName = canUserStr.WorkspaceName()
+		opts.TargetNamespace = parsedUserStr.Namespace("")
 	} else {
 		workloadKind := parsedUserStr.WorkloadKind()
 		workloadName := parsedUserStr.WorkloadName()

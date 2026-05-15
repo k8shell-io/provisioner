@@ -52,11 +52,12 @@ type Values struct {
 
 // GetWorkspacesOptions defines the options for retrieving workspaces with filtering
 type GetWorkspacesOptions struct {
-	Username      string
-	Organization  string
-	Blueprint     string
-	WorkspaceName string
-	CanonicalId   string
+	Username        string
+	Organization    string
+	Blueprint       string
+	WorkspaceName   string
+	TargetNamespace string
+	CanonicalId     string
 	// InjectNamespaces controls where injected workspaces are discovered.
 	// Use "*" for cluster-wide discovery.
 	InjectNamespaces []string
@@ -212,9 +213,12 @@ func GetWorkspaces(
 		return nil, fmt.Errorf("%w: InjectWorkload specified without InjectKind", models.ErrInvalidParameters)
 	}
 
-	v1 := helmClient.KubeClient().CoreV1()
-	targetNamespace := helmClient.TargetNamespace()
+	targetNamespace := opts.TargetNamespace
+	if targetNamespace == "" {
+		targetNamespace = helmClient.TargetNamespace()
+	}
 
+	v1 := helmClient.KubeClient().CoreV1()
 	out := make([]*models.WorkspaceDetails, 0)
 	pods := make([]corev1.Pod, 0)
 
