@@ -147,6 +147,25 @@ func NewConfig(configFile string) (*Config, error) {
 
 	cfg.BaseDir = filepath.Dir(configFile)
 
+	injectedNamespaces := make([]string, 0, len(cfg.InjectNamespaces))
+	seenNamespaces := make(map[string]struct{}, len(cfg.InjectNamespaces))
+	for _, ns := range cfg.InjectNamespaces {
+		ns = strings.TrimSpace(ns)
+		if ns == "" {
+			continue
+		}
+		if ns == "*" {
+			injectedNamespaces = []string{"*"}
+			break
+		}
+		if _, exists := seenNamespaces[ns]; exists {
+			continue
+		}
+		seenNamespaces[ns] = struct{}{}
+		injectedNamespaces = append(injectedNamespaces, ns)
+	}
+	cfg.InjectNamespaces = injectedNamespaces
+
 	return &cfg, nil
 }
 

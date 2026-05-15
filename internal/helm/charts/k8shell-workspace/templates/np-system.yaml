@@ -9,7 +9,6 @@ metadata:
 spec:
   podSelector:
     matchLabels:
-      k8shell.io/type: workspace
       k8shell.io/organization: "{{ .Values.__organization__ }}"
       k8shell.io/workspace: "{{ .Release.Name }}"
   policyTypes:
@@ -38,7 +37,6 @@ metadata:
 spec:
   endpointSelector:
     matchLabels:
-      k8shell.io/type: workspace
       k8shell.io/organization: {{ .Values.__organization__ }}
       k8shell.io/workspace: {{ .Release.Name }}
   egress:

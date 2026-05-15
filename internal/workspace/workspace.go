@@ -52,13 +52,14 @@ type Values struct {
 
 // GetWorkspacesOptions defines the options for retrieving workspaces with filtering
 type GetWorkspacesOptions struct {
-	Username     string
-	Organization string
-	Blueprint    string
-	Workspace    string
-	// InjectionNamespaces controls where injected workspaces are discovered.
+	Username      string
+	Organization  string
+	Blueprint     string
+	WorkspaceName string
+	CanonicalId   string
+	// InjectNamespaces controls where injected workspaces are discovered.
 	// Use "*" for cluster-wide discovery.
-	InjectionNamespaces []string
+	InjectNamespaces []string
 	// InjectWorkload and InjectKind filter injected workspaces by the workload they
 	// were injected into. InjectKind is optional; omitting it matches any kind.
 	InjectWorkload string
@@ -166,8 +167,8 @@ func FindWorkspace(ctx context.Context, helmClient *helm.Client, workspace strin
 	*corev1.Pod, error) {
 
 	ws, err := GetWorkspaces(ctx, helmClient, GetWorkspacesOptions{
-		Workspace:           workspace,
-		InjectionNamespaces: injectionNamespaces,
+		WorkspaceName:    workspace,
+		InjectNamespaces: injectionNamespaces,
 	})
 	if err != nil {
 		return nil, nil, err
@@ -186,25 +187,13 @@ func podMatchesWorkspaceFilters(p *corev1.Pod, opts GetWorkspacesOptions, inject
 		return false
 	}
 
-	lbls := p.Labels
-
-	if injected {
-		if lbls[helm.LabelInjected] != "true" {
-			return false
-		}
-	} else {
-		if lbls[helm.LabelType] != "workspace" {
-			return false
-		}
-	}
-
-	if opts.Username != "" && lbls[helm.LabelUsername] != opts.Username {
+	if opts.Username != "" && p.Labels[helm.LabelUsername] != opts.Username {
 		return false
 	}
-	if opts.Organization != "" && lbls[helm.LabelOrganization] != opts.Organization {
+	if opts.Organization != "" && p.Labels[helm.LabelOrganization] != opts.Organization {
 		return false
 	}
-	if opts.Blueprint != "" && lbls[helm.LabelBlueprint] != opts.Blueprint {
+	if opts.Blueprint != "" && p.Labels[helm.LabelBlueprint] != opts.Blueprint {
 		return false
 	}
 
@@ -216,16 +205,23 @@ func GetWorkspaces(
 	helmClient *helm.Client,
 	opts GetWorkspacesOptions,
 ) (*GetWorkspacesResult, error) {
+	if opts.InjectKind != "" && opts.InjectWorkload == "" {
+		return nil, fmt.Errorf("%w: InjectKind specified without InjectWorkload", models.ErrInvalidParameters)
+	}
+	if opts.InjectKind == "" && opts.InjectWorkload != "" {
+		return nil, fmt.Errorf("%w: InjectWorkload specified without InjectKind", models.ErrInvalidParameters)
+	}
+
 	v1 := helmClient.KubeClient().CoreV1()
-	namespace := helmClient.TargetNamespace()
+	targetNamespace := helmClient.TargetNamespace()
 
 	out := make([]*models.WorkspaceDetails, 0)
 	pods := make([]corev1.Pod, 0)
 
-	if opts.Workspace != "" && opts.InjectWorkload == "" {
-		p, err := v1.Pods(namespace).Get(ctx, opts.Workspace, metav1.GetOptions{})
+	if opts.WorkspaceName != "" && opts.InjectWorkload == "" {
+		p, err := v1.Pods(targetNamespace).Get(ctx, opts.WorkspaceName, metav1.GetOptions{})
 		if err != nil && !apierrors.IsNotFound(err) {
-			return nil, fmt.Errorf("failed to get workspace pod %q: %w", opts.Workspace, err)
+			return nil, fmt.Errorf("failed to get workspace pod %q: %w", opts.WorkspaceName, err)
 		}
 		if err == nil && podMatchesWorkspaceFilters(p, opts, false) {
 			if d := WorkspaceDetailsFromPod(p); d != nil {
@@ -234,9 +230,7 @@ func GetWorkspaces(
 			}
 		}
 	} else if opts.InjectWorkload == "" {
-		labels := map[string]string{
-			helm.LabelType: "workspace",
-		}
+		labels := map[string]string{}
 		if opts.Username != "" {
 			labels[helm.LabelUsername] = opts.Username
 		}
@@ -246,9 +240,12 @@ func GetWorkspaces(
 		if opts.Blueprint != "" {
 			labels[helm.LabelBlueprint] = opts.Blueprint
 		}
+		if opts.CanonicalId != "" {
+			labels[helm.LabelCanonicalId] = opts.CanonicalId
+		}
 		selector := getSelector(labels)
 
-		podList, err := v1.Pods(namespace).List(ctx, metav1.ListOptions{
+		podList, err := v1.Pods(targetNamespace).List(ctx, metav1.ListOptions{
 			LabelSelector: selector,
 		})
 		if err != nil {
@@ -272,130 +269,105 @@ func GetWorkspaces(
 		}
 	}
 
-	injectedLabels := map[string]string{
-		helm.LabelInjected: "true",
-	}
-	if opts.Username != "" {
-		injectedLabels[helm.LabelUsername] = opts.Username
-	}
-	if opts.Organization != "" {
-		injectedLabels[helm.LabelOrganization] = opts.Organization
-	}
-	if opts.Blueprint != "" {
-		injectedLabels[helm.LabelBlueprint] = opts.Blueprint
-	}
-	injectedSelector := getSelector(injectedLabels)
+	if len(opts.InjectNamespaces) > 0 {
+		injectedLabels := map[string]string{
+			helm.LabelInjected: "true",
+		}
+		if opts.Username != "" {
+			injectedLabels[helm.LabelUsername] = opts.Username
+		}
+		if opts.Organization != "" {
+			injectedLabels[helm.LabelOrganization] = opts.Organization
+		}
+		if opts.Blueprint != "" {
+			injectedLabels[helm.LabelBlueprint] = opts.Blueprint
+		}
+		if opts.CanonicalId != "" {
+			injectedLabels[helm.LabelCanonicalId] = opts.CanonicalId
+		}
+		if opts.InjectWorkload != "" {
+			injectedLabels[helm.LabelWorkloadName] = strings.ToLower(opts.InjectWorkload)
+			injectedLabels[helm.LabelWorkloadKind] = opts.InjectKind
+		}
+		injectedSelector := getSelector(injectedLabels)
 
-	shouldListClusterWide := false
-	injectedNamespaces := make([]string, 0, len(opts.InjectionNamespaces))
-	seenNamespaces := make(map[string]struct{}, len(opts.InjectionNamespaces))
-	for _, ns := range opts.InjectionNamespaces {
-		ns = strings.TrimSpace(ns)
-		if ns == "" {
-			continue
-		}
-		if ns == "*" {
-			shouldListClusterWide = true
-			break
-		}
-		if _, exists := seenNamespaces[ns]; exists {
-			continue
-		}
-		seenNamespaces[ns] = struct{}{}
-		injectedNamespaces = append(injectedNamespaces, ns)
-	}
-
-	injectedItems := make([]corev1.Pod, 0)
-	if shouldListClusterWide {
-		injectedList, err := v1.Pods("").List(ctx, metav1.ListOptions{
-			LabelSelector: injectedSelector,
-		})
-		if err != nil {
-			if strings.Contains(err.Error(), "unable to parse") {
-				return nil, fmt.Errorf("%w: %s", models.ErrInvalidParameters, injectedSelector)
+		injectedItems := make([]corev1.Pod, 0)
+		if opts.InjectNamespaces[0] == "*" {
+			injectedList, err := v1.Pods("").List(ctx, metav1.ListOptions{
+				LabelSelector: injectedSelector,
+			})
+			if err != nil {
+				if strings.Contains(err.Error(), "unable to parse") {
+					return nil, fmt.Errorf("%w: %s", models.ErrInvalidParameters, injectedSelector)
+				}
+				return nil, fmt.Errorf("failed to list injected workspace pods cluster-wide: %w", err)
 			}
-			return nil, fmt.Errorf("failed to list injected workspace pods cluster-wide: %w", err)
-		}
-		injectedItems = append(injectedItems, injectedList.Items...)
-	} else {
-		listCtx, cancelLists := context.WithCancel(ctx)
-		defer cancelLists()
+			injectedItems = append(injectedItems, injectedList.Items...)
+		} else {
+			listCtx, cancelLists := context.WithCancel(ctx)
+			defer cancelLists()
 
-		resultsCh := make(chan []corev1.Pod, len(injectedNamespaces))
-		errCh := make(chan error, 1)
-		var wg sync.WaitGroup
-		var once sync.Once
+			resultsCh := make(chan []corev1.Pod, len(opts.InjectNamespaces))
+			errCh := make(chan error, 1)
+			var wg sync.WaitGroup
+			var once sync.Once
 
-		for _, ns := range injectedNamespaces {
-			wg.Add(1)
-			go func() {
-				defer wg.Done()
+			for _, ns := range opts.InjectNamespaces {
+				wg.Add(1)
+				go func() {
+					defer wg.Done()
 
-				injectedList, err := v1.Pods(ns).List(listCtx, metav1.ListOptions{
-					LabelSelector: injectedSelector,
-				})
-				if err != nil {
-					wrappedErr := fmt.Errorf("failed to list injected workspace pods in namespace %q: %w", ns, err)
-					if strings.Contains(err.Error(), "unable to parse") {
-						wrappedErr = fmt.Errorf("%w: %s", models.ErrInvalidParameters, injectedSelector)
-					}
-					once.Do(func() {
-						errCh <- wrappedErr
-						cancelLists()
+					injectedList, err := v1.Pods(ns).List(listCtx, metav1.ListOptions{
+						LabelSelector: injectedSelector,
 					})
-					return
-				}
+					if err != nil {
+						wrappedErr := fmt.Errorf("failed to list injected workspace pods in namespace %q: %w", ns, err)
+						if strings.Contains(err.Error(), "unable to parse") {
+							wrappedErr = fmt.Errorf("%w: %s", models.ErrInvalidParameters, injectedSelector)
+						}
+						once.Do(func() {
+							errCh <- wrappedErr
+							cancelLists()
+						})
+						return
+					}
 
-				select {
-				case resultsCh <- injectedList.Items:
-				case <-listCtx.Done():
-				}
-			}()
+					select {
+					case resultsCh <- injectedList.Items:
+					case <-listCtx.Done():
+					}
+				}()
+			}
+
+			wg.Wait()
+			close(resultsCh)
+
+			select {
+			case err := <-errCh:
+				return nil, err
+			default:
+			}
+
+			for items := range resultsCh {
+				injectedItems = append(injectedItems, items...)
+			}
 		}
 
-		wg.Wait()
-		close(resultsCh)
-
-		select {
-		case err := <-errCh:
-			return nil, err
-		default:
-		}
-
-		for items := range resultsCh {
-			injectedItems = append(injectedItems, items...)
-		}
-	}
-
-	if len(injectedItems) > 0 {
-		for i := range injectedItems {
-			ip := &injectedItems[i]
-			if ip.Namespace == namespace {
-				continue
-			}
-			if opts.Workspace != "" && ip.Name != opts.Workspace {
-				continue
-			}
-			if !podMatchesWorkspaceFilters(ip, opts, true) {
-				continue
-			}
-			if opts.InjectWorkload != "" {
-				matches, err := podMatchesInjectTarget(ip, opts.InjectKind, opts.InjectWorkload)
-				if err != nil {
-					return nil, err
-				}
-				if !matches {
+		if len(injectedItems) > 0 {
+			for i := range injectedItems {
+				ip := &injectedItems[i]
+				if opts.WorkspaceName != "" && ip.Name != opts.WorkspaceName {
 					continue
 				}
-			}
 
-			d := WorkspaceDetailsFromInjectedPod(ip)
-			if d == nil {
-				continue
-			}
+				d := WorkspaceDetailsFromInjectedPod(ip)
+				if d == nil {
+					continue
+				}
 
-			out = append(out, d)
-			pods = append(pods, *ip)
+				out = append(out, d)
+				pods = append(pods, *ip)
+			}
 		}
 	}
 
@@ -403,19 +375,6 @@ func GetWorkspaces(
 		Workspaces: out,
 		Pods:       pods,
 	}, nil
-}
-
-// podMatchesInjectTarget checks whether a pod's workload labels match the given
-// kind and name. Returns an error if the pod lacks the required workload labels.
-func podMatchesInjectTarget(pod *corev1.Pod, kind, name string) (bool, error) {
-	podKind := pod.Labels[helm.LabelWorkloadKind]
-	podName := pod.Labels[helm.LabelWorkloadName]
-	if podKind == "" || podName == "" {
-		return false, fmt.Errorf("pod %s/%s is missing workload labels", pod.Namespace, pod.Name)
-	}
-	nameMatch := strings.EqualFold(podName, name)
-	kindMatch := kind == "" || strings.EqualFold(podKind, kind)
-	return nameMatch && kindMatch, nil
 }
 
 // FindworkspaceByName finds a workspace by its name using Helm client and returns the corresponding release
@@ -582,6 +541,7 @@ func (w *Workspace) Values() (map[string]interface{}, error) {
 		userstrB64 = canonicalUserStrToBase64(w.userStr)
 	}
 
+	values["__canonicalid__"] = w.userStr.CanonicalId()
 	values["__user__"] = userValues
 	values["__username__"] = w.user.Username
 	values["__blueprint__"] = w.blueprint.Name

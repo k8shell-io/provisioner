@@ -28,7 +28,6 @@ const (
 	LabelWorkloadName = "k8shell.io/workload-name"
 
 	// Common pod/release labels used across workspace resources.
-	LabelType         = "k8shell.io/type"
 	LabelWorkspace    = "k8shell.io/workspace"
 	LabelUsername     = "k8shell.io/username"
 	LabelOrganization = "k8shell.io/organization"

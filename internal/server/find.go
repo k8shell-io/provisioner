@@ -48,11 +48,11 @@ func (p *ProvisionerService) GetWorkspaces(
 
 	workspaces, err := ws.GetWorkspaces(ctx, p.server.helm,
 		ws.GetWorkspacesOptions{
-			Username:            req.Username,
-			Blueprint:           req.Blueprint,
-			Organization:        req.Organization,
-			Workspace:           req.Workspace,
-			InjectionNamespaces: p.server.config.InjectNamespaces,
+			Username:         req.Username,
+			Blueprint:        req.Blueprint,
+			Organization:     req.Organization,
+			WorkspaceName:    req.Workspace,
+			InjectNamespaces: p.server.config.InjectNamespaces,
 		})
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "Failed to list workspaces: %v", err)
@@ -100,12 +100,12 @@ func (p *ProvisionerService) GetWorkspacesByUserStr(
 
 	identity := canUserStr.Identity()
 	opts := ws.GetWorkspacesOptions{
-		Username:            identity.Username(),
-		InjectionNamespaces: p.server.config.InjectNamespaces,
+		Username:         identity.Username(),
+		InjectNamespaces: p.server.config.InjectNamespaces,
 	}
 
 	if parsedUserStr.WorkloadName() == "" {
-		opts.Workspace = canUserStr.WorkspaceName()
+		opts.WorkspaceName = canUserStr.WorkspaceName()
 	} else {
 		workloadKind := parsedUserStr.WorkloadKind()
 		workloadName := parsedUserStr.WorkloadName()
@@ -115,7 +115,7 @@ func (p *ProvisionerService) GetWorkspacesByUserStr(
 				"namespace %s is not allowed for injection", namespace)
 		}
 		if namespace != "" {
-			opts.InjectionNamespaces = []string{namespace}
+			opts.InjectNamespaces = []string{namespace}
 		}
 		opts.InjectWorkload = workloadName
 		opts.InjectKind = workloadKind
