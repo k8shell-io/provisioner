@@ -708,7 +708,6 @@ func WorkspaceDetailsFromInjectedPod(pod *corev1.Pod) *models.WorkspaceDetails {
 		return nil
 	}
 
-	// The workspace main container is prefixed with "k8shell-<canonicalId>-".
 	mainContainerName := canonicalId + "-k8shell-main"
 	var cpu, memory string
 	var port int
@@ -730,7 +729,7 @@ func WorkspaceDetailsFromInjectedPod(pod *corev1.Pod) *models.WorkspaceDetails {
 	}
 
 	tlsEnabled := podMountsSecret(pod, canonicalId+"-tls")
-	return workspaceDetailsFromPodCore(pod, pod.Name, canonicalId, cpu, memory, port, tlsEnabled)
+	return workspaceDetailsFromPodCore(pod, cpu, memory, port, tlsEnabled)
 }
 
 func WorkspaceDetailsFromPod(pod *corev1.Pod) *models.WorkspaceDetails {
@@ -745,21 +744,14 @@ func WorkspaceDetailsFromPod(pod *corev1.Pod) *models.WorkspaceDetails {
 	port := getPodContainerPort(pod, models.WORKSPACE_PORT)
 	tlsEnabled := podMountsSecret(pod, pod.Name+"-tls")
 
-	nameLabel := pod.Labels[helm.LabelWorkspace]
-	if nameLabel == "" {
-		nameLabel = pod.Name
-	}
-
 	cpu := pod.Spec.Containers[0].Resources.Limits.Cpu().String()
 	memory := pod.Spec.Containers[0].Resources.Limits.Memory().String()
 
-	return workspaceDetailsFromPodCore(pod, nameLabel, nameLabel, cpu, memory, port, tlsEnabled)
+	return workspaceDetailsFromPodCore(pod, cpu, memory, port, tlsEnabled)
 }
 
 func workspaceDetailsFromPodCore(
 	pod *corev1.Pod,
-	workspaceName string,
-	serverHost string,
 	cpu string,
 	memory string,
 	port int,
@@ -788,7 +780,7 @@ func workspaceDetailsFromPodCore(
 	snap := AnalyzePod(pod, nil, defaultCrashLoopThreshold)
 	return &models.WorkspaceDetails{
 		WorkspaceStatus: *snapToWorkspaceStatus(&snap),
-		Name:            workspaceName,
+		Name:            pod.Name,
 		Username:        pod.Labels[helm.LabelUsername],
 		RepoOwner:       identity.RepoOwner(),
 		RepoName:        identity.RepoName(),
@@ -796,7 +788,7 @@ func workspaceDetailsFromPodCore(
 		Blueprint:       pod.Labels[helm.LabelBlueprint],
 		Organization:    pod.Labels[helm.LabelOrganization],
 		JobId:           pod.Labels[helm.LabelJobId],
-		ServerName:      serverHost + "." + pod.Namespace,
+		ServerName:      pod.Labels[helm.LabelCanonicalId] + "." + pod.Namespace,
 		PodIP:           pod.Status.PodIP,
 		Port:            port,
 		TLSEnabled:      tlsEnabled,
