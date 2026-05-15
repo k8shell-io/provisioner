@@ -402,11 +402,6 @@ func GetWorkspaces(
 	}
 
 	if len(injectedItems) > 0 {
-		type wsd struct {
-			ws *models.WorkspaceDetails
-			p  *corev1.Pod
-		}
-
 		rsCache := make(map[string]string)
 		for i := range injectedItems {
 			ip := &injectedItems[i]

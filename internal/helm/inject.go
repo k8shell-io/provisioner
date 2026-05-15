@@ -12,12 +12,10 @@ import (
 )
 
 const (
-	// LabelInjected is stamped on a Deployment's pod template when a workspace is
+	// LabelInjected is stamped on a workload's pod template when a workspace is
 	// injected, so that GetWorkspaces can discover injected pods cluster-wide.
 	LabelInjected = "k8shell.io/injected"
 
-	// AnnotationInjectedWorkspace marks which workspace was injected into a Deployment.
-	AnnotationInjectedWorkspace = "k8shell.io/injected-workspace"
 	// AnnotationInjectedContainers lists the injected container names (comma-separated).
 	AnnotationInjectedContainers = "k8shell.io/injected-containers"
 	// AnnotationInjectedInitContainers lists the injected init container names (comma-separated).
@@ -48,7 +46,8 @@ type InjectionSpec struct {
 // WorkspaceResourcesFromTemplate renders the workspace Helm chart and extracts
 // all non-Pod YAML documents (ConfigMaps, PVCs, NetworkPolicies, Certs, etc.)
 // as raw YAML strings, keyed by "kind/name".
-func (c *Client) WorkspaceResourcesFromTemplate(ctx context.Context, values map[string]interface{}, workspaceCanonicalId string) (map[string]string, error) {
+func (c *Client) WorkspaceResourcesFromTemplate(ctx context.Context, values map[string]interface{},
+	workspaceCanonicalId string) (map[string]string, error) {
 	rendered, err := c.Template(ctx, WORKSPACE_CHART_NAME, InstallOptions{
 		ReleaseName: workspaceCanonicalId,
 		Values:      values,
@@ -84,7 +83,7 @@ func (c *Client) WorkspaceResourcesFromTemplate(ctx context.Context, values map[
 
 // InjectionSpecFromTemplate renders the workspace Helm chart, extracts the Pod
 // document, and returns its containers/initContainers/volumes renamed with the
-// given prefix to avoid conflicts with the target Deployment's own containers.
+// given prefix to avoid conflicts with the target workload's own containers.
 func (c *Client) InjectionSpecFromTemplate(ctx context.Context,
 	values map[string]interface{}, workspaceCanonicalId string, jobId string,
 	sharedPvcPrefix string) (*InjectionSpec, error) {
@@ -179,12 +178,9 @@ func (c *Client) InjectionSpecFromTemplate(ctx context.Context,
 	}
 
 	podLabelAllowlist := map[string]bool{
-		"k8shell.io/workspace":      false,
-		"k8shell.io/username":       true,
-		"k8shell.io/organization":   true,
-		"k8shell.io/blueprint":      true,
-		"k8shell.io/network-policy": true,
-		"k8shell.io/subdomain":      true,
+		"k8shell.io/username":     true,
+		"k8shell.io/organization": true,
+		"k8shell.io/blueprint":    true,
 	}
 	podLabels := make(map[string]string)
 	for k, v := range pod.Labels {
@@ -197,7 +193,7 @@ func (c *Client) InjectionSpecFromTemplate(ctx context.Context,
 
 	// Copy key annotations needed for workspace discovery on injected pods.
 	podAnnotations := make(map[string]string)
-	for _, key := range []string{"k8shell.io/userstr", "workspace.k8shell.io/splash"} {
+	for _, key := range []string{"k8shell.io/userstr"} {
 		if v, ok := pod.Annotations[key]; ok && v != "" {
 			podAnnotations[key] = v
 		}
@@ -216,10 +212,11 @@ func (c *Client) InjectionSpecFromTemplate(ctx context.Context,
 // appending containers, init containers, and volumes from spec, and recording the
 // injection in the workload's annotations so it can be reversed by EjectFromWorkload.
 // It fails if the workload is already injected with any workspace.
-func (c *Client) InjectIntoWorkload(ctx context.Context, adapter WorkloadAdapter, workspaceName, canonicalId string, spec *InjectionSpec) error {
+func (c *Client) InjectIntoWorkload(ctx context.Context, adapter WorkloadAdapter,
+	workspaceCanonicalId string, spec *InjectionSpec) error {
 	// Guard: one injection per workload at a time.
-	if existing := adapter.GetAnnotations()[AnnotationInjectedWorkspace]; existing != "" {
-		return fmt.Errorf("%s %s/%s is already injected with workspace %q; eject it first",
+	if existing := adapter.GetAnnotations()[AnnotationInjectedCanonicalId]; existing != "" {
+		return fmt.Errorf("%s %s/%s is already injected with workspace %q",
 			adapter.Kind(), adapter.Namespace(), adapter.Name(), existing)
 	}
 
@@ -246,8 +243,7 @@ func (c *Client) InjectIntoWorkload(ctx context.Context, adapter WorkloadAdapter
 	}
 
 	// Set tracking annotations on the workload object.
-	adapter.SetAnnotation(AnnotationInjectedWorkspace, workspaceName)
-	adapter.SetAnnotation(AnnotationInjectedCanonicalId, canonicalId)
+	adapter.SetAnnotation(AnnotationInjectedCanonicalId, workspaceCanonicalId)
 	adapter.SetAnnotation(AnnotationInjectedContainers, strings.Join(containerNames, ","))
 	adapter.SetAnnotation(AnnotationInjectedInitContainers, strings.Join(initNames, ","))
 	adapter.SetAnnotation(AnnotationInjectedVolumes, strings.Join(volumeNames, ","))
@@ -279,7 +275,7 @@ func (c *Client) InjectIntoWorkload(ctx context.Context, adapter WorkloadAdapter
 	}
 
 	c.log.Info().Str("kind", adapter.Kind()).Str("namespace", adapter.Namespace()).
-		Str("name", adapter.Name()).Str("workspace", workspaceName).Msg("injected workspace into workload")
+		Str("name", adapter.Name()).Str("canonicalId", workspaceCanonicalId).Msg("injected workspace into workload")
 	return nil
 }
 
@@ -287,11 +283,13 @@ func (c *Client) InjectIntoWorkload(ctx context.Context, adapter WorkloadAdapter
 // injection tracking annotations, removes the named containers/initContainers/volumes
 // from the pod template, clears the annotations, and returns the canonical ID so
 // the caller can delete the associated namespaced resources.
-func (c *Client) EjectFromWorkload(ctx context.Context, adapter WorkloadAdapter, workspaceName string) (string, error) {
+func (c *Client) EjectFromWorkload(ctx context.Context, adapter WorkloadAdapter,
+	workspaceCanonicalId string) (string, error) {
 	ann := adapter.GetAnnotations()
-	if ann[AnnotationInjectedWorkspace] != workspaceName {
+	if ann[AnnotationInjectedCanonicalId] != workspaceCanonicalId {
 		return "", fmt.Errorf("%s %s/%s is not injected with workspace %q (found %q)",
-			adapter.Kind(), adapter.Namespace(), adapter.Name(), workspaceName, ann[AnnotationInjectedWorkspace])
+			adapter.Kind(), adapter.Namespace(), adapter.Name(), workspaceCanonicalId,
+			ann[AnnotationInjectedCanonicalId])
 	}
 	canonicalId := ann[AnnotationInjectedCanonicalId]
 
@@ -318,14 +316,12 @@ func (c *Client) EjectFromWorkload(ctx context.Context, adapter WorkloadAdapter,
 
 	// Remove only the labels injection added (preserve selector-referenced labels).
 	injectedLabelKeys := map[string]bool{
-		LabelInjected:               true,
-		"k8shell.io/canonical-id":   true,
-		"k8shell.io/job-id":         true,
-		"k8shell.io/username":       true,
-		"k8shell.io/organization":   true,
-		"k8shell.io/blueprint":      true,
-		"k8shell.io/network-policy": true,
-		"k8shell.io/subdomain":      true,
+		LabelInjected:             true,
+		"k8shell.io/canonical-id": true,
+		"k8shell.io/job-id":       true,
+		"k8shell.io/username":     true,
+		"k8shell.io/organization": true,
+		"k8shell.io/blueprint":    true,
 	}
 	newLabels := make(map[string]string)
 	for k, v := range tpl.Labels {
@@ -360,7 +356,6 @@ func (c *Client) EjectFromWorkload(ctx context.Context, adapter WorkloadAdapter,
 
 	// Clear tracking annotations.
 	for _, key := range []string{
-		AnnotationInjectedWorkspace,
 		AnnotationInjectedCanonicalId,
 		AnnotationInjectedContainers,
 		AnnotationInjectedInitContainers,
@@ -375,7 +370,7 @@ func (c *Client) EjectFromWorkload(ctx context.Context, adapter WorkloadAdapter,
 	}
 
 	c.log.Info().Str("kind", adapter.Kind()).Str("namespace", adapter.Namespace()).
-		Str("name", adapter.Name()).Str("workspace", workspaceName).Msg("ejected workspace from workload")
+		Str("name", adapter.Name()).Str("canonicalId", workspaceCanonicalId).Msg("ejected workspace from workload")
 	return canonicalId, nil
 }
 

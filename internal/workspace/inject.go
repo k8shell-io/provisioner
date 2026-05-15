@@ -122,7 +122,7 @@ func (w *Workspace) Inject(ctx context.Context, opts *InjectOptions) (*models.Wo
 		return nil, fmt.Errorf("failed to get workload adapter for %s/%s/%s: %w", opts.WorkloadKind,
 			opts.Namespace, opts.WorkloadName, err)
 	}
-	if err := w.client.InjectIntoWorkload(ctx, adapter, w.Name, opts.WorkspaceCanonicalId, spec); err != nil {
+	if err := w.client.InjectIntoWorkload(ctx, adapter, opts.WorkspaceCanonicalId, spec); err != nil {
 		return nil, fmt.Errorf("failed to inject into %s %s/%s: %w", opts.WorkloadKind, opts.Namespace,
 			opts.WorkloadName, err)
 	}
@@ -212,14 +212,11 @@ func (w *Workspace) Eject(ctx context.Context, opts *EjectOptions) error {
 // IsInjected returns true when the named workload in the given namespace
 // carries the injection annotation for this workspace.
 func (w *Workspace) IsInjected(ctx context.Context, namespace, workloadKind, workloadName string) (bool, error) {
-	if workloadKind == "" {
-		workloadKind = "Deployment"
-	}
 	adapter, err := w.client.GetWorkloadAdapter(ctx, namespace, workloadKind, workloadName)
 	if err != nil {
 		return false, err
 	}
-	return adapter.GetAnnotations()[helm.AnnotationInjectedWorkspace] == w.Name, nil
+	return adapter.GetAnnotations()[helm.AnnotationInjectedCanonicalId] == w.Name, nil
 }
 
 // sanitizeBlueprintForInjection returns a deep copy of bp with branches that

@@ -372,7 +372,6 @@ func (w *Workspace) createHeadlessService(ctx context.Context, values map[string
 			Namespace: namespace,
 			Labels: map[string]string{
 				"app.kubernetes.io/managed-by": "k8shell-provisioner",
-				"k8shell.io/component":         "headless-service",
 				"k8shell.io/subdomain":         subdomain,
 			},
 		},

@@ -250,14 +250,14 @@ func (p *ProvisionerService) EjectWorkspace(
 	if err != nil {
 		return nil, status.Errorf(codes.NotFound, "workload %s/%s/%s not found: %v", workloadKind, req.Namespace, req.WorkloadName, err)
 	}
-	workspaceName := adapter.GetAnnotations()[helm.AnnotationInjectedWorkspace]
-	if workspaceName == "" {
+	workspaceCanonicalId := adapter.GetAnnotations()[helm.AnnotationInjectedCanonicalId]
+	if workspaceCanonicalId == "" {
 		return nil, status.Errorf(codes.FailedPrecondition, "%s %s/%s does not have an injected workspace", workloadKind, req.Namespace, req.WorkloadName)
 	}
 
-	workspace, err := ws.NewWorkspaceForEject(workspaceName, p.server.helm)
+	workspace, err := ws.NewWorkspaceForEject(workspaceCanonicalId, p.server.helm)
 	if err != nil {
-		return nil, status.Errorf(codes.Internal, "failed to prepare workspace %s: %v", workspaceName, err)
+		return nil, status.Errorf(codes.Internal, "failed to prepare workspace %s: %v", workspaceCanonicalId, err)
 	}
 
 	timeout := int(req.TimeoutSeconds)
@@ -271,10 +271,10 @@ func (p *ProvisionerService) EjectWorkspace(
 		WorkloadKind: workloadKind,
 		Timeout:      timeout,
 	}); err != nil {
-		return nil, status.Errorf(codes.Internal, "failed to eject workspace %s: %v", workspaceName, err)
+		return nil, status.Errorf(codes.Internal, "failed to eject workspace %s: %v", workspaceCanonicalId, err)
 	}
 
 	return &provisionerv1.EjectWorkspaceResponse{
-		Workspace: workspaceName,
+		Workspace: workspaceCanonicalId,
 	}, nil
 }
