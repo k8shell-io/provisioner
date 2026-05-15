@@ -99,12 +99,10 @@ func (p *ProvisionerService) GetWorkspacesByUserStr(
 	}
 
 	identity := canUserStr.Identity()
-	opts := ws.GetWorkspacesOptions{
-		Username:         identity.Username(),
-		InjectNamespaces: p.server.config.InjectNamespaces,
-	}
+	opts := ws.GetWorkspacesOptions{}
 
 	if parsedUserStr.WorkloadName() == "" {
+		opts.Username = identity.Username()
 		opts.WorkspaceName = canUserStr.WorkspaceName()
 	} else {
 		workloadKind := parsedUserStr.WorkloadKind()
@@ -119,6 +117,7 @@ func (p *ProvisionerService) GetWorkspacesByUserStr(
 		}
 		opts.InjectWorkload = workloadName
 		opts.InjectKind = workloadKind
+		opts.CanonicalId = canUserStr.CanonicalId()
 	}
 
 	workspaces, err := ws.GetWorkspaces(ctx, p.server.helm, opts)
