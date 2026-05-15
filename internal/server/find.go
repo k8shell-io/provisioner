@@ -88,27 +88,25 @@ func (p *ProvisionerService) GetWorkspacesByUserStr(
 		return nil, status.Errorf(codes.InvalidArgument, "userstr is required")
 	}
 
-	parsedUserStr, err := userstr.ParseUserStr(req.Userstr)
+	userStr, err := userstr.ParseUserStr(req.Userstr)
 	if err != nil {
 		return nil, status.Errorf(codes.InvalidArgument, "invalid userstr format: %v", err)
 	}
 
-	canUserStr, err := parsedUserStr.Canonicalize()
+	canUserStr, err := userStr.Canonicalize()
 	if err != nil {
 		return nil, status.Errorf(codes.InvalidArgument, "failed to canonicalize userstr: %v", err)
 	}
 
 	identity := canUserStr.Identity()
-	opts := ws.GetWorkspacesOptions{}
+	opts := ws.GetWorkspacesOptions{
+		Username: identity.Username(),
+	}
 
-	if canUserStr.WorkspaceName() != "" {
-		opts.Username = identity.Username()
-		opts.WorkspaceName = canUserStr.WorkspaceName()
-		opts.TargetNamespace = parsedUserStr.Namespace("")
-	} else {
-		workloadKind := parsedUserStr.WorkloadKind()
-		workloadName := parsedUserStr.WorkloadName()
-		namespace := parsedUserStr.Namespace("")
+	if userStr.WorkloadName() != "" {
+		workloadKind := userStr.WorkloadKind()
+		workloadName := userStr.WorkloadName()
+		namespace := userStr.Namespace("")
 		if namespace != "" && !p.server.config.AllowsInjectionNamespace(namespace) {
 			return nil, status.Errorf(codes.PermissionDenied,
 				"namespace %s is not allowed for injection", namespace)
@@ -119,6 +117,9 @@ func (p *ProvisionerService) GetWorkspacesByUserStr(
 		opts.InjectWorkload = workloadName
 		opts.InjectKind = workloadKind
 		opts.CanonicalId = canUserStr.CanonicalId()
+	} else {
+		opts.WorkspaceName = canUserStr.WorkspaceName()
+		opts.TargetNamespace = userStr.Namespace(p.server.helm.TargetNamespace())
 	}
 
 	workspaces, err := ws.GetWorkspaces(ctx, p.server.helm, opts)
