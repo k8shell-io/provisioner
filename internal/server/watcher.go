@@ -88,10 +88,10 @@ func (w *InjectionWatcher) startWorkloadInformers(ctx context.Context, factory i
 				if !ok1 || !ok2 {
 					return
 				}
-				oldWorkspace := oldMeta.GetAnnotations()[helm.AnnotationInjectedCanonicalId]
-				newWorkspace := newMeta.GetAnnotations()[helm.AnnotationInjectedCanonicalId]
+				oldWorkspace := helm.InjectedCanonicalId(oldMeta.GetAnnotations())
+				newWorkspace := helm.InjectedCanonicalId(newMeta.GetAnnotations())
 				if oldWorkspace != "" && newWorkspace != oldWorkspace {
-					canonicalId := oldMeta.GetAnnotations()[helm.AnnotationInjectedCanonicalId]
+					canonicalId := oldWorkspace
 					w.cleanup(ctx, oldMeta.GetNamespace(), kind, newMeta.GetName(), oldWorkspace, canonicalId)
 				}
 			},
@@ -107,9 +107,9 @@ func (w *InjectionWatcher) startWorkloadInformers(ctx context.Context, factory i
 						return
 					}
 				}
-				workspace := meta.GetAnnotations()[helm.AnnotationInjectedCanonicalId]
+				workspace := helm.InjectedCanonicalId(meta.GetAnnotations())
 				if workspace != "" {
-					canonicalId := meta.GetAnnotations()[helm.AnnotationInjectedCanonicalId]
+					canonicalId := workspace
 					w.cleanup(ctx, meta.GetNamespace(), kind, meta.GetName(), workspace, canonicalId)
 				}
 			},

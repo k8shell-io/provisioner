@@ -250,7 +250,7 @@ func (p *ProvisionerService) EjectWorkspace(
 	if err != nil {
 		return nil, status.Errorf(codes.NotFound, "workload %s/%s/%s not found: %v", workloadKind, req.Namespace, req.WorkloadName, err)
 	}
-	workspaceCanonicalId := adapter.GetAnnotations()[helm.AnnotationInjectedCanonicalId]
+	workspaceCanonicalId := helm.InjectedCanonicalId(adapter.GetAnnotations())
 	if workspaceCanonicalId == "" {
 		return nil, status.Errorf(codes.FailedPrecondition, "%s %s/%s does not have an injected workspace", workloadKind, req.Namespace, req.WorkloadName)
 	}

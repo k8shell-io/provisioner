@@ -219,7 +219,7 @@ func (w *Workspace) IsInjected(ctx context.Context, namespace, workloadKind, wor
 	if err != nil {
 		return false, err
 	}
-	return adapter.GetAnnotations()[helm.AnnotationInjectedCanonicalId] == w.Name, nil
+	return helm.InjectedCanonicalId(adapter.GetAnnotations()) == w.Name, nil
 }
 
 // sanitizeBlueprintForInjection returns a deep copy of bp with branches that

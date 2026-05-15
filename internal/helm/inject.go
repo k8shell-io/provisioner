@@ -2,6 +2,7 @@ package helm
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 
@@ -16,18 +17,9 @@ const (
 	// injected, so that GetWorkspaces can discover injected pods cluster-wide.
 	LabelInjected = "k8shell.io/injected"
 
-	// AnnotationInjectedContainers lists the injected container names (comma-separated).
-	AnnotationInjectedContainers = "k8shell.io/injected-containers"
-	// AnnotationInjectedInitContainers lists the injected init container names (comma-separated).
-	AnnotationInjectedInitContainers = "k8shell.io/injected-init-containers"
-	// AnnotationInjectedVolumes lists the injected volume names (comma-separated).
-	AnnotationInjectedVolumes = "k8shell.io/injected-volumes"
-	// AnnotationInjectedSharePID records the original shareProcessNamespace value
-	// before injection so it can be restored on eject.
-	AnnotationInjectedSharePID = "k8shell.io/injected-share-pid"
-	// AnnotationInjectedCanonicalId records the canonical workspace ID used to
-	// label injected resources, so they can be found and deleted on eject.
-	AnnotationInjectedCanonicalId = "k8shell.io/injected-canonical-id"
+	// AnnotationInjectionState holds a JSON-encoded InjectionState on the workload
+	// object, recording everything needed to reverse the injection on eject.
+	AnnotationInjectionState = "k8shell.io/injection"
 
 	// LabelWorkloadKind and LabelWorkloadName are stamped onto the injected
 	// workload's pod template so the owning workload can be identified directly
@@ -52,9 +44,41 @@ const (
 
 	// AnnotationUserStr holds the base64-encoded canonical user string on a workspace pod.
 	AnnotationUserStr = "k8shell.io/userstr"
-	// AnnotationSplash is an optional workspace splash annotation forwarded to injected pods.
-	AnnotationSplash = "workspace.k8shell.io/splash"
 )
+
+// InjectionState is the structured payload stored in AnnotationInjectionState.
+// It records all information needed to cleanly reverse an injection.
+type InjectionState struct {
+	CanonicalId    string   `json:"canonicalId"`
+	Containers     []string `json:"containers,omitempty"`
+	InitContainers []string `json:"initContainers,omitempty"`
+	Volumes        []string `json:"volumes,omitempty"`
+	SharePID       bool     `json:"sharePID"`
+}
+
+// ParseInjectionState decodes the injection annotation from an annotation map.
+// Returns nil, false if the annotation is absent or malformed.
+func ParseInjectionState(annotations map[string]string) (*InjectionState, bool) {
+	raw, ok := annotations[AnnotationInjectionState]
+	if !ok || raw == "" {
+		return nil, false
+	}
+	var s InjectionState
+	if err := json.Unmarshal([]byte(raw), &s); err != nil {
+		return nil, false
+	}
+	return &s, true
+}
+
+// InjectedCanonicalId returns the canonical workspace ID recorded in the
+// injection annotation, or "" if the workload is not injected.
+func InjectedCanonicalId(annotations map[string]string) string {
+	s, ok := ParseInjectionState(annotations)
+	if !ok {
+		return ""
+	}
+	return s.CanonicalId
+}
 
 // InjectionSpec holds the containers, init containers, volumes, and pod-template
 // labels/annotations extracted from a rendered workspace chart, ready for injection.
@@ -241,12 +265,12 @@ func (c *Client) InjectionSpecFromTemplate(ctx context.Context,
 func (c *Client) InjectIntoWorkload(ctx context.Context, adapter WorkloadAdapter,
 	workspaceCanonicalId string, spec *InjectionSpec) error {
 	// Guard: one injection per workload at a time.
-	if existing := adapter.GetAnnotations()[AnnotationInjectedCanonicalId]; existing != "" {
+	if existing := InjectedCanonicalId(adapter.GetAnnotations()); existing != "" {
 		return fmt.Errorf("%s %s/%s is already injected with workspace %q",
 			adapter.Kind(), adapter.Namespace(), adapter.Name(), existing)
 	}
 
-	// Collect injected names for the tracking annotations.
+	// Collect names for the injection state.
 	containerNames := make([]string, len(spec.Containers))
 	for i, c := range spec.Containers {
 		containerNames[i] = c.Name
@@ -262,18 +286,21 @@ func (c *Client) InjectIntoWorkload(ctx context.Context, adapter WorkloadAdapter
 
 	// Record original shareProcessNamespace so eject can restore it.
 	tpl := adapter.GetPodTemplate()
-	origSharePID := tpl.Spec.ShareProcessNamespace
-	origSharePIDStr := "false"
-	if origSharePID != nil && *origSharePID {
-		origSharePIDStr = "true"
-	}
+	origSharePID := tpl.Spec.ShareProcessNamespace != nil && *tpl.Spec.ShareProcessNamespace
 
-	// Set tracking annotations on the workload object.
-	adapter.SetAnnotation(AnnotationInjectedCanonicalId, workspaceCanonicalId)
-	adapter.SetAnnotation(AnnotationInjectedContainers, strings.Join(containerNames, ","))
-	adapter.SetAnnotation(AnnotationInjectedInitContainers, strings.Join(initNames, ","))
-	adapter.SetAnnotation(AnnotationInjectedVolumes, strings.Join(volumeNames, ","))
-	adapter.SetAnnotation(AnnotationInjectedSharePID, origSharePIDStr)
+	// Write a single structured annotation on the workload object.
+	state := InjectionState{
+		CanonicalId:    workspaceCanonicalId,
+		Containers:     containerNames,
+		InitContainers: initNames,
+		Volumes:        volumeNames,
+		SharePID:       origSharePID,
+	}
+	stateJSON, err := json.Marshal(state)
+	if err != nil {
+		return fmt.Errorf("failed to marshal injection state: %w", err)
+	}
+	adapter.SetAnnotation(AnnotationInjectionState, string(stateJSON))
 
 	// Mutate the pod template.
 	if tpl.Labels == nil {
@@ -313,27 +340,20 @@ func (c *Client) InjectIntoWorkload(ctx context.Context, adapter WorkloadAdapter
 // the caller can delete the associated namespaced resources.
 func (c *Client) EjectFromWorkload(ctx context.Context, adapter WorkloadAdapter,
 	workspaceCanonicalId string) (string, error) {
-	ann := adapter.GetAnnotations()
-	if ann[AnnotationInjectedCanonicalId] != workspaceCanonicalId {
-		return "", fmt.Errorf("%s %s/%s is not injected with workspace %q (found %q)",
-			adapter.Kind(), adapter.Namespace(), adapter.Name(), workspaceCanonicalId,
-			ann[AnnotationInjectedCanonicalId])
-	}
-	canonicalId := ann[AnnotationInjectedCanonicalId]
-
-	removeSet := func(csv string) map[string]bool {
-		m := make(map[string]bool)
-		for _, s := range strings.Split(csv, ",") {
-			if s != "" {
-				m[s] = true
-			}
+	state, ok := ParseInjectionState(adapter.GetAnnotations())
+	if !ok || state.CanonicalId != workspaceCanonicalId {
+		found := ""
+		if ok {
+			found = state.CanonicalId
 		}
-		return m
+		return "", fmt.Errorf("%s %s/%s is not injected with workspace %q (found %q)",
+			adapter.Kind(), adapter.Namespace(), adapter.Name(), workspaceCanonicalId, found)
 	}
+	canonicalId := state.CanonicalId
 
-	rmContainers := removeSet(ann[AnnotationInjectedContainers])
-	rmInit := removeSet(ann[AnnotationInjectedInitContainers])
-	rmVolumes := removeSet(ann[AnnotationInjectedVolumes])
+	rmContainers := toSet(state.Containers)
+	rmInit := toSet(state.InitContainers)
+	rmVolumes := toSet(state.Volumes)
 
 	tpl := adapter.GetPodTemplate()
 
@@ -364,7 +384,6 @@ func (c *Client) EjectFromWorkload(ctx context.Context, adapter WorkloadAdapter,
 	// Remove workspace annotations injected into the pod template.
 	injectedAnnotationKeys := map[string]bool{
 		AnnotationUserStr: true,
-		AnnotationSplash:  true,
 	}
 	newAnnotations := make(map[string]string)
 	for k, v := range tpl.Annotations {
@@ -377,23 +396,14 @@ func (c *Client) EjectFromWorkload(ctx context.Context, adapter WorkloadAdapter,
 	// Restore shareProcessNamespace.
 	falseVal := false
 	restorePID := &falseVal
-	if ann[AnnotationInjectedSharePID] == "true" {
+	if state.SharePID {
 		trueVal := true
 		restorePID = &trueVal
 	}
 	tpl.Spec.ShareProcessNamespace = restorePID
 	adapter.SetPodTemplate(tpl)
 
-	// Delete tracking annotations from the workload object.
-	for _, key := range []string{
-		AnnotationInjectedCanonicalId,
-		AnnotationInjectedContainers,
-		AnnotationInjectedInitContainers,
-		AnnotationInjectedVolumes,
-		AnnotationInjectedSharePID,
-	} {
-		adapter.DeleteAnnotation(key)
-	}
+	adapter.DeleteAnnotation(AnnotationInjectionState)
 
 	if err := adapter.Update(ctx, c.kubeClient); err != nil {
 		return "", fmt.Errorf("failed to update %s %s/%s during eject: %w", adapter.Kind(), adapter.Namespace(), adapter.Name(), err)
@@ -527,6 +537,16 @@ func (c *Client) applyGenericResource(ctx context.Context, namespace, key, doc s
 			Msg("skipping unsupported resource kind during injection apply")
 	}
 	return nil
+}
+
+func toSet(items []string) map[string]bool {
+	m := make(map[string]bool, len(items))
+	for _, s := range items {
+		if s != "" {
+			m[s] = true
+		}
+	}
+	return m
 }
 
 func filterContainers(containers []corev1.Container, remove map[string]bool) []corev1.Container {

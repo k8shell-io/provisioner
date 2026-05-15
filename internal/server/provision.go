@@ -309,7 +309,7 @@ func (p *ProvisionerService) ProvisionWorkspaceStream(
 	}
 }
 
-// prepareWorkspaceWithPod prepares the workspace object for provisioning/upgrade based on the workspace name
+// prepareWorkspaceWithPod prepares the workspace object for provisioning based on the workspace name
 func (p *ProvisionerService) prepareWorkspaceWithPod(ctx context.Context, pod *corev1.Pod) (*ws.Workspace, error) {
 
 	userstrb64 := pod.Annotations[helm.AnnotationUserStr]

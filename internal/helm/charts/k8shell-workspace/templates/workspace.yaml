@@ -9,9 +9,6 @@ metadata:
   name: {{ .Release.Name }}
   namespace: {{ .Release.Namespace }}
   annotations:
-    {{- if .Values.splash }}
-    workspace.k8shell.io/splash: {{ .Values.splash | b64enc | quote }}
-    {{- end }}
     k8shell.io/manifest-hash: {{ .Values.__manifesthash__ | quote }}
     {{- if .Values.__identity__ }}
     k8shell.io/identity: {{ .Values.__identity__ | quote }}
