@@ -228,7 +228,7 @@ func GetWorkspaces(
 			return nil, fmt.Errorf("failed to get workspace pod %q: %w", opts.WorkspaceName, err)
 		}
 		if err == nil && podMatchesWorkspaceFilters(p, opts, false) {
-			if d := WorkspaceDetailsFromPod(p); d != nil {
+			if d := workspaceDetailsFromPod(p); d != nil {
 				out = append(out, d)
 				pods = append(pods, *p)
 			}
@@ -264,7 +264,7 @@ func GetWorkspaces(
 			if !podMatchesWorkspaceFilters(p, opts, false) {
 				continue
 			}
-			d := WorkspaceDetailsFromPod(p)
+			d := workspaceDetailsFromPod(p)
 			if d == nil {
 				continue
 			}
@@ -364,7 +364,7 @@ func GetWorkspaces(
 					continue
 				}
 
-				d := WorkspaceDetailsFromInjectedPod(ip)
+				d := workspaceDetailsFromPod(ip)
 				if d == nil {
 					continue
 				}
@@ -695,11 +695,20 @@ func (w *Workspace) StopPod(ctx context.Context) error {
 	return nil
 }
 
-// workspacePodStatus extracts the workspace details from pod
-// WorkspaceDetailsFromInjectedPod builds a WorkspaceDetails for a workspace
-// that is injected as a sidecar into an external Deployment.
-func WorkspaceDetailsFromInjectedPod(pod *corev1.Pod) *models.WorkspaceDetails {
+func workspaceDetailsFromPod(
+	pod *corev1.Pod,
+) *models.WorkspaceDetails {
 	if pod == nil {
+		return nil
+	}
+
+	userstrB64, ok := pod.Annotations[helm.AnnotationUserStr]
+	if !ok || userstrB64 == "" {
+		return nil
+	}
+
+	canUser, err := parseCanonicalUserStrFromBase64(userstrB64)
+	if err != nil {
 		return nil
 	}
 
@@ -708,11 +717,15 @@ func WorkspaceDetailsFromInjectedPod(pod *corev1.Pod) *models.WorkspaceDetails {
 		return nil
 	}
 
-	mainContainerName := canonicalId + "-k8shell-main"
+	appVersion := pod.Labels[helm.LabelAppVersion]
+	if appVersion == "" {
+		appVersion = "1.0.0"
+	}
+
 	var cpu, memory string
 	var port int
 	for _, c := range pod.Spec.Containers {
-		if c.Name == mainContainerName {
+		if strings.HasSuffix(c.Name, "k8shell-main") {
 			cpu = c.Resources.Limits.Cpu().String()
 			memory = c.Resources.Limits.Memory().String()
 			for _, p := range c.Ports {
@@ -724,57 +737,12 @@ func WorkspaceDetailsFromInjectedPod(pod *corev1.Pod) *models.WorkspaceDetails {
 			break
 		}
 	}
+
 	if port == 0 {
 		port = models.WORKSPACE_PORT
 	}
 
 	tlsEnabled := podMountsSecret(pod, canonicalId+"-tls")
-	return workspaceDetailsFromPodCore(pod, cpu, memory, port, tlsEnabled)
-}
-
-func WorkspaceDetailsFromPod(pod *corev1.Pod) *models.WorkspaceDetails {
-	if pod == nil {
-		return nil
-	}
-
-	if len(pod.Spec.Containers) == 0 {
-		return nil
-	}
-
-	port := getPodContainerPort(pod, models.WORKSPACE_PORT)
-	tlsEnabled := podMountsSecret(pod, pod.Name+"-tls")
-
-	cpu := pod.Spec.Containers[0].Resources.Limits.Cpu().String()
-	memory := pod.Spec.Containers[0].Resources.Limits.Memory().String()
-
-	return workspaceDetailsFromPodCore(pod, cpu, memory, port, tlsEnabled)
-}
-
-func workspaceDetailsFromPodCore(
-	pod *corev1.Pod,
-	cpu string,
-	memory string,
-	port int,
-	tlsEnabled bool,
-) *models.WorkspaceDetails {
-	if pod == nil {
-		return nil
-	}
-
-	appVersion := pod.Labels[helm.LabelAppVersion]
-	if appVersion == "" {
-		appVersion = "1.0.0"
-	}
-
-	// Parse userstr to get original repo values
-	userstrB64, ok := pod.Annotations[helm.AnnotationUserStr]
-	if !ok || userstrB64 == "" {
-		return nil // userstr is required
-	}
-	canUser, err := parseCanonicalUserStrFromBase64(userstrB64)
-	if err != nil {
-		return nil // failed to parse userstr
-	}
 	identity := canUser.Identity()
 
 	snap := AnalyzePod(pod, nil, defaultCrashLoopThreshold)
