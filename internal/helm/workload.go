@@ -82,11 +82,11 @@ func SupportedWorkloadKinds() []string {
 func normalizeKind(kind string) string {
 	switch strings.ToLower(kind) {
 	case "deployment":
-		return "Deployment"
+		return "deployment"
 	case "statefulset":
-		return "StatefulSet"
+		return "statefulset"
 	case "daemonset":
-		return "DaemonSet"
+		return "daemonset"
 	}
 	return kind // preserve unknown kinds so the switch default can report them
 }
