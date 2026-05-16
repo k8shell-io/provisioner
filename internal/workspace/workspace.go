@@ -249,7 +249,7 @@ func GetWorkspaces(
 			injectedLabels[helm.LabelCanonicalId] = opts.CanonicalId
 		}
 		if opts.InjectWorkload != "" {
-			injectedLabels[helm.LabelWorkloadName] = strings.ToLower(opts.InjectWorkload)
+			injectedLabels[helm.LabelWorkloadName] = opts.InjectWorkload
 			injectedLabels[helm.LabelWorkloadKind] = opts.InjectKind
 		}
 		injectedSelector := getSelector(injectedLabels)
