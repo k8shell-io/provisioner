@@ -46,22 +46,22 @@ type WorkloadAdapter interface {
 // and returns the appropriate adapter. Kind matching is case-insensitive; name
 // is lowercased before the lookup (Kubernetes names are always lowercase).
 func (c *Client) GetWorkloadAdapter(ctx context.Context, namespace, kind, name string) (WorkloadAdapter, error) {
-	kind = normalizeKind(kind)
+	kind = strings.ToLower(kind)
 	name = strings.ToLower(name)
 	switch kind {
-	case "Deployment":
+	case "deployment":
 		dep, err := c.kubeClient.AppsV1().Deployments(namespace).Get(ctx, name, metav1.GetOptions{})
 		if err != nil {
 			return nil, fmt.Errorf("failed to get Deployment %s/%s: %w", namespace, name, err)
 		}
 		return &DeploymentAdapter{dep: dep}, nil
-	case "StatefulSet":
+	case "statefulset":
 		ss, err := c.kubeClient.AppsV1().StatefulSets(namespace).Get(ctx, name, metav1.GetOptions{})
 		if err != nil {
 			return nil, fmt.Errorf("failed to get StatefulSet %s/%s: %w", namespace, name, err)
 		}
 		return &StatefulSetAdapter{ss: ss}, nil
-	case "DaemonSet":
+	case "daemonset":
 		ds, err := c.kubeClient.AppsV1().DaemonSets(namespace).Get(ctx, name, metav1.GetOptions{})
 		if err != nil {
 			return nil, fmt.Errorf("failed to get DaemonSet %s/%s: %w", namespace, name, err)
@@ -74,34 +74,20 @@ func (c *Client) GetWorkloadAdapter(ctx context.Context, namespace, kind, name s
 
 // SupportedWorkloadKinds returns the list of workload kinds the adapter factory supports.
 func SupportedWorkloadKinds() []string {
-	return []string{"Deployment", "StatefulSet", "DaemonSet"}
-}
-
-// normalizeKind converts a workload kind string to its canonical title-case form
-// (e.g. "deployment" → "Deployment") so callers don't need to match case exactly.
-func normalizeKind(kind string) string {
-	switch strings.ToLower(kind) {
-	case "deployment":
-		return "deployment"
-	case "statefulset":
-		return "statefulset"
-	case "daemonset":
-		return "daemonset"
-	}
-	return kind // preserve unknown kinds so the switch default can report them
+	return []string{"deployment", "statefulset", "daemonset"}
 }
 
 // ProtoAdapter returns a zero-value adapter for kind that can be used to call
 // NewInformer without needing a real cluster object. kubeClient is not used
 // here but is kept in the signature for symmetry with GetWorkloadAdapter.
 func ProtoAdapter(kind string, _ kubernetes.Interface) (WorkloadAdapter, error) {
-	kind = normalizeKind(kind)
+	kind = strings.ToLower(kind)
 	switch kind {
-	case "Deployment":
+	case "deployment":
 		return &DeploymentAdapter{dep: &appsv1.Deployment{}}, nil
-	case "StatefulSet":
+	case "statefulset":
 		return &StatefulSetAdapter{ss: &appsv1.StatefulSet{}}, nil
-	case "DaemonSet":
+	case "daemonset":
 		return &DaemonSetAdapter{ds: &appsv1.DaemonSet{}}, nil
 	default:
 		return nil, fmt.Errorf("unsupported workload kind %q", kind)
@@ -114,7 +100,7 @@ type DeploymentAdapter struct {
 	dep *appsv1.Deployment
 }
 
-func (a *DeploymentAdapter) Kind() string      { return "Deployment" }
+func (a *DeploymentAdapter) Kind() string      { return "deployment" }
 func (a *DeploymentAdapter) Name() string      { return a.dep.Name }
 func (a *DeploymentAdapter) Namespace() string { return a.dep.Namespace }
 
@@ -156,7 +142,7 @@ type StatefulSetAdapter struct {
 	ss *appsv1.StatefulSet
 }
 
-func (a *StatefulSetAdapter) Kind() string      { return "StatefulSet" }
+func (a *StatefulSetAdapter) Kind() string      { return "statefulset" }
 func (a *StatefulSetAdapter) Name() string      { return a.ss.Name }
 func (a *StatefulSetAdapter) Namespace() string { return a.ss.Namespace }
 
@@ -198,7 +184,7 @@ type DaemonSetAdapter struct {
 	ds *appsv1.DaemonSet
 }
 
-func (a *DaemonSetAdapter) Kind() string      { return "DaemonSet" }
+func (a *DaemonSetAdapter) Kind() string      { return "daemonset" }
 func (a *DaemonSetAdapter) Name() string      { return a.ds.Name }
 func (a *DaemonSetAdapter) Namespace() string { return a.ds.Namespace }
 
