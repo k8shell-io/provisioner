@@ -9,6 +9,9 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	k8serrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/types"
 	sigsyaml "sigs.k8s.io/yaml"
 )
 
@@ -452,6 +455,16 @@ func (c *Client) DeleteNamespacedWorkspaceResources(ctx context.Context, namespa
 		return fmt.Errorf("failed to delete network policies for canonical-id %s: %w", canonicalId, err)
 	}
 
+	// Delete cert-manager Certificate resources (CRD — use dynamic client).
+	if err := c.dynamicClient.Resource(certGVR).Namespace(namespace).DeleteCollection(
+		ctx,
+		metav1.DeleteOptions{},
+		metav1.ListOptions{LabelSelector: selector},
+	); err != nil && !k8serrors.IsNotFound(err) {
+		c.log.Warn().Err(err).Str("namespace", namespace).Str("canonical-id", canonicalId).
+			Msg("failed to delete Certificate resources (cert-manager may not be installed)")
+	}
+
 	c.log.Info().Str("namespace", namespace).Str("canonical-id", canonicalId).
 		Msg("deleted namespaced workspace resources")
 	return nil
@@ -530,12 +543,63 @@ func (c *Client) applyGenericResource(ctx context.Context, namespace, key, doc s
 		}
 		// PVCs are not updated — storage requests are immutable.
 
+	case "Certificate":
+		if err := c.applyCertificate(ctx, namespace, doc, extraLabels); err != nil {
+			return fmt.Errorf("failed to apply Certificate %s: %w", meta.Metadata.Name, err)
+		}
+
 	default:
 		c.log.Debug().Str("kind", meta.Kind).Str("name", meta.Metadata.Name).
-			Msg("skipping unsupported resource kind during injection apply")
+			Msg("skipping resource kind during injection apply")
 	}
 	return nil
 }
+
+// certGVR is the GroupVersionResource for cert-manager Certificate objects.
+var certGVR = schema.GroupVersionResource{Group: "cert-manager.io", Version: "v1", Resource: "certificates"}
+
+// applyCertificate applies a cert-manager Certificate resource to the given namespace
+// using server-side apply via the dynamic client.
+func (c *Client) applyCertificate(ctx context.Context, namespace, doc string, extraLabels map[string]string) error {
+	jsonBytes, err := sigsyaml.YAMLToJSON([]byte(doc))
+	if err != nil {
+		return fmt.Errorf("yaml-json conversion failed: %w", err)
+	}
+
+	var obj unstructured.Unstructured
+	if err := obj.UnmarshalJSON(jsonBytes); err != nil {
+		return fmt.Errorf("unmarshal failed: %w", err)
+	}
+
+	obj.SetNamespace(namespace)
+
+	if len(extraLabels) > 0 {
+		labels := obj.GetLabels()
+		if labels == nil {
+			labels = make(map[string]string)
+		}
+		for k, v := range extraLabels {
+			labels[k] = v
+		}
+		obj.SetLabels(labels)
+	}
+
+	jsonPatch, err := obj.MarshalJSON()
+	if err != nil {
+		return fmt.Errorf("marshal for SSA failed: %w", err)
+	}
+
+	_, err = c.dynamicClient.Resource(certGVR).Namespace(namespace).Patch(
+		ctx,
+		obj.GetName(),
+		types.ApplyPatchType,
+		jsonPatch,
+		metav1.PatchOptions{FieldManager: "k8shell-provisioner", Force: boolPtr(true)},
+	)
+	return err
+}
+
+func boolPtr(b bool) *bool { return &b }
 
 func toSet(items []string) map[string]bool {
 	m := make(map[string]bool, len(items))
