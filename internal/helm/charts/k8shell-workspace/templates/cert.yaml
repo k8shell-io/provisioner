@@ -8,11 +8,11 @@ spec:
   secretName: {{ .Release.Name }}-tls
   duration: {{ .Values.__certmanager__.duration }}
   renewBefore: {{ .Values.__certmanager__.renewBefore }}
-  commonName: {{ .Release.Name }}.{{ .Release.Namespace }}.svc.cluster.local
+  commonName: {{ .Release.Name }}.{{ .Values.__namespace__ }}.svc.cluster.local
   dnsNames:
-    - {{ .Release.Name }}.{{ .Release.Namespace }}
-    - {{ .Release.Name }}.{{ .Release.Namespace }}.svc
-    - {{ .Release.Name }}.{{ .Release.Namespace }}.svc.cluster.local
+    - {{ .Release.Name }}.{{ .Values.__namespace__ }}
+    - {{ .Release.Name }}.{{ .Values.__namespace__ }}.svc
+    - {{ .Release.Name }}.{{ .Values.__namespace__ }}.svc.cluster.local
   usages:
     - server auth
   issuerRef:
