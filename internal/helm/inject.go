@@ -167,18 +167,14 @@ func (c *Client) InjectionSpecFromTemplate(ctx context.Context,
 
 	prefix := workspaceCanonicalId + "-"
 
-	// Secret-backed volumes are excluded from injection: the referenced secrets
-	// are unlikely to exist in the target Deployment's namespace. Volume mounts
-	// that reference an excluded volume are also stripped from each container.
-	// TODO: make this configurable once the secrets strategy is settled.
+	tlsSecretName := workspaceCanonicalId + "-tls"
 	skipVolumes := make(map[string]bool)
 	for _, v := range pod.Spec.Volumes {
-		if v.Secret != nil {
+		if v.Secret != nil && v.Secret.SecretName != tlsSecretName {
 			skipVolumes[v.Name] = true
 		}
 	}
 
-	// Build a volume name mapping (old → new) for non-skipped volumes only.
 	volMap := make(map[string]string, len(pod.Spec.Volumes))
 	for _, v := range pod.Spec.Volumes {
 		if !skipVolumes[v.Name] {
