@@ -37,9 +37,14 @@ func (p *ProvisionerService) DeleteWorkspace(ctx context.Context,
 			return nil, status.Errorf(codes.Internal,
 				"could not determine owning workload for injected workspace %s", name)
 		}
-		workspace, err := p.prepareWorkspaceWithPod(ctx, pod)
+		canonicalId := pod.Labels[helm.LabelCanonicalId]
+		if canonicalId == "" {
+			return nil, status.Errorf(codes.Internal,
+				"injected workspace pod for %s is missing canonical-id label", name)
+		}
+		workspace, err := ws.NewWorkspaceForEject(canonicalId, p.server.helm)
 		if err != nil {
-			return nil, err
+			return nil, status.Errorf(codes.Internal, "failed to prepare workspace %s for eject: %v", canonicalId, err)
 		}
 		ejectOpts := &ws.EjectOptions{
 			Namespace:    pod.Namespace,
