@@ -80,13 +80,13 @@ func (p *ProvisionerService) ProvisionWorkspaceStream(
 
 	parsedUserStr, err := userstr.ParseUserStr(req.Userstr)
 	if err != nil {
-		return p.sendHandshakeErr(msgStream, "", status.Errorf(codes.InvalidArgument,
+		return p.sendHandshakeErr(msgStream, "n/a", status.Errorf(codes.InvalidArgument,
 			"invalid userstr format: %v", err))
 	}
 
 	canUserStr, err := parsedUserStr.Canonicalize()
 	if err != nil {
-		return p.sendHandshakeErr(msgStream, "", status.Errorf(codes.InvalidArgument,
+		return p.sendHandshakeErr(msgStream, "n/a", status.Errorf(codes.InvalidArgument,
 			"failed to canonicalize userstr: %v", err))
 	}
 
