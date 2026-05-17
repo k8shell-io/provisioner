@@ -90,8 +90,10 @@ func (p *ProvisionerService) ProvisionWorkspaceStream(
 			"failed to canonicalize userstr: %v", err))
 	}
 
+	expectedWorkspaceName := canUserStr.WorkspaceName()
+
 	if parsedUserStr.Pod() != "" {
-		return p.sendHandshakeErr(msgStream, "", status.Errorf(codes.InvalidArgument,
+		return p.sendHandshakeErr(msgStream, expectedWorkspaceName, status.Errorf(codes.InvalidArgument,
 			"cannot provision workspace using pod name"))
 	}
 
@@ -112,7 +114,7 @@ func (p *ProvisionerService) ProvisionWorkspaceStream(
 
 	workspace, err := p.prepareWorkspaceWithUserStr(ctx, canUserStr)
 	if err != nil {
-		return p.sendHandshakeErr(msgStream, "", err)
+		return p.sendHandshakeErr(msgStream, expectedWorkspaceName, err)
 	}
 
 	workloadTargetName := ""
