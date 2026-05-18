@@ -175,7 +175,7 @@ func (w *Workspace) unlock() error {
 
 // doInstallation performs the actual installation of the workspace
 func (w *Workspace) doInstallation(ctx context.Context, opts *ProvisionOptions) (*models.WorkspaceStatus, error) {
-	if err := w.ensureSharedStorages(ctx); err != nil {
+	if err := w.ensureSharedStorages(ctx, w.client.TargetNamespace(), ""); err != nil {
 		return nil, fmt.Errorf("failed to ensure shared storages: %w", err)
 	}
 
@@ -196,13 +196,11 @@ func (w *Workspace) doInstallation(ctx context.Context, opts *ProvisionOptions) 
 	labels := map[string]string{
 		"app.kubernetes.io/name":       helm.WORKSPACE_CHART_NAME,
 		"app.kubernetes.io/instance":   w.Name,
-		"app.kubernetes.io/version":    w.appVersion(),
+		helm.LabelAppVersion:           w.appVersion(),
 		"app.kubernetes.io/managed-by": "k8shell-provisioner",
-		"k8shell.io/app":               helm.WORKSPACE_CHART_NAME,
-		"k8shell.io/workspace":         w.Name,
-		"k8shell.io/username":          w.user.Username,
-		"k8shell.io/blueprint":         w.blueprint.Name,
-		"k8shell.io/organization":      w.user.Organization,
+		helm.LabelUsername:             w.user.Username,
+		helm.LabelBlueprint:            w.blueprint.Name,
+		helm.LabelOrganization:         w.user.Organization,
 	}
 
 	startTime := time.Now()
@@ -263,12 +261,11 @@ func (w *Workspace) doStart(ctx context.Context, opts *ProvisionOptions) (*model
 // Shared PVCs are named pvc-<storageName> and are not workspace-scoped, allowing multiple
 // workspaces to reference the same PVC. If a shared PVC already exists, it is left untouched.
 // A warning is logged when an existing PVC has different capacity or storage class.
-func (w *Workspace) ensureSharedStorages(ctx context.Context) error {
+func (w *Workspace) ensureSharedStorages(ctx context.Context, namespace string, prefix string) error {
 	if w.blueprint == nil {
 		return nil
 	}
 
-	namespace := w.client.TargetNamespace()
 	kubeClient := w.client.KubeClient()
 
 	for name, storage := range w.blueprint.Storages {
@@ -276,7 +273,7 @@ func (w *Workspace) ensureSharedStorages(ctx context.Context) error {
 			continue
 		}
 
-		pvcName := "pvc-" + name
+		pvcName := "pvc-" + prefix + name
 		if storage.Id != "" {
 			pvcName += "-" + storage.Id
 		}
@@ -327,8 +324,8 @@ func (w *Workspace) ensureSharedStorages(ctx context.Context) error {
 				Labels: map[string]string{
 					"app.kubernetes.io/version":     w.client.AppVersion,
 					"app.kubernetes.io/managed-by":  "k8shell-provisioner",
-					"k8shell.io/storage-type":       "shared",
-					"k8shell.io/storage-name":       name,
+					helm.LabelStorageType:           "shared",
+					helm.LabelStorageName:           name,
 					"io.k8shell.provisioner/commit": w.client.Commit,
 				},
 				Annotations: storage.ClaimSpecAnnotations,
@@ -373,14 +370,13 @@ func (w *Workspace) createHeadlessService(ctx context.Context, values map[string
 			Namespace: namespace,
 			Labels: map[string]string{
 				"app.kubernetes.io/managed-by": "k8shell-provisioner",
-				"k8shell.io/component":         "headless-service",
-				"k8shell.io/subdomain":         subdomain,
+				helm.LabelSubdomain:            subdomain,
 			},
 		},
 		Spec: corev1.ServiceSpec{
 			ClusterIP: "None",
 			Selector: map[string]string{
-				"k8shell.io/subdomain": subdomain,
+				helm.LabelSubdomain: subdomain,
 			},
 		},
 	}

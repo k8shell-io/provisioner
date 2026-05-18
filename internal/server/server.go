@@ -34,10 +34,27 @@ type Server struct {
 	provisionJobsKV *natsc.JetStreamKV
 }
 
+// ProvisionerService implements the gRPC service for workspace provisioning
+type ProvisionerService struct {
+	server *Server
+	log    *zerolog.Logger
+	provisionerv1.UnimplementedProvisionerServiceServer
+}
+
+// NewProvisionerService creates a new instance of the ProvisionerService
+func NewProvisionerService(server *Server) *ProvisionerService {
+	return &ProvisionerService{
+		server: server,
+		log:    server.log,
+	}
+}
+
 func NewServer(configFile string, appVersion string, commit string) (*Server, error) {
 	server := &Server{
 		log: log.NewLogger("server"),
 	}
+
+	server.log.Info().Str("version", appVersion).Str("commit", commit).Msg("Starting provisioner")
 
 	var err error
 	server.log.Info().Msgf("Loading server configuration from %s", configFile)
@@ -161,20 +178,12 @@ func NewServer(configFile string, appVersion string, commit string) (*Server, er
 		return nil, fmt.Errorf("failed to register gRPC service: %w", err)
 	}
 
-	models.SetRefResolver(server)
-
 	server.log.Info().Msgf("Ensuring workspace base, namespace %s", server.config.TargetNamespace)
 	if err := server.helm.EnsureBase(context.Background()); err != nil {
 		return nil, fmt.Errorf("failed to ensure base namespace: %w", err)
 	}
 
 	return server, nil
-}
-
-// ResolvePullRequestRef
-// Implements models.IssueRepoRefResolver
-func (s Server) ResolvePullRequestRef(username string, repoOwner, repoName string, issueNumber int) (string, error) {
-	return "", fmt.Errorf("Pull Request resolving is not supported. You need to provide cannonizied user string.")
 }
 
 func (s *Server) GetBlueprintScope(blueprintName string, user *models.User,
@@ -226,6 +235,15 @@ func (s *Server) Serve() error {
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
 
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	// Start injection watcher whenever injection is configured.
+	if len(s.config.InjectNamespaces) > 0 {
+		watcher := NewInjectionWatcher(s.helm, s.config.InjectNamespaces)
+		go watcher.Run(ctx)
+	}
+
 	errChan := make(chan error, 1)
 	go func() {
 		s.log.Info().Msg("Starting gRPC server")
@@ -237,6 +255,7 @@ func (s *Server) Serve() error {
 	select {
 	case sig := <-sigChan:
 		s.log.Info().Msgf("Received signal %v, shutting down gracefully", sig)
+		cancel()
 		s.grpc.Stop()
 		s.log.Info().Msg("Server shutdown complete")
 		return nil

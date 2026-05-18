@@ -2,19 +2,19 @@
 
 {{/* labels for helm resources */}}
 {{- define "workspace.labels" -}}
-k8shell.io/app: k8shell-workspace
-k8shell.io/workspace: "{{ .Values.__workspace__ }}"
+k8shell.io/canonical-id: "{{ .Values.__canonicalid__ }}"
 {{- end -}}
 
 {{/* labels for helm resources */}}
 {{- define "workspace.workspaceLabels" -}}
-k8shell.io/app: k8shell-workspace
-app.kubernetes.io/version: {{ .Values.__appversion__ }}
-k8shell.io/workspace: "{{ .Values.__workspace__ }}"
+k8shell.io/k8shelld-version: {{ .Values.__appversion__ }}
+k8shell.io/canonical-id: "{{ .Values.__canonicalid__ }}"
 k8shell.io/blueprint: "{{ .Values.__blueprint__ }}"
 k8shell.io/username: "{{ .Values.__username__ }}"
 k8shell.io/organization: "{{ .Values.__organization__ }}"
+{{- if and .Values.network .Values.network.networkPolicyClass }}
 k8shell.io/network-policy: "{{ .Values.network.networkPolicyClass }}"
+{{- end }}
 {{- if and .Values.subdomain .Values.hostname }}
 k8shell.io/subdomain: "{{ .Values.subdomain }}"
 {{- end }}
@@ -94,7 +94,7 @@ k8shell.io/job-id: "{{ .Values.__jobid__ }}"
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
-  name: "pvc-{{ .ctx.Values.__workspace__ }}-{{ .pvcPrefix }}{{ .name }}"
+  name: "pvc-{{ .ctx.Release.Name }}-{{ .pvcPrefix }}{{ .name }}"
   namespace: {{ .ctx.Release.Namespace }} 
   {{- if .storage.claimSpecAnnotations }}
   annotations:

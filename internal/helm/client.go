@@ -22,6 +22,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	sigsyaml "sigs.k8s.io/yaml"
@@ -35,6 +36,7 @@ type Client struct {
 	settings             *cli.EnvSettings
 	log                  *zerolog.Logger
 	kubeClient           kubernetes.Interface
+	dynamicClient        dynamic.Interface
 	targetNamespace      string
 	charts               map[string]*chart.Chart
 	Registry             config.DefaultRegistry
@@ -70,6 +72,11 @@ func NewClient(targetNamespace string, registry config.DefaultRegistry) (*Client
 		return nil, fmt.Errorf("failed to create Kubernetes client: %w", err)
 	}
 
+	dynamicClient, err := dynamic.NewForConfig(config)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create dynamic Kubernetes client: %w", err)
+	}
+
 	charts := make(map[string]*chart.Chart)
 	charts[WORKSPACE_CHART_NAME], err = LoadChartFromMemory(WORKSPACE_CHART_NAME)
 	if err != nil {
@@ -80,6 +87,7 @@ func NewClient(targetNamespace string, registry config.DefaultRegistry) (*Client
 		log:             log.NewLogger("helm"),
 		settings:        settings,
 		kubeClient:      kubeClient,
+		dynamicClient:   dynamicClient,
 		charts:          charts,
 		targetNamespace: targetNamespace,
 		Registry:        registry,

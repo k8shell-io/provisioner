@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/k8shell-io/common/pkg/api/client/identity"
@@ -14,12 +15,14 @@ import (
 	"github.com/k8shell-io/common/pkg/gapi"
 	log "github.com/k8shell-io/common/pkg/logger"
 	"github.com/k8shell-io/common/pkg/models"
+	"github.com/k8shell-io/common/pkg/userstr"
 	"github.com/k8shell-io/provisioner/internal/config"
 	"github.com/k8shell-io/provisioner/internal/helm"
 	"github.com/rs/zerolog"
 	"gopkg.in/yaml.v3"
 	"helm.sh/helm/v3/pkg/release"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	k8sErrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
@@ -35,12 +38,11 @@ type Workspace struct {
 
 	Name           string
 	JobId          string
-	identityToken  string
 	log            *zerolog.Logger
 	blueprint      *models.Blueprint
 	blueprintChain []string // ordered inheritance chain from root ancestor to this blueprint
 	user           *models.User
-	userStr        *models.CanonicalUserStr
+	userStr        *userstr.CanonicalUserStr
 	workspaceLock  *WorkspaceLock
 }
 
@@ -50,10 +52,19 @@ type Values struct {
 
 // GetWorkspacesOptions defines the options for retrieving workspaces with filtering
 type GetWorkspacesOptions struct {
-	Username     string
-	Organization string
-	Blueprint    string
-	Workspace    string
+	Username        string
+	Organization    string
+	Blueprint       string
+	WorkspaceName   string
+	TargetNamespace string
+	CanonicalId     string
+	// InjectNamespaces controls where injected workspaces are discovered.
+	// Use "*" for cluster-wide discovery.
+	InjectNamespaces []string
+	// InjectWorkload and InjectKind filter injected workspaces by the workload they
+	// were injected into. InjectKind is optional; omitting it matches any kind.
+	InjectWorkload string
+	InjectKind     string
 }
 
 // GetWorkspacesResult defines the result structure for GetWorkspaces function,
@@ -73,56 +84,51 @@ type WorkspaceLabels struct {
 	RepoName     string
 	RepoRef      string
 	AppVersion   string
-	UserStr      *models.CanonicalUserStr
+	UserStr      *userstr.CanonicalUserStr
 	JobId        string
 }
 
-// ParseWorkspaceMetadata parses the label set and annotations attached to a workspace pod
-func ParseWorkspaceMetadata(labels map[string]string, annotations map[string]string) (*WorkspaceLabels, error) {
-	if labels == nil {
-		return nil, fmt.Errorf("workspace labels are nil")
+func canonicalUserStrToBase64(c *userstr.CanonicalUserStr) string {
+	if c == nil || c.CanonicalUserStr() == "" {
+		return ""
+	}
+	return base64.RawURLEncoding.EncodeToString([]byte(c.CanonicalUserStr()))
+}
+
+func parseCanonicalUserStrFromBase64(s string) (*userstr.CanonicalUserStr, error) {
+	if s == "" {
+		return nil, fmt.Errorf("empty userstr")
 	}
 
-	username, ok := labels["k8shell.io/username"]
-	if !ok || username == "" {
-		return nil, fmt.Errorf("missing label k8shell.io/username")
-	}
+	var (
+		raw *userstr.UserStr
+		err error
+	)
 
-	blueprint, ok := labels["k8shell.io/blueprint"]
-	if !ok || blueprint == "" {
-		return nil, fmt.Errorf("missing label k8shell.io/blueprint")
+	lower := strings.ToLower(s)
+	if strings.HasPrefix(lower, "b64-") || strings.HasPrefix(lower, "base64-") {
+		raw, err = userstr.ParseUserStr(s)
+	} else {
+		decoded, derr := base64.RawURLEncoding.DecodeString(s)
+		if derr != nil {
+			return nil, fmt.Errorf("base64 decode failed: %w", derr)
+		}
+		raw, err = userstr.ParseUserStr(string(decoded))
 	}
-
-	userstrB64, ok := annotations["k8shell.io/userstr"]
-	if !ok || userstrB64 == "" {
-		return nil, fmt.Errorf("missing annotation k8shell.io/userstr")
-	}
-
-	canUser, err := models.NewCanonicalUserStrFromBase64(userstrB64)
 	if err != nil {
-		return nil, fmt.Errorf("parse k8shell.io/userstr: %w", err)
+		return nil, err
 	}
 
-	return &WorkspaceLabels{
-		Workspace:    labels["k8shell.io/workspace"],
-		Username:     username,
-		Organization: labels["k8shell.io/organization"],
-		Blueprint:    blueprint,
-		RepoOwner:    canUser.Identity.RepoOwner,
-		RepoName:     canUser.Identity.RepoName,
-		RepoRef:      canUser.Identity.RepoRef,
-		AppVersion:   labels["app.kubernetes.io/version"],
-		JobId:        labels["k8shell.io/job-id"],
-		UserStr:      canUser,
-	}, nil
+	return raw.Canonicalize()
 }
 
 // FindWorkspace finds a workspace by name and returns its status
-func FindWorkspace(ctx context.Context, helmClient *helm.Client, workspace string) (*models.WorkspaceDetails,
+func FindWorkspace(ctx context.Context, helmClient *helm.Client, workspace string, injectionNamespaces []string) (*models.WorkspaceDetails,
 	*corev1.Pod, error) {
 
 	ws, err := GetWorkspaces(ctx, helmClient, GetWorkspacesOptions{
-		Workspace: workspace,
+		WorkspaceName:    workspace,
+		InjectNamespaces: injectionNamespaces,
 	})
 	if err != nil {
 		return nil, nil, err
@@ -136,54 +142,201 @@ func FindWorkspace(ctx context.Context, helmClient *helm.Client, workspace strin
 	return ws.Workspaces[0], &ws.Pods[0], nil
 }
 
-// GetWorkspaces lists workspace pods matching optional filters and returns status details
-// similar to GetWorkspaceStatus, without fetching Service/Secret per workspace.
-func GetWorkspaces(ctx context.Context, helmClient *helm.Client,
-	opts GetWorkspacesOptions) (*GetWorkspacesResult, error) {
-
-	labels := map[string]string{}
-	labels["k8shell.io/app"] = "k8shell-workspace"
-
-	if opts.Username != "" {
-		labels["k8shell.io/username"] = opts.Username
-	}
-	if opts.Workspace != "" {
-		labels["k8shell.io/workspace"] = opts.Workspace
-	}
-	if opts.Organization != "" {
-		labels["k8shell.io/organization"] = opts.Organization
-	}
-	if opts.Blueprint != "" {
-		labels["k8shell.io/blueprint"] = opts.Blueprint
+func podMatchesWorkspaceFilters(p *corev1.Pod, opts GetWorkspacesOptions, injected bool) bool {
+	if p == nil {
+		return false
 	}
 
-	selector := getSelector(labels)
+	if opts.Username != "" && p.Labels[helm.LabelUsername] != opts.Username {
+		return false
+	}
+	if opts.Organization != "" && p.Labels[helm.LabelOrganization] != opts.Organization {
+		return false
+	}
+	if opts.Blueprint != "" && p.Labels[helm.LabelBlueprint] != opts.Blueprint {
+		return false
+	}
+
+	return true
+}
+
+func GetWorkspaces(
+	ctx context.Context,
+	helmClient *helm.Client,
+	opts GetWorkspacesOptions,
+) (*GetWorkspacesResult, error) {
+	if opts.InjectKind != "" && opts.InjectWorkload == "" {
+		return nil, fmt.Errorf("%w: InjectKind specified without InjectWorkload", models.ErrInvalidParameters)
+	}
+	if opts.InjectKind == "" && opts.InjectWorkload != "" {
+		return nil, fmt.Errorf("%w: InjectWorkload specified without InjectKind", models.ErrInvalidParameters)
+	}
+
+	targetNamespace := opts.TargetNamespace
+	if targetNamespace == "" {
+		targetNamespace = helmClient.TargetNamespace()
+	}
+
 	v1 := helmClient.KubeClient().CoreV1()
-	namespace := helmClient.TargetNamespace()
+	out := make([]*models.WorkspaceDetails, 0)
+	pods := make([]corev1.Pod, 0)
 
-	podList, err := v1.Pods(namespace).List(ctx, metav1.ListOptions{
-		LabelSelector: selector,
-	})
-	if err != nil {
-		if strings.Contains(err.Error(), "unable to parse") {
-			return nil, fmt.Errorf("%w: %s", models.ErrInvalidParameters, selector)
+	if opts.WorkspaceName != "" && opts.InjectWorkload == "" {
+		p, err := v1.Pods(targetNamespace).Get(ctx, opts.WorkspaceName, metav1.GetOptions{})
+		if err != nil && !apierrors.IsNotFound(err) {
+			return nil, fmt.Errorf("failed to get workspace pod %q: %w", opts.WorkspaceName, err)
 		}
-		return nil, fmt.Errorf("failed to list workspace pods: %w", err)
+		if err == nil && podMatchesWorkspaceFilters(p, opts, false) {
+			if d := workspaceDetailsFromPod(p); d != nil {
+				out = append(out, d)
+				pods = append(pods, *p)
+			}
+		}
+	} else if opts.InjectWorkload == "" {
+		labels := map[string]string{}
+		if opts.Username != "" {
+			labels[helm.LabelUsername] = opts.Username
+		}
+		if opts.Organization != "" {
+			labels[helm.LabelOrganization] = opts.Organization
+		}
+		if opts.Blueprint != "" {
+			labels[helm.LabelBlueprint] = opts.Blueprint
+		}
+		if opts.CanonicalId != "" {
+			labels[helm.LabelCanonicalId] = opts.CanonicalId
+		}
+		selector := getSelector(labels)
+
+		podList, err := v1.Pods(targetNamespace).List(ctx, metav1.ListOptions{
+			LabelSelector: selector,
+		})
+		if err != nil {
+			if strings.Contains(err.Error(), "unable to parse") {
+				return nil, fmt.Errorf("%w: %s", models.ErrInvalidParameters, selector)
+			}
+			return nil, fmt.Errorf("failed to list workspace pods: %w", err)
+		}
+
+		for i := range podList.Items {
+			p := &podList.Items[i]
+			if !podMatchesWorkspaceFilters(p, opts, false) {
+				continue
+			}
+			d := workspaceDetailsFromPod(p)
+			if d == nil {
+				continue
+			}
+			out = append(out, d)
+			pods = append(pods, *p)
+		}
 	}
 
-	out := make([]*models.WorkspaceDetails, 0, len(podList.Items))
-	for i := range podList.Items {
-		p := &podList.Items[i]
-		d := WorkspaceDetailsFromPod(p)
-		if d == nil {
-			continue
+	if len(opts.InjectNamespaces) > 0 {
+		injectedLabels := map[string]string{
+			helm.LabelInjected: "true",
 		}
-		out = append(out, d)
+		if opts.Username != "" {
+			injectedLabels[helm.LabelUsername] = opts.Username
+		}
+		if opts.Organization != "" {
+			injectedLabels[helm.LabelOrganization] = opts.Organization
+		}
+		if opts.Blueprint != "" {
+			injectedLabels[helm.LabelBlueprint] = opts.Blueprint
+		}
+		if opts.CanonicalId != "" {
+			injectedLabels[helm.LabelCanonicalId] = opts.CanonicalId
+		}
+		if opts.InjectWorkload != "" {
+			injectedLabels[helm.LabelWorkloadName] = opts.InjectWorkload
+			injectedLabels[helm.LabelWorkloadKind] = opts.InjectKind
+		}
+		injectedSelector := getSelector(injectedLabels)
+
+		injectedItems := make([]corev1.Pod, 0)
+		if opts.InjectNamespaces[0] == "*" {
+			injectedList, err := v1.Pods("").List(ctx, metav1.ListOptions{
+				LabelSelector: injectedSelector,
+			})
+			if err != nil {
+				if strings.Contains(err.Error(), "unable to parse") {
+					return nil, fmt.Errorf("%w: %s", models.ErrInvalidParameters, injectedSelector)
+				}
+				return nil, fmt.Errorf("failed to list injected workspace pods cluster-wide: %w", err)
+			}
+			injectedItems = append(injectedItems, injectedList.Items...)
+		} else {
+			listCtx, cancelLists := context.WithCancel(ctx)
+			defer cancelLists()
+
+			resultsCh := make(chan []corev1.Pod, len(opts.InjectNamespaces))
+			errCh := make(chan error, 1)
+			var wg sync.WaitGroup
+			var once sync.Once
+
+			for _, ns := range opts.InjectNamespaces {
+				wg.Add(1)
+				go func() {
+					defer wg.Done()
+
+					injectedList, err := v1.Pods(ns).List(listCtx, metav1.ListOptions{
+						LabelSelector: injectedSelector,
+					})
+					if err != nil {
+						wrappedErr := fmt.Errorf("failed to list injected workspace pods in namespace %q: %w", ns, err)
+						if strings.Contains(err.Error(), "unable to parse") {
+							wrappedErr = fmt.Errorf("%w: %s", models.ErrInvalidParameters, injectedSelector)
+						}
+						once.Do(func() {
+							errCh <- wrappedErr
+							cancelLists()
+						})
+						return
+					}
+
+					select {
+					case resultsCh <- injectedList.Items:
+					case <-listCtx.Done():
+					}
+				}()
+			}
+
+			wg.Wait()
+			close(resultsCh)
+
+			select {
+			case err := <-errCh:
+				return nil, err
+			default:
+			}
+
+			for items := range resultsCh {
+				injectedItems = append(injectedItems, items...)
+			}
+		}
+
+		if len(injectedItems) > 0 {
+			for i := range injectedItems {
+				ip := &injectedItems[i]
+				if opts.WorkspaceName != "" && ip.Name != opts.WorkspaceName {
+					continue
+				}
+
+				d := workspaceDetailsFromPod(ip)
+				if d == nil {
+					continue
+				}
+
+				out = append(out, d)
+				pods = append(pods, *ip)
+			}
+		}
 	}
 
 	return &GetWorkspacesResult{
 		Workspaces: out,
-		Pods:       podList.Items,
+		Pods:       pods,
 	}, nil
 }
 
@@ -215,12 +368,25 @@ func FindWorkspaceHelmRelease(_ context.Context, helmClient *helm.Client, name s
 
 // *** Workspace methods
 
+// NewWorkspaceForEject creates a minimal workspace object sufficient to call Eject.
+// Only the workspace name and helm client are required; no user, blueprint, or identity needed.
+func NewWorkspaceForEject(name string, helmClient *helm.Client) (*Workspace, error) {
+	if name == "" {
+		return nil, fmt.Errorf("workspace name is required")
+	}
+	return &Workspace{
+		Name:   name,
+		log:    log.NewLogger("workspace"),
+		client: helmClient,
+	}, nil
+}
+
 // NewWorkspace creates a new workspace with the specified Helm chart
 func NewWorkspace(
 	workspaceName string,
 	blueprint *models.Blueprint,
 	user *models.User,
-	userStr *models.CanonicalUserStr,
+	userStr *userstr.CanonicalUserStr,
 	helmClient *helm.Client,
 	identityClient *identity.IdentityClient,
 	config *config.Config,
@@ -246,8 +412,8 @@ func NewWorkspaceFromHelmRelease(ctx context.Context, name string, helmClient *h
 	if err != nil {
 		return nil, err
 	}
-	username := release.Labels["k8shell.io/username"]
-	blueprintName := release.Labels["k8shell.io/blueprint"]
+	username := release.Labels[helm.LabelUsername]
+	blueprintName := release.Labels[helm.LabelBlueprint]
 
 	userpb, err := identityClient.FindUser(ctx, &identityv1.FindUserRequest{Username: username})
 	if err != nil {
@@ -281,10 +447,6 @@ func NewWorkspaceFromHelmRelease(ctx context.Context, name string, helmClient *h
 
 func (w *Workspace) SetJobId(jobId string) {
 	w.JobId = jobId
-}
-
-func (w *Workspace) SetIdentityToken(token string) {
-	w.identityToken = token
 }
 
 // SetBlueprintChain stores the inheritance chain for this workspace's blueprint.
@@ -339,19 +501,18 @@ func (w *Workspace) Values() (map[string]interface{}, error) {
 
 	userstrB64 := ""
 	if w.userStr != nil {
-		userstrB64 = w.userStr.Base64()
+		userstrB64 = canonicalUserStrToBase64(w.userStr)
 	}
 
+	values["__canonicalid__"] = w.userStr.CanonicalId()
 	values["__user__"] = userValues
 	values["__username__"] = w.user.Username
-	values["__workspace__"] = w.Name
 	values["__blueprint__"] = w.blueprint.Name
 	values["__organization__"] = w.user.Organization
 	values["__networkpolicy__"] = w.blueprint.Network.NetworkPolicyClass
 	values["__registry__"] = w.client.Registry.ToValues()
 	values["__jwtverifierpublickey__"] = w.client.JWTVerifierPublicKey
 	values["__jwtverifiersigningmethod__"] = w.config.JWTVerifier.SigningMethod
-	values["__identitytoken__"] = w.identityToken
 	values["__namespace__"] = getNamespace()
 	values["__certmanager__"] = cmValues
 	values["__appversion__"] = w.appVersion()
@@ -359,7 +520,7 @@ func (w *Workspace) Values() (map[string]interface{}, error) {
 	values["__userstr__"] = userstrB64
 	values["__jobid__"] = w.JobId
 
-	configYAML, err := w.buildConfigYAML()
+	configYAML, err := w.buildConfigYAML("")
 	if err != nil {
 		return nil, fmt.Errorf("failed to build config YAML: %w", err)
 	}
@@ -418,7 +579,7 @@ func (w *Workspace) Template(ctx context.Context) (string, error) {
 	values["__manifesthash__"] = ""
 
 	out, err := w.client.Template(ctx, helm.WORKSPACE_CHART_NAME, helm.InstallOptions{
-		ReleaseName: w.blueprint.Name,
+		ReleaseName: w.Name,
 		Values:      values,
 	})
 	if err != nil {
@@ -493,71 +654,75 @@ func (w *Workspace) StopPod(ctx context.Context) error {
 	return nil
 }
 
-// workspacePodStatus extracts the workspace details from pod
-func WorkspaceDetailsFromPod(pod *corev1.Pod) *models.WorkspaceDetails {
+func workspaceDetailsFromPod(
+	pod *corev1.Pod,
+) *models.WorkspaceDetails {
 	if pod == nil {
 		return nil
 	}
 
-	if len(pod.Spec.Containers) == 0 {
+	userstrB64, ok := pod.Annotations[helm.AnnotationUserStr]
+	if !ok || userstrB64 == "" {
 		return nil
 	}
 
-	var splash string
-	if splashAnnotation, exists := pod.Annotations["workspace.k8shell.io/splash"]; exists {
-		if decoded, derr := base64.StdEncoding.DecodeString(splashAnnotation); derr == nil {
-			splash = string(decoded)
-		}
+	canUser, err := parseCanonicalUserStrFromBase64(userstrB64)
+	if err != nil {
+		return nil
 	}
 
-	appVersion, exists := pod.Labels["app.kubernetes.io/version"]
-	if !exists {
+	canonicalId := pod.Labels[helm.LabelCanonicalId]
+	if canonicalId == "" {
+		return nil
+	}
+
+	appVersion := pod.Labels[helm.LabelAppVersion]
+	if appVersion == "" {
 		appVersion = "1.0.0"
 	}
 
-	serverName := pod.Name + "." + pod.Namespace
-	port := getPodContainerPort(pod, models.WORKSPACE_PORT)
-	tlsEnabled := podMountsSecret(pod, pod.Name+"-tls")
-
-	nameLabel := pod.Labels["k8shell.io/workspace"]
-	if nameLabel == "" {
-		nameLabel = pod.Name
+	var cpu, memory string
+	var port int
+	for _, c := range pod.Spec.Containers {
+		if strings.HasSuffix(c.Name, "k8shell-main") {
+			cpu = c.Resources.Limits.Cpu().String()
+			memory = c.Resources.Limits.Memory().String()
+			for _, p := range c.Ports {
+				if p.ContainerPort > 0 {
+					port = int(p.ContainerPort)
+					break
+				}
+			}
+			break
+		}
 	}
 
-	cpu := pod.Spec.Containers[0].Resources.Limits.Cpu().String()
-	memory := pod.Spec.Containers[0].Resources.Limits.Memory().String()
+	if port == 0 {
+		port = models.WORKSPACE_PORT
+	}
 
-	// Parse userstr to get original repo values
-	userstrB64, ok := pod.Annotations["k8shell.io/userstr"]
-	if !ok || userstrB64 == "" {
-		return nil // userstr is required
-	}
-	canUser, err := models.NewCanonicalUserStrFromBase64(userstrB64)
-	if err != nil {
-		return nil // failed to parse userstr
-	}
+	tlsEnabled := podMountsSecret(pod, canonicalId+"-tls")
+	identity := canUser.Identity()
 
 	snap := AnalyzePod(pod, nil, defaultCrashLoopThreshold)
-	wsDetails := &models.WorkspaceDetails{
+	return &models.WorkspaceDetails{
 		WorkspaceStatus: *snapToWorkspaceStatus(&snap),
-		Name:            nameLabel,
-		Username:        pod.Labels["k8shell.io/username"],
-		RepoOwner:       canUser.Identity.RepoOwner,
-		RepoName:        canUser.Identity.RepoName,
-		RepoRef:         canUser.Identity.RepoRef,
-		Blueprint:       pod.Labels["k8shell.io/blueprint"],
-		Organization:    pod.Labels["k8shell.io/organization"],
-		JobId:           pod.Labels["k8shell.io/job-id"],
-		ServerName:      serverName,
+		Name:            pod.Name,
+		Username:        pod.Labels[helm.LabelUsername],
+		RepoOwner:       identity.RepoOwner(),
+		RepoName:        identity.RepoName(),
+		RepoRef:         identity.RepoRef(),
+		Blueprint:       pod.Labels[helm.LabelBlueprint],
+		Organization:    pod.Labels[helm.LabelOrganization],
+		JobId:           pod.Labels[helm.LabelJobId],
+		ServerName:      pod.Labels[helm.LabelCanonicalId] + "." + pod.Namespace,
 		PodIP:           pod.Status.PodIP,
 		Port:            port,
 		TLSEnabled:      tlsEnabled,
-		Splash:          splash,
 		AppVersion:      appVersion,
 		CPU:             cpu,
 		Memory:          memory,
 		Hostname:        podHostname(pod),
+		Namespace:       pod.Namespace,
 	}
-
-	return wsDetails
 }

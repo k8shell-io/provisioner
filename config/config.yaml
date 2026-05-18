@@ -1,7 +1,14 @@
 # Provisioner service configuration
 
 # Namespace for the k8shell workspace
-targetNamespace: workspaces-x
+targetNamespace: workspaces-staging
+
+# Namespaces where workspace injection is allowed.
+# If omitted or empty, injection is disabled and all inject requests are rejected.
+# Use explicit namespace names for Role-scoped operation.
+# When you use ["*"] cluster-wide discovery/injection is required (ClusterRole).
+injectNamespaces:
+  - k8shell-test
 
 clusterDomain: cluster.local
 
@@ -68,7 +75,7 @@ grpc:
 nats:
   enabled: true
   url: nats://nats.k8shell-test:4222
-  username: apiserver
+  username: k8shell-service
   password: ${TOKEN_PROVISIONER}
   kv:
     # TTL for provision jobs in the NATS KV store
@@ -76,7 +83,7 @@ nats:
 
 # Identity service configuration
 identity:
-  address: 10.42.2.245:9020 #identity.k8shell-test:9020
+  address: identity.k8shell-staging:9020 #identity.k8shell-test:9020
   tokenFilePath: /opt/shared/provisioner/identity-token
   # caCertPath: /opt/shared/auth/ca.crt
   # serverName: identity.k8shell-test.svc

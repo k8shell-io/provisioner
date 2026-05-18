@@ -1,43 +1,166 @@
 blueprints:
+  # *** Development blueprint template for all git-based workspaces ****
   - name: development
     template: base
     isTemplate: true
-    image: workspaces/dev:1.12
+    description: git repository blueprint with development tools and configurations
 
-    capabilities:
-      - NET_ADMIN
-      - NET_RAW
+    resources:
+      cpu: 8
+      memory: 8Gi
 
-    docker:
+    podman:
       enabled: true
 
-    subdomain: !cel "normalizeDNS(metadata.repoOwner)"
-    hostname: !cel "user.username + '-' + normalizeDNS(metadata.repoName)"
+      resources:
+        cpu: 8
+        memory: 8Gi
 
-    env:
-      GIT_ADDRESS: !cel "metadata.repoAddress"
-      GIT_REPOOWNER: !cel "metadata.repoOwner"
-      GIT_REPONAME: !cel "metadata.repoName"
-      GIT_REPOREF: !cel "metadata.repoRef"
+      # use the same volumes as in the main workspace
+      parentStorages: true
 
+      # podman graph storage configuration
+      # storages:
+      #   graphdb:
+      #     enabled: true
+      #     storageClass: zfs-localpv
+      #     size: 5Gi
+      #     path: "/home/podman/.local/share/containers/storage"
+      #     readonly: False
+
+    # list of storages in the workspace
     storages:
       home:
+        enabled: true
+        type: local
+        path: !cel "'/home/' + user.username"
+        readonly: False
+        claimSpec:
+          storageClassName: !cel env("WORKSPACE_STORAGE_CLASS")
+          accessModes:
+            - ReadWriteMany
+          resources:
+            requests:
+              storage: 10Gi
         claimSpecAnnotations:
           zfs-csi.k8shell.io/volume-name: !cel "workspaceName"
           zfs-csi.k8shell.io/retain-on-delete: "false"
+          zfs-csi.k8shell.io/squash: "all_squash"
+          zfs-csi.k8shell.io/squash-uid: !cel "user.uid"
+          zfs-csi.k8shell.io/squash-gid: !cel "user.gid"
+
       shared:
-        readonly: false
+        enabled: true
+        id: !cel "metadata.repoOwner"
+        type: shared
+        path: /opt/shared
+        readonly: False
+        claimSpec:
+          storageClassName: !cel env("WORKSPACE_STORAGE_CLASS")
+          accessModes:
+            - ReadWriteMany
+          resources:
+            requests:
+              storage: 50Gi
         claimSpecAnnotations:
-          zfs-csi.k8shell.io/volume-name: !cel "normalizeDNS(metadata.repoOwner) + '/shared'"
+          zfs-csi.k8shell.io/volume-name: !cel "metadata.repoOwner + '/shared'"
+          zfs-csi.k8shell.io/retain-on-delete: "true"
+          zfs-csi.k8shell.io/squash: "all_squash"
+          zfs-csi.k8shell.io/squash-uid: !cel "user.uid"
+          zfs-csi.k8shell.io/squash-gid: !cel "user.gid"
 
     initScripts:
-      - clone_repo@: |
-          cd "$HOME"
-          git config --global credential.helper k8shell
-          REPO_URL="${GIT_ADDRESS}/${GIT_REPOOWNER}/${GIT_REPONAME}.git"
-          if [ -n "${GIT_REPOREF:-}" ]; then
-             git clone -b "$GIT_REPOREF" --single-branch "$REPO_URL"
-          else
-             git clone "$REPO_URL"
-          fi
+      - name: workspace 
+        script: |
+          ln -s /opt/shared $HOME/shared
 
+  # **** General development blueprint ****
+  - name: dev
+    template: base
+    description: |
+      A blueprint for a general development workspace which includes a preconfigured development environment with tools such as Docker and VS Code Server.
+    image: workspaces/dev:1.12
+
+    k8shelld:
+      # image: k8shell-base/k8shelld:pr-56-8f0dd5e
+      connection:
+        allowAnyNS: true
+        allowAnySA: true
+
+    network:
+      networkPolicyClass: system
+
+    resources:
+      cpu: 8
+      memory: 16Gi
+
+    securityContext:
+      capabilities:
+        add: ["SYS_PTRACE"]
+
+    podman:
+      enabled: true
+      # securityContext:
+      #   runAsUser: 0
+      #   runAsGroup: 0
+      #   privileged: true
+      # extFiles:
+      #   /etc/containers/containers.conf: |
+      #     [containers]
+      #     log_driver = "k8s-file"
+      #     [engine]
+      #     cgroup_manager = "cgroupfs"
+      #     events_logger="file"
+      #     runtime="crun"
+      resources:
+        cpu: 8
+        memory: 8Gi
+      parentStorages: true
+      storages:
+        graphdb:
+          enabled: true
+          path: "/home/podman/.local/share/containers/storage"
+          fsOwnerUid: 1000
+          fsOwnerGid: 1000
+          readonly: False
+          claimSpec:
+            storageClassName: zfs-localpv
+            accessModes:
+              - ReadWriteOnce
+            resources:
+              requests:
+                storage: 5Gi
+
+    storages:
+      home:
+        enabled: true
+        type: local
+        path: !cel "'/home/' + user.username"
+        readonly: False
+        claimSpec:
+          storageClassName: !cel env("WORKSPACE_STORAGE_CLASS")
+          accessModes:
+            - ReadWriteMany
+          resources:
+            requests:
+              storage: 10Gi
+        claimSpecAnnotations:
+          zfs-csi.k8shell.io/volume-name: !cel "workspaceName"
+          zfs-csi.k8shell.io/retain-on-delete: "false"
+          zfs-csi.k8shell.io/squash: "all_squash"
+          zfs-csi.k8shell.io/squash-uid: !cel "user.uid"
+          zfs-csi.k8shell.io/squash-gid: !cel "user.gid"
+
+    # initScripts:
+    #   - name: workspace
+    #     script: |
+    #       # set up the workspace for development
+    #       mkdir -p $HOME/workspace
+
+    enableApps: true
+    apps:
+      vscode:
+        enabled: true
+        autoStart: true
+      # jupyter:
+      #   enabled: true

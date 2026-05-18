@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/k8shell-io/common/pkg/api/client/k8shelld"
@@ -16,6 +17,7 @@ import (
 // Config represents the server configuration
 type Config struct {
 	TargetNamespace     string                  `yaml:"targetNamespace" validate:"required"`
+	InjectNamespaces    []string                `yaml:"injectNamespaces"`
 	ClusterDomain       string                  `yaml:"clusterDomain"`
 	DefaultRegistry     DefaultRegistry         `yaml:"defaultRegistry" validate:"required"`
 	K8shellCapabilities K8shellCapabilities     `yaml:"k8shellCapabilities"`
@@ -135,7 +137,62 @@ func NewConfig(configFile string) (*Config, error) {
 	}
 	ClusterDomain = cfg.ClusterDomain
 
+	for i := range cfg.InjectNamespaces {
+		ns := strings.TrimSpace(cfg.InjectNamespaces[i])
+		if ns == "" {
+			return nil, fmt.Errorf("injectNamespaces[%d] must not be empty", i)
+		}
+		cfg.InjectNamespaces[i] = ns
+	}
+
 	cfg.BaseDir = filepath.Dir(configFile)
 
+	injectedNamespaces := make([]string, 0, len(cfg.InjectNamespaces))
+	seenNamespaces := make(map[string]struct{}, len(cfg.InjectNamespaces))
+	for _, ns := range cfg.InjectNamespaces {
+		ns = strings.TrimSpace(ns)
+		if ns == "" {
+			continue
+		}
+		if ns == "*" {
+			injectedNamespaces = []string{"*"}
+			break
+		}
+		if _, exists := seenNamespaces[ns]; exists {
+			continue
+		}
+		seenNamespaces[ns] = struct{}{}
+		injectedNamespaces = append(injectedNamespaces, ns)
+	}
+	cfg.InjectNamespaces = injectedNamespaces
+
 	return &cfg, nil
+}
+
+// AllowsInjectionNamespace returns true when the namespace is permitted by
+// injectNamespaces. A literal "*" allows all namespaces.
+// Returns false when injectNamespaces is empty, effectively disabling injection.
+func (c *Config) AllowsInjectionNamespace(namespace string) bool {
+	if c == nil || namespace == "" || len(c.InjectNamespaces) == 0 {
+		return false
+	}
+	for _, ns := range c.InjectNamespaces {
+		if ns == "*" || ns == namespace {
+			return true
+		}
+	}
+	return false
+}
+
+// IsClusterWideInjectionEnabled returns true if injectNamespaces includes "*".
+func (c *Config) IsClusterWideInjectionEnabled() bool {
+	if c == nil {
+		return false
+	}
+	for _, ns := range c.InjectNamespaces {
+		if ns == "*" {
+			return true
+		}
+	}
+	return false
 }

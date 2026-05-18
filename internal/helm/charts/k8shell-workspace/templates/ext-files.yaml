@@ -2,7 +2,7 @@
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: {{ .Values.__workspace__ }}-main-ext-files
+  name: {{ .Release.Name }}-main-ext-files
   namespace: {{ .Release.Namespace }} 
   labels:
     {{- include "workspace.labels" . | nindent 4 }}  
@@ -18,7 +18,7 @@ data:
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: {{ .Values.__workspace__ }}-podman-ext-files
+  name: {{ .Release.Name }}-podman-ext-files
   namespace: {{ .Release.Namespace }} 
   labels:
     {{ include "workspace.labels" . | nindent 4 }}  
