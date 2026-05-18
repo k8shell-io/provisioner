@@ -35,6 +35,7 @@ type Workspace struct {
 
 	Name           string
 	JobId          string
+	identityToken  string
 	log            *zerolog.Logger
 	blueprint      *models.Blueprint
 	blueprintChain []string // ordered inheritance chain from root ancestor to this blueprint
@@ -282,6 +283,10 @@ func (w *Workspace) SetJobId(jobId string) {
 	w.JobId = jobId
 }
 
+func (w *Workspace) SetIdentityToken(token string) {
+	w.identityToken = token
+}
+
 // SetBlueprintChain stores the inheritance chain for this workspace's blueprint.
 func (w *Workspace) SetBlueprintChain(chain []string) {
 	w.blueprintChain = chain
@@ -344,6 +349,9 @@ func (w *Workspace) Values() (map[string]interface{}, error) {
 	values["__organization__"] = w.user.Organization
 	values["__networkpolicy__"] = w.blueprint.Network.NetworkPolicyClass
 	values["__registry__"] = w.client.Registry.ToValues()
+	values["__jwtverifierpublickey__"] = w.client.JWTVerifierPublicKey
+	values["__jwtverifiersigningmethod__"] = w.config.JWTVerifier.SigningMethod
+	values["__identitytoken__"] = w.identityToken
 	values["__namespace__"] = getNamespace()
 	values["__certmanager__"] = cmValues
 	values["__appversion__"] = w.appVersion()
@@ -383,6 +391,19 @@ func (w *Workspace) Values() (map[string]interface{}, error) {
 		blueprintYAML = append([]byte(comment), blueprintYAML...)
 	}
 	values["__blueprintyaml__"] = string(blueprintYAML)
+
+	// Inject git-related env vars from blueprint metadata when the workspace is repo-based.
+	if w.blueprint.Metadata.RepoName != "" {
+		envMap, _ := values["env"].(map[string]interface{})
+		if envMap == nil {
+			envMap = make(map[string]interface{})
+		}
+		envMap["GIT_ADDRESS"] = w.blueprint.Metadata.RepoAddress
+		envMap["GIT_REPOOWNER"] = w.blueprint.Metadata.RepoOwner
+		envMap["GIT_REPONAME"] = w.blueprint.Metadata.RepoName
+		envMap["GIT_REPOREF"] = w.blueprint.Metadata.RepoRef
+		values["env"] = envMap
+	}
 
 	return values, nil
 }

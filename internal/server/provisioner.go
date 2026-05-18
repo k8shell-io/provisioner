@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"time"
 
+	"gopkg.in/yaml.v3"
+
 	"github.com/google/uuid"
 	commonv1 "github.com/k8shell-io/common/pkg/api/gen/go/common/v1"
 	identityv1 "github.com/k8shell-io/common/pkg/api/gen/go/identity/v1"
@@ -308,6 +310,7 @@ func (p *ProvisionerService) ProvisionWorkspaceStream(
 		return p.sendProvisionHandshakeErr(stream, workspace.Name, status.Errorf(codes.Unauthenticated,
 			"identity token for user %s is invalid: %v", canUserStr.Identity.Username, err))
 	}
+	workspace.SetIdentityToken(tokenResp.AccessToken)
 
 	exists, st, err := workspace.ExistsAndRunning(ctx)
 	if err != nil {
@@ -530,23 +533,91 @@ func (p *ProvisionerService) prepareWorkspaceWithUserStr(ctx context.Context,
 			return nil, status.Errorf(codes.InvalidArgument, "failed to get blueprint by userstr: %v", err)
 		}
 
-		var customBlueprint models.CustomBlueprint
-		err = json.Unmarshal([]byte(blueprintpb.BlueprintJson), &customBlueprint)
-		if err != nil {
-			return nil, status.Errorf(codes.Internal, "Failed to parse custom blueprint JSON: %v", err)
+		p.log.Debug().Str("userstr", userStr.CanonicalUserStr).Str("blueprint",
+			string(blueprintpb.Blueprint)).Msg("Retrieved k8shell file for userstr")
+
+		var parsedCustomBlueprint *models.CustomBlueprint
+		useDefault := false
+
+		if len(blueprintpb.Blueprint) == 0 {
+			p.log.Info().Str("userstr", userStr.CanonicalUserStr).
+				Msg("custom blueprint not found (empty response); falling back to default custom blueprint")
+			useDefault = true
+		} else {
+			var k8shellFile models.K8shellFile
+			if err := yaml.Unmarshal(blueprintpb.Blueprint, &k8shellFile); err != nil {
+				p.log.Warn().Str("userstr", userStr.CanonicalUserStr).Err(err).
+					Msg("failed to parse k8shell file; falling back to default custom blueprint")
+				useDefault = true
+			} else {
+				customBp, validationErrors := models.ValidateK8shellFile(k8shellFile)
+				if len(validationErrors) > 0 {
+					p.log.Warn().Str("userstr", userStr.CanonicalUserStr).
+						Strs("errors", validationErrors).
+						Msg("k8shell file validation failed; falling back to default custom blueprint")
+					useDefault = true
+				} else {
+					parsedCustomBlueprint = customBp
+				}
+			}
 		}
 
-		if !user.HasBlueprint(customBlueprint.Template) {
+		p.log.Debug().Str("userstr", userStr.CanonicalUserStr).Bool("useDefault", useDefault).
+			Msg("Custom blueprint parsing result")
+
+		if useDefault {
+			defaultBp := p.server.config.Blueprints.DefaultCustomBlueprint
+			if defaultBp == "" {
+				return nil, status.Errorf(codes.NotFound,
+					"custom blueprint not found for userstr %s and no defaultCustomBlueprint is configured",
+					userStr.CanonicalUserStr)
+			}
+			p.log.Info().Str("userstr", userStr.CanonicalUserStr).Str("default", defaultBp).
+				Msg("using default custom blueprint")
+
+			defaultBpMetadata := &models.BlueprintMetadata{
+				Name:        userStr.Identity.Blueprint,
+				RepoName:    userStr.Identity.RepoName,
+				RepoOwner:   userStr.Identity.RepoOwner,
+				RepoRef:     userStr.Identity.RepoRef,
+				RepoAddress: blueprintpb.RepoAddress,
+			}
+			scope, errx := p.server.GetBlueprintScope(defaultBp, user, defaultBpMetadata, userStr.WorkspaceName)
+			if errx != nil {
+				return nil, convertToGRPCError(errx)
+			}
+			if !user.HasBlueprint(defaultBp) {
+				return nil, status.Errorf(codes.PermissionDenied,
+					"Access denied: user %s is not authorized to use default blueprint %s",
+					userStr.Identity.Username, defaultBp)
+			}
+			blueprintObj, err = p.server.bpManager.GetBlueprint(defaultBp, scope)
+			if err != nil {
+				return nil, status.Errorf(codes.NotFound, "default custom blueprint %q not found: %v", defaultBp, err)
+			}
+			resolvedBpName = defaultBp
+			user = scope.User
+			break
+		}
+
+		parsedCustomBlueprint.Name = userStr.Identity.Blueprint
+		parsedCustomBlueprint.Metadata.Name = userStr.Identity.Blueprint
+		parsedCustomBlueprint.Metadata.RepoName = userStr.Identity.RepoName
+		parsedCustomBlueprint.Metadata.RepoOwner = userStr.Identity.RepoOwner
+		parsedCustomBlueprint.Metadata.RepoRef = userStr.Identity.RepoRef
+		parsedCustomBlueprint.Metadata.RepoAddress = blueprintpb.RepoAddress
+
+		if !user.HasBlueprint(parsedCustomBlueprint.Template) {
 			return nil, status.Errorf(codes.PermissionDenied,
-				"Access denied: user %s is not authorized to use blueprint's template %s", userStr.Identity.Username, customBlueprint.Template)
+				"Access denied: user %s is not authorized to use blueprint's template %s", userStr.Identity.Username, parsedCustomBlueprint.Template)
 		}
 
-		scope, errx := p.server.GetBlueprintScope(customBlueprint.Metadata.Name, user, &customBlueprint.Metadata, userStr.WorkspaceName)
+		scope, errx := p.server.GetBlueprintScope(parsedCustomBlueprint.Metadata.Name, user, &parsedCustomBlueprint.Metadata, userStr.WorkspaceName)
 		if errx != nil {
 			return nil, convertToGRPCError(errx)
 		}
 
-		blueprintObj, err = p.server.bpManager.ComposeWithScope(&customBlueprint, scope)
+		blueprintObj, err = p.server.bpManager.ComposeWithScope(parsedCustomBlueprint, scope)
 		if err != nil {
 			return nil, status.Errorf(codes.InvalidArgument, "Failed to compose blueprint: %v", err)
 		}

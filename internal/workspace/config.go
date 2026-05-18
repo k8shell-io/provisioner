@@ -48,17 +48,13 @@ func (w *Workspace) buildConfigYAML() (string, error) {
 			},
 			GrpcConfig: grpc,
 		},
-		Identity: k8shelldcfg.Identity{
-			TokenPath:     "/run/secrets/identity-token/token",
-			PublicKeyPath: "/run/secrets/jwt-verifier/public-key.pem",
-			SigningMethod: w.config.JWTVerifier.SigningMethod,
-		},
 		TerminateOrphans: k8shelldcfg.TerminateOrphans{
 			Enabled:       true,
 			CheckInterval: 5,
 			Exclude:       bp.K8shelld.IgnoreOrphans,
 		},
 		ReapZombies: k8shelldcfg.ReapZombies{Enabled: true},
+		SaToken:     w.config.K8shellCapabilities.SaToken,
 		Shells:      w.config.K8shellCapabilities.Shells,
 	}
 

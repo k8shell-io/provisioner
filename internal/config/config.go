@@ -10,19 +10,20 @@ import (
 	"github.com/k8shell-io/common/pkg/config"
 	"github.com/k8shell-io/common/pkg/gapi"
 	natsc "github.com/k8shell-io/common/pkg/nats"
+	"github.com/k8shell-io/common/pkg/validator"
 )
 
 // Config represents the server configuration
 type Config struct {
-	TargetNamespace     string                  `yaml:"targetNamespace"`
+	TargetNamespace     string                  `yaml:"targetNamespace" validate:"required"`
 	ClusterDomain       string                  `yaml:"clusterDomain"`
-	DefaultRegistry     DefaultRegistry         `yaml:"defaultRegistry"`
+	DefaultRegistry     DefaultRegistry         `yaml:"defaultRegistry" validate:"required"`
 	K8shellCapabilities K8shellCapabilities     `yaml:"k8shellCapabilities"`
 	CertManager         CertManagerConfig       `yaml:"certManager"`
-	GrpcConfig          gapi.ServerConfig       `yaml:"grpc"`
+	GrpcConfig          gapi.ServerConfig       `yaml:"grpc" validate:"required"`
 	Nats                ProvisionerNatsConfig   `yaml:"nats"`
 	Identity            gapi.ClientConfig       `yaml:"identity"`
-	JWTVerifier         authz.JWTVerifierConfig `yaml:"jwtVerifier"`
+	JWTVerifier         authz.JWTVerifierConfig `yaml:"jwtVerifier" validate:"required"`
 	Blueprints          BlueprintsFileConfig    `yaml:"blueprints"`
 	BaseDir             string                  `yaml:"baseDir"`
 }
@@ -41,27 +42,28 @@ type JobsKVConfig struct {
 
 // K8shellCapabilities represents the capabilities of the k8shell environment
 type K8shellCapabilities struct {
-	APIServerEnabled bool            `yaml:"apiServerEnabled"`
-	Shells           k8shelld.Shells `yaml:"shells,omitempty"`
+	APIServerEnabled bool             `yaml:"apiServerEnabled"`
+	SaToken          k8shelld.SaToken `yaml:"saToken,omitempty"`
+	Shells           k8shelld.Shells  `yaml:"shells,omitempty"`
 }
 
 // CertManagerConfig represents the cert-manager configuration
 type CertManagerConfig struct {
 	Enabled     bool       `yaml:"enabled"`
-	Issuer      CertIssuer `yaml:"issuer"`
+	Issuer      CertIssuer `yaml:"issuer" validate:"required_if=Enabled true"`
 	Duration    string     `yaml:"duration"`
 	RenewBefore string     `yaml:"renewBefore"`
 }
 
 // CertIssuer represents the certificate issuer configuration
 type CertIssuer struct {
-	Name string `yaml:"name"`
-	Kind string `yaml:"kind"`
+	Name string `yaml:"name" validate:"required"`
+	Kind string `yaml:"kind" validate:"required,oneof=ClusterIssuer Issuer"`
 }
 
 // DefaultRegistry represents the default container registry configuration.
 type DefaultRegistry struct {
-	Host     string `yaml:"host"`
+	Host     string `yaml:"host" validate:"required"`
 	CertCA   string `yaml:"certCA"`
 	Username string `yaml:"username"`
 	Password string `yaml:"password"`
@@ -85,7 +87,8 @@ func (r DefaultRegistry) ToValues() map[string]interface{} {
 
 // Blueprint represents a blueprint configuration
 type BlueprintsFileConfig struct {
-	Directory string `yaml:"directory" validate:"required"`
+	Directory              string `yaml:"directory" validate:"required"`
+	DefaultCustomBlueprint string `yaml:"defaultCustomBlueprint"`
 }
 
 func NewConfig(configFile string) (*Config, error) {
@@ -96,6 +99,12 @@ func NewConfig(configFile string) (*Config, error) {
 		return nil, fmt.Errorf("failed to load configuration from '%s': %w", configFile, err)
 	}
 
+	// Structural validation via common validator
+	if errs := validator.NewValidator(cfg); !errs.IsValid() {
+		return nil, fmt.Errorf("invalid configuration:\n%s", errs.ErrorMessages())
+	}
+
+	// Post-load derived fields and cross-field checks
 	if cfg.Nats.KV.ProvisionBucketTTLRaw != "" {
 		d, err := time.ParseDuration(cfg.Nats.KV.ProvisionBucketTTLRaw)
 		if err != nil {
@@ -104,40 +113,29 @@ func NewConfig(configFile string) (*Config, error) {
 		cfg.Nats.KV.ProvisionBucketTTL = d
 	}
 
-	if cfg.GrpcConfig.Port == 0 {
-		return nil, fmt.Errorf("missing required configuration values: port must be set")
-	}
-
 	if cfg.CertManager.Enabled {
-		if cfg.CertManager.Issuer.Name == "" || cfg.CertManager.Issuer.Kind == "" {
-			return nil, fmt.Errorf("missing required configuration values: certManager.issuer.name and certManager.issuer.kind must be set when certManager.enabled is true")
-		}
 		if cfg.CertManager.Duration == "" {
 			cfg.CertManager.Duration = "24h"
 		}
-
 		if cfg.CertManager.RenewBefore == "" {
 			cfg.CertManager.RenewBefore = "12h"
 		}
 	}
 
-	if cfg.ClusterDomain != ClusterDomain {
-		cfg.ClusterDomain = ClusterDomain
-	}
-	ClusterDomain = cfg.ClusterDomain
-
-	cfg.BaseDir = filepath.Dir(configFile)
-
 	method := cfg.JWTVerifier.SigningMethod
-	if method == "" {
-		return nil, fmt.Errorf("jwtVerifier.signingMethod is required and must be es256 or rs256")
-	}
 	if method != "es256" && method != "rs256" {
 		return nil, fmt.Errorf("jwtVerifier.signingMethod %q is not supported; must be es256 or rs256", method)
 	}
 	if cfg.JWTVerifier.PublicKeyFile == "" && cfg.JWTVerifier.PrivateKeyFile == "" {
 		return nil, fmt.Errorf("jwtVerifier: publicKeyFile or privateKeyFile is required")
 	}
+
+	if cfg.ClusterDomain == "" {
+		cfg.ClusterDomain = ClusterDomain
+	}
+	ClusterDomain = cfg.ClusterDomain
+
+	cfg.BaseDir = filepath.Dir(configFile)
 
 	return &cfg, nil
 }
