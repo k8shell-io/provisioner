@@ -98,7 +98,7 @@ func (w *Workspace) Inject(ctx context.Context, opts *InjectOptions) (*models.Wo
 		return nil, fmt.Errorf("failed to build helm values: %w", err)
 	}
 	// values overrides
-	values["__namespace__"] = opts.Namespace
+	values["__targetnamespace__"] = opts.Namespace
 
 	resources, err := w.client.WorkspaceResourcesFromTemplate(ctx, values, opts.WorkspaceCanonicalId)
 	if err != nil {
