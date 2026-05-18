@@ -28,13 +28,13 @@ k8shell.io/job-id: "{{ .Values.__jobid__ }}"
 - from:
     - namespaceSelector:
         matchLabels:
-          kubernetes.io/metadata.name: {{ .Release.Namespace }}
+          kubernetes.io/metadata.name: {{ __namespace__ }}
       podSelector:
         matchLabels:
           k8shell.io/app: ssh-proxy
     - namespaceSelector:
         matchLabels:
-          kubernetes.io/metadata.name: {{ .Release.Namespace }}
+          kubernetes.io/metadata.name: {{ __namespace__ }}
       podSelector:
         matchLabels:
           k8shell.io/app: api-server
@@ -45,13 +45,13 @@ k8shell.io/job-id: "{{ .Values.__jobid__ }}"
 - to:
     - namespaceSelector:
         matchLabels:
-          kubernetes.io/metadata.name: {{ .Release.Namespace }}
+          kubernetes.io/metadata.name: {{ __namespace__ }}
       podSelector:
         matchLabels:
           k8shell.io/app: ssh-proxy
     - namespaceSelector:
         matchLabels:
-          kubernetes.io/metadata.name: {{ .Release.Namespace }}
+          kubernetes.io/metadata.name: {{ __namespace__ }}
       podSelector:
         matchLabels:
           k8shell.io/app: api-server
