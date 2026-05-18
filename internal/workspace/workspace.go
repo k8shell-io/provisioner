@@ -513,7 +513,7 @@ func (w *Workspace) Values() (map[string]interface{}, error) {
 	values["__registry__"] = w.client.Registry.ToValues()
 	values["__jwtverifierpublickey__"] = w.client.JWTVerifierPublicKey
 	values["__jwtverifiersigningmethod__"] = w.config.JWTVerifier.SigningMethod
-	values["__namespace__"] = getNamespace()
+	values["__namespace__"] = w.config.TargetNamespace
 	values["__certmanager__"] = cmValues
 	values["__appversion__"] = w.appVersion()
 	values["__identity__"] = w.user.Source
