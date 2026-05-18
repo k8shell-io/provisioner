@@ -1,17 +1,16 @@
-{{- if eq .Values.network.networkPolicyClass "user" }}
+{{- if and .Values.network (eq .Values.network.networkPolicyClass "user") }}
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
-  name: np-{{ .Values.__workspace__ }}-user
+  name: np-{{ .Release.Name }}-user
   namespace: {{ .Release.Namespace }} 
   labels:
     {{- include "workspace.labels" . | nindent 4 }}  
 spec:
   podSelector:
     matchLabels:
-      k8shell.io/app: k8shell-workspace
       k8shell.io/organization: "{{ .Values.__organization__ }}"
-      k8shell.io/workspace: "{{ .Values.__workspace__ }}"
+      k8shell.io/canonical-id: "{{ .Values.__canonicalid__ }}"
   policyTypes:
     - Ingress
     - Egress
@@ -20,12 +19,10 @@ spec:
     - from:
         - podSelector:
             matchLabels:
-              k8shell.io/app: k8shell-workspace
               k8shell.io/organization: {{ .Values.__organization__ }}
               k8shell.io/username: {{ .Values.__username__ }}
         - podSelector:
             matchLabels:
-              k8shell.io/app: k8shell-workspace
               k8shell.io/organization: "{{ .Values.__organization__ }}"
               k8shell.io/network-policy: system
 {{ include "default.ingress" . | nindent 4 }}  
@@ -33,7 +30,6 @@ spec:
     - to:
         - podSelector:
             matchLabels:
-              k8shell.io/app: k8shell-workspace
               k8shell.io/organization: "{{ .Values.__organization__ }}"
               k8shell.io/username: "{{ .Values.__username__ }}"
 {{ include "default.egress" . | nindent 4 }}  

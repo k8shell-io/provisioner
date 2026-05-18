@@ -1,15 +1,14 @@
-{{- if eq .Values.network.networkPolicyClass "organization" }}
+{{- if and .Values.network (eq .Values.network.networkPolicyClass "organization") }}
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
-  name: np-{{ .Values.__workspace__ }}-organization
+  name: np-{{ .Release.Name }}-organization
   namespace: {{ .Release.Namespace }} 
   labels:
     {{- include "workspace.labels" . | nindent 4 }}  
 spec:
   podSelector:
     matchLabels:
-      k8shell.io/app: k8shell-workspace
       k8shell.io/organization: {{ .Values.__organization__ }}
   policyTypes:
     - Ingress
@@ -19,14 +18,12 @@ spec:
     - from:
         - podSelector:
             matchLabels:
-              k8shell.io/app: k8shell-workspace
               k8shell.io/organization: {{ .Values.__organization__ }}
 {{ include "default.ingress" . | nindent 4 }}  
   egress:
     - to:
         - podSelector:
             matchLabels:
-              k8shell.io/app: k8shell-workspace
               k8shell.io/organization: {{ .Values.__organization__ }}
 {{ include "default.egress" . | nindent 4 }}  
 {{- end }}

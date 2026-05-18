@@ -1,56 +1,19 @@
 blueprints:
-  - name: dev
+  - name: docker
     template: base
-    image: workspaces/dev:1.12
-    shell: /bin/bash
-    sudo: true
+    image: docker.io/docker:24-cli
 
-    resources:
-      cpu: 8
-      memory: 4Gi
+    env:
+      DOCKER_HOST: "unix:///var/run/podman/podman.sock"
 
-    storages:
-      home:
-        enabled: true
-        path: !cel "'/home/' + user.username"
-        readonly: false
-        claimSpec:
-          storageClassName: !cel env("WORKSPACE_STORAGE_CLASS")
-          accessModes:
-            - ReadWriteMany
-          resources:
-            requests:
-              storage: 10Gi
-
-    docker:
+    podman:
       enabled: true
+      createDockerSockSymlink: false
 
-  - name: ubt
-    template: dev
+  - name: ubuntu
+    template: base
     image: docker.io/ubuntu:latest
-    shell: /bin/bash
 
-  - name: cos
-    template: dev
-    image: docker.io/centos:8
-    shell: /bin/bash
-
-  - name: alp
-    template: dev
+  - name: alpine
+    template: base
     image: docker.io/alpine:latest
-    docker:
-      enabled: true
-
-  - name: bsb
-    template: dev
-    image: docker.io/busybox:latest
-    docker:
-      enabled: false
-    sudo: false
-
-  - name: jup
-    template: dev
-    image: docker.io/jupyter/base-notebook:latest
-    docker:
-      enabled: false
-    sudo: true
