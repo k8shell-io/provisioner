@@ -6,3 +6,13 @@ blueprint:
     memory: 8Gi
   network:
     networkPolicyClass: system
+
+  initScripts:
+    - name: workspace 
+      script: |
+        ln -s /opt/shared $HOME/shared
+        # k8shell-io private repos
+        go env -w GOPRIVATE=github.com/k8shell-io/*
+        cd $HOME/$GIT_REPONAME
+        GOPATH="$HOME/go" go mod tidy          
+
