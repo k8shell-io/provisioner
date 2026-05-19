@@ -1,6 +1,7 @@
 package server
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -373,7 +374,9 @@ func (p *ProvisionerService) prepareWorkspaceWithUserStr(ctx context.Context,
 			useDefault = true
 		} else {
 			var k8shellFile models.K8shellFile
-			if err := yaml.Unmarshal(blueprintpb.Blueprint, &k8shellFile); err != nil {
+			decoder := yaml.NewDecoder(bytes.NewReader(blueprintpb.Blueprint))
+			decoder.KnownFields(true)
+			if err := decoder.Decode(&k8shellFile); err != nil {
 				p.log.Warn().Str("userstr", canonicalUserStr).Err(err).
 					Msg("failed to parse k8shell file; falling back to default custom blueprint")
 				useDefault = true
