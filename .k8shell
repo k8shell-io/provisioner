@@ -1,6 +1,5 @@
 blueprint:
   template: development
-  image: workspaces/dev:1.10
   resources:
     cpu: 8
     memory: 8Gi
