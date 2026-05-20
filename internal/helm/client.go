@@ -226,6 +226,12 @@ func (c *Client) Template(ctx context.Context, chartName string, opts InstallOpt
 		return "", fmt.Errorf("chart %s not found", chartName)
 	}
 
+	chart = c.cloneChart(chart)
+	chart.Metadata.Version = c.AppVersion + "-" + c.Commit
+	if opts.AppVersion != "" {
+		chart.Metadata.AppVersion = opts.AppVersion
+	}
+
 	release, err := install.RunWithContext(ctx, chart, opts.Values)
 	if err != nil {
 		return "", fmt.Errorf("failed to render chart: %w", err)
@@ -264,6 +270,7 @@ func (c *Client) Install(ctx context.Context, chartName string, opts InstallOpti
 	if opts.AppVersion != "" {
 		chart.Metadata.AppVersion = opts.AppVersion
 	}
+	chart.Metadata.Version = c.AppVersion + "-" + c.Commit
 
 	_, err = install.RunWithContext(ctx, chart, opts.Values)
 	if err != nil {
@@ -430,6 +437,7 @@ func (c *Client) CanUpgrade(ctx context.Context, opts InstallOptions) error {
 	if opts.AppVersion != "" {
 		chart.Metadata.AppVersion = opts.AppVersion
 	}
+	chart.Metadata.Version = c.AppVersion + "-" + c.Commit
 
 	_, err = upgrade.RunWithContext(ctx, opts.ReleaseName, chart, opts.Values)
 	if err != nil {
@@ -506,6 +514,7 @@ func (c *Client) Upgrade(ctx context.Context, opts InstallOptions) error {
 	if opts.AppVersion != "" {
 		ch.Metadata.AppVersion = opts.AppVersion
 	}
+	ch.Metadata.Version = c.AppVersion + "-" + c.Commit
 
 	oldD, _ := manifestDigest(existing.Manifest)
 
