@@ -445,6 +445,8 @@ func (bm *BlueprintManager) GetBlueprint(name string, scope *BlueprintScope) (*m
 		bp.Name = NormalizeDNSLabel(bp.Name)
 	}
 
+	bp.Metadata = *scope.Metadata
+
 	return &bp, nil
 }
 

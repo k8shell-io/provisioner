@@ -136,5 +136,7 @@ func (bm *BlueprintManager) ComposeWithScope(customBlueprint *models.CustomBluep
 		return nil, fmt.Errorf("blueprint validation failed: %v", v.Errors())
 	}
 
+	bp.Metadata = *scope.Metadata
+
 	return &bp, nil
 }
