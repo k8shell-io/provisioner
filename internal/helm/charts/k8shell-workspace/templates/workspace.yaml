@@ -89,6 +89,10 @@ spec:
         value: {{ .Values.__user__.email }}
       - name: USERFULLNAME
         value: {{ .Values.__user__.fullname }}
+      - name: USER_UID
+        value: {{ .Values.__user__.uid }}
+      - name: USER_GID
+        value: {{ .Values.__user__.gid }}
       {{- if .Values.__jwtverifierpublickey__ }}
       - name: JWT_VERIFIER_PUBLIC_KEY
         value: {{ .Values.__jwtverifierpublickey__ | b64enc | quote }}
