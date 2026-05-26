@@ -20,35 +20,6 @@ func getNamespace() string {
 	return string(data)
 }
 
-func getPodContainerPort(pod *corev1.Pod, defaultPort int) int {
-	preferredNames := map[string]struct{}{
-		"grpc":  {},
-		"https": {},
-		"http":  {},
-	}
-
-	for _, c := range pod.Spec.Containers {
-		for _, p := range c.Ports {
-			if p.ContainerPort <= 0 {
-				continue
-			}
-			if _, ok := preferredNames[strings.ToLower(p.Name)]; ok {
-				return int(p.ContainerPort)
-			}
-		}
-	}
-
-	for _, c := range pod.Spec.Containers {
-		for _, p := range c.Ports {
-			if p.ContainerPort > 0 {
-				return int(p.ContainerPort)
-			}
-		}
-	}
-
-	return defaultPort
-}
-
 func podMountsSecret(pod *corev1.Pod, secretName string) bool {
 	if secretName == "" {
 		return false

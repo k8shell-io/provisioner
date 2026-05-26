@@ -81,7 +81,7 @@ func (w *InjectionWatcher) startWorkloadInformers(ctx context.Context, factory i
 			continue
 		}
 		informer := proto.NewInformer(factory)
-		informer.AddEventHandler(cache.ResourceEventHandlerFuncs{
+		if _, err := informer.AddEventHandler(cache.ResourceEventHandlerFuncs{
 			UpdateFunc: func(oldObj, newObj interface{}) {
 				oldMeta, ok1 := oldObj.(metav1.Object)
 				newMeta, ok2 := newObj.(metav1.Object)
@@ -113,7 +113,10 @@ func (w *InjectionWatcher) startWorkloadInformers(ctx context.Context, factory i
 					w.cleanup(ctx, meta.GetNamespace(), kind, meta.GetName(), workspace, canonicalId)
 				}
 			},
-		})
+		}); err != nil {
+			w.log.Error().Str("kind", kind).Err(err).Msg("failed to add event handler")
+			continue
+		}
 		logCtx := w.log.Info().Str("kind", kind)
 		if ns != "" {
 			logCtx = logCtx.Str("namespace", ns)
