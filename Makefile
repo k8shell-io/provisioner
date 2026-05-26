@@ -1,8 +1,11 @@
 # Variables
 REPO=registry.k8shell.io
 REPORTS_DIR := reports
-VENV := .venv
-SERVICE_NAME := provisioner
+# Auto-derived from the repo directory name. Override if needed: make SERVICE_NAME=myservice
+SERVICE_NAME ?= $(shell basename $(CURDIR))
+RUNTIME ?= alpine
+
+.PHONY: all init install-test-deps test-static test build test-binary test-self vendor image image-debug image-release coverage clean help
 
 # Default target
 all: build
@@ -57,7 +60,7 @@ test-binary: build
 
 test-self:  ##@ Run all self-tests
             ##@ Executes static analysis, unit tests, build, and binary smoke tests
-            ##@ Validation of code quality and functionality (ran by self-tests CI workflow)
+            ##@ Validation of code quality and functionality (ran by CI workflow)
 test-self: test-static build test-binary
 	@echo "All self-tests passed!"
 
@@ -66,36 +69,35 @@ vendor:  ##@ Vendor Go modules
 	@echo "Vendoring Go modules..."
 	@go mod vendor
 
+image-debug: RUNTIME=alpine   ##@ Build debug image (alpine, with debug symbols, while-loop entrypoint)
+image-debug: image            ##@ Shorthand for: RUNTIME=alpine make image
+
+image-release: RUNTIME=distroless  ##@ Build release image (distroless, stripped binary)
+image-release: image               ##@ Shorthand for: RUNTIME=distroless make image
+
 image:  ##@ Build Docker image
         ##@ Builds container image with version tagging
-        ##@ Accepts VERSION, COMMIT_ID, IMAGE_TAG from environment or auto-detects from git
+        ##@ Accepts VERSION, COMMIT_ID, IMAGE_TAG, RUNTIME from environment or auto-detects from git
+        ##@ RUNTIME selects the runtime stage: alpine (default) or distroless
+        ##@ Loads into local docker by default; set PUSH=1 to push to registry instead
 image: vendor
 	@echo "Building $(SERVICE_NAME) docker image..."
 	@if ! command -v git >/dev/null 2>&1; then echo "Git not found. Please install Git."; exit 1; fi
 	@VERSION=$${VERSION:-$$(git describe --tags --match 'v*' | sed 's/-g.*//')} && \
 	COMMIT_ID=$${COMMIT_ID:-$$(git rev-parse --short HEAD)} && \
 	IMAGE_TAG=$${IMAGE_TAG:-$$VERSION} && \
-	docker build --build-arg VERSION=$$VERSION \
-		--build-arg COMMIT_ID=$$COMMIT_ID -t $(REPO)/$$(cat docker/$(SERVICE_NAME)/BUILD):$$IMAGE_TAG . \
-		-f docker/$(SERVICE_NAME)/Dockerfile
+	OUTPUT_FLAG=$$(if [ "$${PUSH:-0}" = "1" ]; then echo "--push"; else echo "--load"; fi) && \
+	docker buildx build \
+		$$OUTPUT_FLAG \
+		--target $(RUNTIME) \
+		--build-arg VERSION=$$VERSION \
+		--build-arg COMMIT_ID=$$COMMIT_ID \
+		-t $(REPO)/$$(grep -v '^#' docker/$(SERVICE_NAME)/BUILD | tail -1):$$IMAGE_TAG \
+		-f docker/$(SERVICE_NAME)/Dockerfile \
+		.
 
 coverage:  ##@ Calculate test coverage percentage from coverage.out
 	@go tool cover -func=$(REPORTS_DIR)/coverage.out | grep total | awk '{print $$3}'
-
-COMMON_DIR := $(shell go list -m -f '{{.Dir}}' github.com/k8shell-io/common)
-
-proto-setup:
-	mkdir -p .proto_deps
-	@rm -f .proto_deps/common
-	ln -s $(COMMON_DIR) .proto_deps/common
-
-protoc:
-	@echo "Generating Go code from proto files..."
-	rm -rf pkg/api/provisionerpb
-	protoc -I . -I .proto_deps \
-	  --go_out=. --go_opt=module=github.com/k8shell-io/provisioner \
-	  --go-grpc_out=. --go-grpc_opt=module=github.com/k8shell-io/provisioner \
-	  pkg/api/provisioner.proto
 
 ##@
 ##@ Misc commands
@@ -106,8 +108,6 @@ clean: ##@ Clean up generated files
 	rm -f bin/$(SERVICE_NAME)
 	rm -rf vendor/
 
-clean-all: ##@ Remove all generated files
-clean-all: clean
 
 help: ##@ (Default) Print listing of key targets with their descriptions
 	@printf "\nUsage: make <command>\n"

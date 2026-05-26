@@ -16,12 +16,10 @@ import (
 	"github.com/k8shell-io/common/pkg/models"
 	natsc "github.com/k8shell-io/common/pkg/nats"
 	"github.com/k8shell-io/common/pkg/userstr"
-	"github.com/k8shell-io/provisioner/internal/helm"
 	ws "github.com/k8shell-io/provisioner/internal/workspace"
 	"github.com/rs/zerolog"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
-	corev1 "k8s.io/api/core/v1"
 )
 
 func (p *ProvisionerService) sendProvisionEvent(
@@ -310,32 +308,6 @@ func (p *ProvisionerService) ProvisionWorkspaceStream(
 			return nil
 		}
 	}
-}
-
-// prepareWorkspaceWithPod prepares the workspace object for provisioning based on the workspace name
-func (p *ProvisionerService) prepareWorkspaceWithPod(ctx context.Context, pod *corev1.Pod) (*ws.Workspace, error) {
-
-	userstrb64 := pod.Annotations[helm.AnnotationUserStr]
-	if userstrb64 == "" {
-		return nil, status.Errorf(codes.Internal, "Workspace pod is missing userstr annotation")
-	}
-
-	parsedUserStr, err := userstr.ParseUserStr("b64-" + userstrb64)
-	if err != nil {
-		return nil, status.Errorf(codes.InvalidArgument, "Invalid userstr format: %v", err)
-	}
-
-	canonicalUserStr, err := parsedUserStr.Canonicalize()
-	if err != nil {
-		return nil, status.Errorf(codes.InvalidArgument, "Invalid userstr format: %v", err)
-	}
-
-	workspace, err := p.prepareWorkspaceWithUserStr(ctx, canonicalUserStr)
-	if err != nil {
-		return nil, status.Errorf(codes.Internal, "Failed to prepare workspace for upgrade check: %v", err)
-	}
-
-	return workspace, nil
 }
 
 // prepareWorkspaceWithUserStr prepares the workspace object for provisioning/upgrade
