@@ -97,21 +97,17 @@ func NewClient(targetNamespace string, registry config.DefaultRegistry, privateR
 }
 
 // RegistryValues returns the merged registry values for Helm chart templates.
-// host comes from DefaultRegistry; regcred, certCA, and dockerConfigJson come from PrivateRegistry.
+// host comes from DefaultRegistry and is used to prefix image names.
 func (c *Client) RegistryValues() map[string]interface{} {
 	values := c.Registry.ToValues()
 	if c.PrivateRegistry.Host == "" {
 		return values
 	}
-	if c.PrivateRegistry.Host != c.Registry.Host {
-		c.log.Warn().
-			Str("defaultRegistry", c.Registry.Host).
-			Str("privateRegistry", c.PrivateRegistry.Host).
-			Msg("privateRegistry.host differs from defaultRegistry.host; private registry credentials will not be used for image pulls")
-		return values
-	}
-	for k, v := range c.PrivateRegistry.ToValues() {
-		values[k] = v
+	privateValues := c.PrivateRegistry.ToValues()
+	for _, k := range []string{"certCA", "dockerConfigJson", "regcred"} {
+		if v, ok := privateValues[k]; ok {
+			values[k] = v
+		}
 	}
 	return values
 }
