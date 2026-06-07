@@ -80,6 +80,11 @@ func NewServer(configFile string, appVersion string, commit string) (*Server, er
 			"claimSpec.accessModes": func(_, child []interface{}) []interface{} {
 				return child
 			},
+			// apps.*.start: child replaces parent entirely — the child's command overrides the parent's.
+			// The glob pattern matches any app name, e.g. apps.vscode.start, apps.jupyter.start.
+			"apps.*.start": func(_, child []interface{}) []interface{} {
+				return child
+			},
 			// initScripts: child entries with a matching name replace the parent entry;
 			// entries with unique names are appended.
 			"initScripts": func(parent, child []interface{}) []interface{} {

@@ -3,6 +3,7 @@ package blueprint
 import (
 	"errors"
 	"fmt"
+	"path/filepath"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -160,7 +161,8 @@ func (bm *BlueprintManager) mergeValueNodes(parentValue, childValue *yaml.Node, 
 // findStrategy returns the merge strategy for a sequence node by checking:
 // 1. Exact full path (e.g. "storages.home.claimSpec.accessModes")
 // 2. Suffix match (e.g. "claimSpec.accessModes" matches any path ending with it)
-// 3. Bare key name (e.g. "initScripts")
+// 3. Glob pattern (e.g. "apps.*.start" matches "apps.vscode.start")
+// 4. Bare key name (e.g. "initScripts")
 func (bm *BlueprintManager) findStrategy(key, path string) func([]interface{}, []interface{}) []interface{} {
 	if s, ok := bm.strategies[path]; ok {
 		return s
@@ -170,10 +172,26 @@ func (bm *BlueprintManager) findStrategy(key, path string) func([]interface{}, [
 			return s
 		}
 	}
+	for k, s := range bm.strategies {
+		if strings.ContainsRune(k, '*') {
+			if matched, _ := pathMatch(k, path); matched {
+				return s
+			}
+		}
+	}
 	if s, ok := bm.strategies[key]; ok {
 		return s
 	}
 	return nil
+}
+
+// pathMatch matches a dot-separated path against a glob pattern where * matches
+// a single path segment (not dots). It delegates to path.Match after replacing
+// dots with slashes so that * cannot cross a segment boundary.
+func pathMatch(pattern, path string) (bool, error) {
+	p := strings.ReplaceAll(pattern, ".", "/")
+	v := strings.ReplaceAll(path, ".", "/")
+	return filepath.Match(p, v)
 }
 
 // mergeSequenceNodes merges two sequence nodes based on the configured strategy.
