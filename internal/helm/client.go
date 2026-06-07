@@ -100,6 +100,16 @@ func NewClient(targetNamespace string, registry config.DefaultRegistry, privateR
 // host comes from DefaultRegistry; regcred, certCA, and dockerConfigJson come from PrivateRegistry.
 func (c *Client) RegistryValues() map[string]interface{} {
 	values := c.Registry.ToValues()
+	if c.PrivateRegistry.Host == "" {
+		return values
+	}
+	if c.PrivateRegistry.Host != c.Registry.Host {
+		c.log.Warn().
+			Str("defaultRegistry", c.Registry.Host).
+			Str("privateRegistry", c.PrivateRegistry.Host).
+			Msg("privateRegistry.host differs from defaultRegistry.host; private registry credentials will not be used for image pulls")
+		return values
+	}
 	for k, v := range c.PrivateRegistry.ToValues() {
 		values[k] = v
 	}
