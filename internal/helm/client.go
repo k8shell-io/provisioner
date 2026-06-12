@@ -40,6 +40,7 @@ type Client struct {
 	targetNamespace      string
 	charts               map[string]*chart.Chart
 	Registry             config.DefaultRegistry
+	PrivateRegistry      config.PrivateRegistry
 	JWTVerifierPublicKey string
 	AppVersion           string
 	Commit               string
@@ -56,7 +57,7 @@ type InstallOptions struct {
 	AppVersion      string
 }
 
-func NewClient(targetNamespace string, registry config.DefaultRegistry) (*Client, error) {
+func NewClient(targetNamespace string, registry config.DefaultRegistry, privateRegistry config.PrivateRegistry) (*Client, error) {
 	settings := cli.New()
 
 	var config *rest.Config
@@ -91,7 +92,24 @@ func NewClient(targetNamespace string, registry config.DefaultRegistry) (*Client
 		charts:          charts,
 		targetNamespace: targetNamespace,
 		Registry:        registry,
+		PrivateRegistry: privateRegistry,
 	}, nil
+}
+
+// RegistryValues returns the merged registry values for Helm chart templates.
+// host comes from DefaultRegistry and is used to prefix image names.
+func (c *Client) RegistryValues() map[string]interface{} {
+	values := c.Registry.ToValues()
+	if c.PrivateRegistry.Host == "" {
+		return values
+	}
+	privateValues := c.PrivateRegistry.ToValues()
+	for _, k := range []string{"certCA", "dockerConfigJson", "regcred"} {
+		if v, ok := privateValues[k]; ok {
+			values[k] = v
+		}
+	}
+	return values
 }
 
 func (c *Client) KubeClient() kubernetes.Interface {
@@ -116,10 +134,10 @@ func (c *Client) EnsureBase(ctx context.Context) error {
 		"io.k8shell.provisioner/commit": c.Commit,
 	}
 
-	registryValues := c.Registry.ToValues()
+	privateValues := c.PrivateRegistry.ToValues()
 
-	if dockerConfigJson, ok := registryValues["dockerConfigJson"].(string); ok && dockerConfigJson != "" {
-		regcredName, _ := registryValues["regcred"].(string)
+	if dockerConfigJson, ok := privateValues["dockerConfigJson"].(string); ok && dockerConfigJson != "" {
+		regcredName, _ := privateValues["regcred"].(string)
 		if regcredName == "" {
 			regcredName = "regcred"
 		}
@@ -130,7 +148,7 @@ func (c *Client) EnsureBase(ctx context.Context) error {
 		}
 	}
 
-	if certCA, ok := registryValues["certCA"].(string); ok && certCA != "" {
+	if certCA, ok := privateValues["certCA"].(string); ok && certCA != "" {
 		if err := c.applyConfigMap(ctx, "registryca", labels, map[string]string{
 			"registry-ca.pem": certCA,
 		}); err != nil {

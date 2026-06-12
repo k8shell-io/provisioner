@@ -156,7 +156,7 @@ func NewServer(configFile string, appVersion string, commit string) (*Server, er
 	}
 
 	server.log.Info().Msg("Creating Helm client")
-	server.helm, err = helm.NewClient(server.config.TargetNamespace, server.config.DefaultRegistry)
+	server.helm, err = helm.NewClient(server.config.TargetNamespace, server.config.DefaultRegistry, server.config.PrivateRegistry)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create Helm client: %w", err)
 	}

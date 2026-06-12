@@ -20,6 +20,7 @@ type Config struct {
 	InjectNamespaces    []string                `yaml:"injectNamespaces"`
 	ClusterDomain       string                  `yaml:"clusterDomain"`
 	DefaultRegistry     DefaultRegistry         `yaml:"defaultRegistry" validate:"required"`
+	PrivateRegistry     PrivateRegistry         `yaml:"privateRegistry"`
 	K8shellCapabilities K8shellCapabilities     `yaml:"k8shellCapabilities"`
 	CertManager         CertManagerConfig       `yaml:"certManager"`
 	GrpcConfig          gapi.ServerConfig       `yaml:"grpc" validate:"required"`
@@ -63,9 +64,15 @@ type CertIssuer struct {
 	Kind string `yaml:"kind" validate:"required,oneof=ClusterIssuer Issuer"`
 }
 
-// DefaultRegistry represents the default container registry configuration.
+// DefaultRegistry is the default container registry host used to prefix image names.
 type DefaultRegistry struct {
-	Host     string `yaml:"host" validate:"required"`
+	Host string `yaml:"host" validate:"required"`
+}
+
+// PrivateRegistry holds credentials for a private registry used to create imagePullSecrets
+// and a registry CA configmap. It is optional — if not set, no regcred is created.
+type PrivateRegistry struct {
+	Host     string `yaml:"host"`
 	CertCA   string `yaml:"certCA"`
 	Username string `yaml:"username"`
 	Password string `yaml:"password"`
@@ -76,9 +83,15 @@ type DefaultRegistry struct {
 var ClusterDomain string = "cluster.local"
 
 func (r DefaultRegistry) ToValues() map[string]interface{} {
-	values := make(map[string]interface{})
-	values["host"] = r.Host
-	values["certCA"] = r.CertCA
+	return map[string]interface{}{
+		"host": r.Host,
+	}
+}
+
+func (r PrivateRegistry) ToValues() map[string]interface{} {
+	values := map[string]interface{}{
+		"certCA": r.CertCA,
+	}
 	if r.Username != "" && r.Password != "" {
 		values["dockerConfigJson"] = fmt.Sprintf(`{"auths": {"%s": {"username": "%s","password": "%s"}}}`,
 			r.Host, r.Username, r.Password)
