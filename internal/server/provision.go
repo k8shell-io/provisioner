@@ -511,7 +511,9 @@ func (p *ProvisionerService) enforceWorkspaceProvision(
 		return nil, status.Errorf(codes.Internal, "failed to build authz eval request: %v", err)
 	}
 
-	resp, err := p.server.Authz.Evaluate(ctx, evalReq.ToProto(tokenResp.GetUserToken()))
+	req := evalReq.ToProto(tokenResp.GetUserToken())
+	req.Package = "workspace"
+	resp, err := p.server.Authz.Evaluate(ctx, req)
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "authz evaluation failed: %v", err)
 	}
