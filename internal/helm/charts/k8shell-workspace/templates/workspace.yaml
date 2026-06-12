@@ -41,12 +41,16 @@ spec:
         - |
           /k8shell/dist/scripts/init-base
           {{- include "workspace.storage.chownCommands" (dict "storages" .Values.storages "user" .Values.__user__) | nindent 10 }}
+          {{- if ($podman.enabled | default false) }}
           {{- include "workspace.storage.chownCommands" (dict "storages" $podman.storages "user" .Values.__user__) | nindent 10 }}
+          {{- end }}
       volumeMounts:
         - name: bin-volume
           mountPath: /usr/local/bin
         {{- include "workspace.storage.chownVolumeMounts" (dict "storages" .Values.storages "prefix" "" "user" .Values.__user__) | nindent 8 }}
+        {{- if ($podman.enabled | default false) }}
         {{- include "workspace.storage.chownVolumeMounts" (dict "storages" $podman.storages "prefix" "podman-" "user" .Values.__user__) | nindent 8 }}
+        {{- end }}
 
   containers:
     #### main container
