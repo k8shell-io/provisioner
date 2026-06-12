@@ -12,6 +12,7 @@ import (
 	"github.com/google/uuid"
 	identityv1 "github.com/k8shell-io/common/pkg/api/gen/go/identity/v1"
 	provisionerv1 "github.com/k8shell-io/common/pkg/api/gen/go/provisioner/v1"
+	"github.com/k8shell-io/common/pkg/authz"
 	"github.com/k8shell-io/common/pkg/gapi"
 	"github.com/k8shell-io/common/pkg/models"
 	natsc "github.com/k8shell-io/common/pkg/nats"
@@ -464,6 +465,11 @@ func (p *ProvisionerService) prepareWorkspaceWithUserStr(ctx context.Context,
 		resolvedBpName = bpName
 	}
 
+	blueprintObj, err = p.enforceWorkspaceProvision(ctx, user, workspaceName, blueprintObj)
+	if err != nil {
+		return nil, err
+	}
+
 	workspace, err := ws.NewWorkspace(workspaceName, blueprintObj, user, userStr,
 		p.server.helm, p.server.Identity, p.server.config)
 	if err != nil {
@@ -472,6 +478,54 @@ func (p *ProvisionerService) prepareWorkspaceWithUserStr(ctx context.Context,
 	workspace.SetBlueprintChain(p.server.bpManager.GetBlueprintChain(resolvedBpName))
 
 	return workspace, nil
+}
+
+// enforceWorkspaceProvision calls the authz service to evaluate the
+// workspace:provision policy. It returns the blueprint (possibly patched by
+// obligations) or a PermissionDenied error when the policy denies the request.
+// When authz is not configured it is a no-op.
+func (p *ProvisionerService) enforceWorkspaceProvision(
+	ctx context.Context,
+	user *models.User,
+	workspaceName string,
+	bp *models.Blueprint,
+) (*models.Blueprint, error) {
+	if p.server.Authz == nil {
+		return bp, nil
+	}
+
+	tokenResp, err := p.server.Identity.IssueUserToken(ctx, &identityv1.IssueUserTokenRequest{
+		Username: user.Username,
+		Source:   "provisioner",
+	})
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "failed to issue user token for authz: %v", err)
+	}
+
+	evalReq, err := authz.NewWorkspaceEvalRequest(authz.WorkspaceActionProvision, workspaceName).
+		WithOwner(user.Username).
+		WithBlueprintName(bp.Name).
+		WithBlueprint(bp).
+		Build()
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "failed to build authz eval request: %v", err)
+	}
+
+	resp, err := p.server.Authz.Evaluate(ctx, evalReq.ToProto(tokenResp.GetUserToken()))
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "authz evaluation failed: %v", err)
+	}
+
+	result := authz.PolicyResultFromProto(resp)
+	if !result.Allowed {
+		return nil, status.Errorf(codes.PermissionDenied, "workspace provisioning denied: %s", result.Reason)
+	}
+
+	patched, err := authz.ApplyProvisionPatches(bp, authz.ParseProvisionPatchObligations(result.Obligations))
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "failed to apply policy patches to blueprint: %v", err)
+	}
+	return patched, nil
 }
 
 type ProvisionJobServer struct {
