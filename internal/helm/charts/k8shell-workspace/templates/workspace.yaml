@@ -272,7 +272,7 @@ spec:
   {{- end }}
   {{- end }}
   {{- end }}
-  {{- if $podman.storages }}
+  {{- if and ($podman.enabled | default false) $podman.storages }}
   {{- range $storageName, $storage := $podman.storages }}
   {{- if and $storage (kindIs "map" $storage) ($storage.enabled | default false) }}
   - name: storage-podman-{{ $storageName }}
