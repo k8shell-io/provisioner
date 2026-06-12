@@ -496,7 +496,7 @@ func (p *ProvisionerService) enforceWorkspaceProvision(
 
 	tokenResp, err := p.server.Identity.IssueUserToken(ctx, &identityv1.IssueUserTokenRequest{
 		Username: user.Username,
-		Source:   "provisioner",
+		Source:   user.Source,
 	})
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "failed to issue user token for authz: %v", err)
