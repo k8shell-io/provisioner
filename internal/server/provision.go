@@ -112,7 +112,13 @@ func (p *ProvisionerService) ProvisionWorkspaceStream(
 		}
 	}
 
-	workspace, err := p.prepareWorkspaceWithUserStr(ctx, canUserStr)
+	provisionMode := authz.WorkspaceProvisionModeStandalone
+	if injectMode {
+		provisionMode = authz.WorkspaceProvisionModeInject
+	}
+
+	workspace, err := p.prepareWorkspaceWithUserStr(ctx, canUserStr,
+		provisionMode, workloadName, workspaceNamespace, workloadKind)
 	if err != nil {
 		return p.sendHandshakeErr(msgStream, expectedWorkspaceName, err)
 	}
@@ -314,7 +320,10 @@ func (p *ProvisionerService) ProvisionWorkspaceStream(
 // prepareWorkspaceWithUserStr prepares the workspace object for provisioning/upgrade
 // based on the user string and blueprint information
 func (p *ProvisionerService) prepareWorkspaceWithUserStr(ctx context.Context,
-	userStr *userstr.CanonicalUserStr) (*ws.Workspace, error) {
+	userStr *userstr.CanonicalUserStr,
+	provisionMode authz.WorkspaceProvisionMode,
+	workloadName, workloadNamespace, workloadKind string,
+) (*ws.Workspace, error) {
 
 	identity := userStr.Identity()
 	canonicalUserStr := userStr.CanonicalUserStr()
@@ -465,7 +474,8 @@ func (p *ProvisionerService) prepareWorkspaceWithUserStr(ctx context.Context,
 		resolvedBpName = bpName
 	}
 
-	blueprintObj, err = p.enforceWorkspaceProvision(ctx, user, workspaceName, blueprintObj)
+	blueprintObj, err = p.enforceWorkspaceProvision(ctx, user, workspaceName, blueprintObj,
+		provisionMode, workloadName, workloadNamespace, workloadKind)
 	if err != nil {
 		return nil, err
 	}
@@ -489,6 +499,8 @@ func (p *ProvisionerService) enforceWorkspaceProvision(
 	user *models.User,
 	workspaceName string,
 	bp *models.Blueprint,
+	provisionMode authz.WorkspaceProvisionMode,
+	workloadName, workloadNamespace, workloadKind string,
 ) (*models.Blueprint, error) {
 	if p.server.Authz == nil {
 		return bp, nil
@@ -506,6 +518,8 @@ func (p *ProvisionerService) enforceWorkspaceProvision(
 		WithOwner(user.Username).
 		WithBlueprintName(bp.Name).
 		WithBlueprint(bp).
+		WithMode(provisionMode).
+		WithWorkload(workloadName, workloadNamespace, workloadKind).
 		Build()
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "failed to build authz eval request: %v", err)
