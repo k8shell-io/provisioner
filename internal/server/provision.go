@@ -474,7 +474,8 @@ func (p *ProvisionerService) prepareWorkspaceWithUserStr(ctx context.Context,
 		resolvedBpName = bpName
 	}
 
-	blueprintObj, err = p.enforceWorkspaceProvision(ctx, user, workspaceName, blueprintObj,
+	var obligations map[string]string
+	blueprintObj, obligations, err = p.enforceWorkspaceProvision(ctx, user, workspaceName, blueprintObj,
 		provisionMode, workloadName, workloadNamespace, workloadKind)
 	if err != nil {
 		return nil, err
@@ -486,14 +487,16 @@ func (p *ProvisionerService) prepareWorkspaceWithUserStr(ctx context.Context,
 		return nil, status.Errorf(codes.Internal, "Failed to create workspace: %v", err)
 	}
 	workspace.SetBlueprintChain(p.server.bpManager.GetBlueprintChain(resolvedBpName))
+	workspace.SetAppliedObligations(obligations)
 
 	return workspace, nil
 }
 
 // enforceWorkspaceProvision calls the authz service to evaluate the
 // workspace:provision policy. It returns the blueprint (possibly patched by
-// obligations) or a PermissionDenied error when the policy denies the request.
-// When authz is not configured it is a no-op.
+// obligations) and a map of applied patch obligations (JSON Pointer path →
+// value), or a PermissionDenied error when the policy denies the request.
+// When authz is not configured it is a no-op and returns nil obligations.
 func (p *ProvisionerService) enforceWorkspaceProvision(
 	ctx context.Context,
 	user *models.User,
@@ -501,9 +504,9 @@ func (p *ProvisionerService) enforceWorkspaceProvision(
 	bp *models.Blueprint,
 	provisionMode authz.WorkspaceProvisionMode,
 	workloadName, workloadNamespace, workloadKind string,
-) (*models.Blueprint, error) {
+) (*models.Blueprint, map[string]string, error) {
 	if p.server.Authz == nil {
-		return bp, nil
+		return bp, nil, nil
 	}
 
 	tokenResp, err := p.server.Identity.IssueUserToken(ctx, &identityv1.IssueUserTokenRequest{
@@ -511,7 +514,7 @@ func (p *ProvisionerService) enforceWorkspaceProvision(
 		Source:   user.Source,
 	})
 	if err != nil {
-		return nil, status.Errorf(codes.Internal, "failed to issue user token for authz: %v", err)
+		return nil, nil, status.Errorf(codes.Internal, "failed to issue user token for authz: %v", err)
 	}
 
 	evalReq, err := authz.NewWorkspaceEvalRequest(authz.WorkspaceActionProvision, workspaceName).
@@ -522,26 +525,32 @@ func (p *ProvisionerService) enforceWorkspaceProvision(
 		WithWorkload(workloadName, workloadNamespace, workloadKind).
 		Build()
 	if err != nil {
-		return nil, status.Errorf(codes.Internal, "failed to build authz eval request: %v", err)
+		return nil, nil, status.Errorf(codes.Internal, "failed to build authz eval request: %v", err)
 	}
 
 	req := evalReq.ToProto(tokenResp.GetUserToken())
 	req.Package = "workspace"
 	resp, err := p.server.Authz.Evaluate(ctx, req)
 	if err != nil {
-		return nil, status.Errorf(codes.Internal, "authz evaluation failed: %v", err)
+		return nil, nil, status.Errorf(codes.Internal, "authz evaluation failed: %v", err)
 	}
 
 	result := authz.PolicyResultFromProto(resp)
 	if !result.Allowed {
-		return nil, status.Errorf(codes.PermissionDenied, "workspace provisioning denied: %s", result.Reason)
+		return nil, nil, status.Errorf(codes.PermissionDenied, "workspace provisioning denied: %s", result.Reason)
 	}
 
-	patched, err := authz.ApplyProvisionPatches(bp, authz.ParseProvisionPatchObligations(result.Obligations))
+	patches := authz.ParseProvisionPatchObligations(result.Obligations)
+	patched, err := authz.ApplyProvisionPatches(bp, patches)
 	if err != nil {
-		return nil, status.Errorf(codes.Internal, "failed to apply policy patches to blueprint: %v", err)
+		return nil, nil, status.Errorf(codes.Internal, "failed to apply policy patches to blueprint: %v", err)
 	}
-	return patched, nil
+
+	obligationMap := make(map[string]string, len(patches))
+	for _, p := range patches {
+		obligationMap[p.Path] = p.Value
+	}
+	return patched, obligationMap, nil
 }
 
 type ProvisionJobServer struct {

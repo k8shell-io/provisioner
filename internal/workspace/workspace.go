@@ -39,8 +39,9 @@ type Workspace struct {
 	Name           string
 	JobId          string
 	log            *zerolog.Logger
-	blueprint      *models.Blueprint
-	blueprintChain []string // ordered inheritance chain from root ancestor to this blueprint
+	blueprint          *models.Blueprint
+	blueprintChain     []string // ordered inheritance chain from root ancestor to this blueprint
+	appliedObligations map[string]string
 	user           *models.User
 	userStr        *userstr.CanonicalUserStr
 	workspaceLock  *WorkspaceLock
@@ -454,6 +455,13 @@ func (w *Workspace) SetBlueprintChain(chain []string) {
 	w.blueprintChain = chain
 }
 
+// SetAppliedObligations stores the policy patch obligations that were applied to
+// the blueprint during provisioning. Keyed by JSON Pointer path, value is the
+// patched string. Written into /etc/k8shell/blueprint.yaml under "obligations".
+func (w *Workspace) SetAppliedObligations(obligations map[string]string) {
+	w.appliedObligations = obligations
+}
+
 func (w *Workspace) CreateLock() *WorkspaceLock {
 	return NewWorkspaceLock(
 		w.client.KubeClient(),
@@ -538,11 +546,13 @@ func (w *Workspace) Values() (map[string]interface{}, error) {
 	metadata := bpMap["metadata"]
 	delete(bpMap, "metadata")
 	fileContent := struct {
-		Metadata  interface{} `yaml:"metadata"`
-		Blueprint interface{} `yaml:"blueprint"`
+		Metadata    interface{}       `yaml:"metadata"`
+		Blueprint   interface{}       `yaml:"blueprint"`
+		Obligations map[string]string `yaml:"obligations,omitempty"`
 	}{
-		Metadata:  metadata,
-		Blueprint: bpMap,
+		Metadata:    metadata,
+		Blueprint:   bpMap,
+		Obligations: w.appliedObligations,
 	}
 	blueprintYAML, err := marshalYAML2(fileContent)
 	if err != nil {
