@@ -54,7 +54,7 @@ WORKDIR /app
 ENTRYPOINT ["sh", "-c", "while true; do /app/provisioner \"$@\"; done", "--"]
 
 # -- Runtime stage (distroless) ------------------------------------------------
-FROM gcr.io/distroless/static-debian12:nonroot AS distroless
+FROM gcr.io/distroless/static-debian12:nonroot AS release
 
 COPY --from=build-release --chown=nonroot:nonroot /go/bin/provisioner /app/provisioner
 
