@@ -9,6 +9,7 @@ import (
 	"syscall"
 
 	"github.com/k8shell-io/common/pkg/api/client/identity"
+	authzv1 "github.com/k8shell-io/common/pkg/api/gen/go/authz/v1"
 	provisionerv1 "github.com/k8shell-io/common/pkg/api/gen/go/provisioner/v1"
 	"github.com/k8shell-io/common/pkg/authz"
 	"github.com/k8shell-io/common/pkg/gapi"
@@ -27,6 +28,7 @@ type Server struct {
 	log             *zerolog.Logger
 	nats            *natsc.NATSClient
 	Identity        *identity.IdentityClient
+	Authz           authzv1.AuthzServiceClient
 	tokenVerifier   *authz.JWTVerifier
 	grpc            *gapi.Server
 	bpManager       *blueprint.BlueprintManager
@@ -148,6 +150,15 @@ func NewServer(configFile string, appVersion string, commit string) (*Server, er
 	server.Identity, err = identity.NewIdentityClient(server.config.Identity)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create identity client: %w", err)
+	}
+
+	if server.config.Authz.IsEnabled() {
+		gapiClient, err := gapi.NewClient(server.config.Authz)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create authz client: %w", err)
+		}
+		server.Authz = authzv1.NewAuthzServiceClient(gapiClient.Conn)
+		server.log.Info().Str("address", server.config.Authz.Address).Msg("Authz policy enforcement enabled")
 	}
 
 	server.tokenVerifier, err = authz.NewJWTVerifier(server.config.JWTVerifier)

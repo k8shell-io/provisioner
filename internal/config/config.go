@@ -26,6 +26,7 @@ type Config struct {
 	GrpcConfig          gapi.ServerConfig       `yaml:"grpc" validate:"required"`
 	Nats                ProvisionerNatsConfig   `yaml:"nats"`
 	Identity            gapi.ClientConfig       `yaml:"identity"`
+	Authz               gapi.ClientConfig       `yaml:"authz"`
 	JWTVerifier         authz.JWTVerifierConfig `yaml:"jwtVerifier" validate:"required"`
 	Blueprints          BlueprintsFileConfig    `yaml:"blueprints"`
 	BaseDir             string                  `yaml:"baseDir"`
