@@ -1,3 +1,6 @@
+// Use of this source code is governed by a AGPLv3
+// license that can be found in the LICENSE file.
+
 package blueprint
 
 import (
@@ -78,6 +81,9 @@ func (bm *BlueprintManager) ComposeRaw(customBlueprint *models.CustomBlueprint) 
 	}, nil
 }
 
+// Compose merges a custom blueprint with its template and returns the result as
+// a plain Go value (map/slice/scalar) ready for JSON or YAML serialisation.
+// CEL expressions in the merged output are prefixed with "!cel:" for display.
 func (bm *BlueprintManager) Compose(customBlueprint *models.CustomBlueprint) (interface{}, error) {
 	rawBlueprint, err := bm.ComposeRaw(customBlueprint)
 	if err != nil {
@@ -95,6 +101,9 @@ func (bm *BlueprintManager) Compose(customBlueprint *models.CustomBlueprint) (in
 	return result, nil
 }
 
+// ComposeWithScope merges a custom blueprint with its template, evaluates all
+// CEL expressions using scope, decodes the result into a models.Blueprint, and
+// validates it. It is the end-to-end path for provisioning with a custom blueprint.
 func (bm *BlueprintManager) ComposeWithScope(customBlueprint *models.CustomBlueprint,
 	scope *BlueprintScope) (*models.Blueprint, error) {
 	rawBp, err := bm.ComposeRaw(customBlueprint)

@@ -1,3 +1,6 @@
+// Use of this source code is governed by a AGPLv3
+// license that can be found in the LICENSE file.
+
 package server
 
 import (
@@ -125,6 +128,8 @@ func (w *InjectionWatcher) startWorkloadInformers(ctx context.Context, factory i
 	}
 }
 
+// cleanup deletes all workspace-labelled resources from namespace when a
+// workload's injection annotation is removed or the workload is deleted.
 func (w *InjectionWatcher) cleanup(ctx context.Context, namespace, kind, workloadName, workspaceName, canonicalId string) {
 	w.log.Info().
 		Str("namespace", namespace).

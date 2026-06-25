@@ -1,3 +1,6 @@
+// Use of this source code is governed by a AGPLv3
+// license that can be found in the LICENSE file.
+
 package server
 
 import (
@@ -137,6 +140,8 @@ func (p *ProvisionerService) GetWorkspacesByUserStr(
 	}, nil
 }
 
+// GetUserBlueprints returns the list of blueprint summaries that the given user
+// is authorised to use, filtered from the full set of loaded blueprints.
 func (p *ProvisionerService) GetUserBlueprints(ctx context.Context,
 	req *provisionerv1.GetUserBlueprintsRequest,
 ) (*provisionerv1.GetUserBlueprintsResponse, error) {

@@ -1,3 +1,11 @@
+// Use of this source code is governed by a AGPLv3
+// license that can be found in the LICENSE file.
+
+// Package workspace manages the full lifecycle of k8shell workspaces: creating
+// and tearing down Helm releases, starting and stopping pods, injecting
+// workspace containers into existing workloads, discovering running workspaces
+// via Kubernetes label selectors, and streaming provisioning status events to
+// callers over a channel.
 package workspace
 
 import (
@@ -47,6 +55,7 @@ type Workspace struct {
 	workspaceLock  *WorkspaceLock
 }
 
+// Values is a typed container for a Helm values map.
 type Values struct {
 	Values map[string]interface{}
 }
@@ -161,6 +170,10 @@ func podMatchesWorkspaceFilters(p *corev1.Pod, opts GetWorkspacesOptions, inject
 	return true
 }
 
+// GetWorkspaces lists workspaces matching the filters in opts. It queries the
+// target namespace for standalone workspace pods and, when InjectNamespaces is
+// set, each injection namespace (or cluster-wide) for injected workspace pods.
+// Namespace lists are performed concurrently to reduce latency.
 func GetWorkspaces(
 	ctx context.Context,
 	helmClient *helm.Client,
@@ -446,6 +459,8 @@ func NewWorkspaceFromHelmRelease(ctx context.Context, name string, helmClient *h
 	return ws, nil
 }
 
+// SetJobId stores the NATS provisioning job ID on the workspace so it can be
+// embedded in Helm labels and reported back to clients.
 func (w *Workspace) SetJobId(jobId string) {
 	w.JobId = jobId
 }
@@ -487,6 +502,10 @@ func (w *Workspace) Selector() string {
 	return fmt.Sprintf("app.kubernetes.io/instance=%s", w.Name)
 }
 
+// Values builds the complete Helm values map for the workspace by merging the
+// blueprint fields with user data, registry config, cert-manager settings, and
+// provisioner-internal keys (prefixed with "__"). The resulting map is passed
+// directly to Helm install/upgrade/template operations.
 func (w *Workspace) Values() (map[string]interface{}, error) {
 	if w.blueprint == nil {
 		return nil, fmt.Errorf("blueprint is nil for workspace %s", w.Name)
@@ -580,6 +599,9 @@ func (w *Workspace) Values() (map[string]interface{}, error) {
 	return values, nil
 }
 
+// Template renders the workspace Helm chart without installing it, returning
+// the raw manifest YAML. Job ID and manifest hash are zeroed so successive
+// calls for the same configuration produce identical output.
 func (w *Workspace) Template(ctx context.Context) (string, error) {
 	values, err := w.Values()
 	if err != nil {
@@ -599,6 +621,8 @@ func (w *Workspace) Template(ctx context.Context) (string, error) {
 	return out, nil
 }
 
+// TemplateHash returns the SHA-256 hex digest of the rendered workspace
+// manifest, used to detect configuration drift between Helm releases.
 func (w *Workspace) TemplateHash(ctx context.Context) (string, error) {
 	template, err := w.Template(ctx)
 	if err != nil {
@@ -610,6 +634,8 @@ func (w *Workspace) TemplateHash(ctx context.Context) (string, error) {
 	return fmt.Sprintf("%x", h.Sum(nil)), nil
 }
 
+// GetPodStatus fetches the current pod and its events once and returns a
+// point-in-time WorkspaceStatus without blocking for the pod to reach Running.
 func (w *Workspace) GetPodStatus(ctx context.Context) (*models.WorkspaceStatus, error) {
 	pw := NewPodWatcher(w.client.KubeClient(), w.client.TargetNamespace(), w.Name, w.log)
 	snap, err := pw.Watch(ctx, nil, false)
@@ -622,6 +648,8 @@ func (w *Workspace) GetPodStatus(ctx context.Context) (*models.WorkspaceStatus, 
 	return snapToWorkspaceStatus(snap), nil
 }
 
+// IsInstalled reports whether a Helm release for this workspace exists in the
+// target namespace, regardless of its status or whether the pod is running.
 func (w *Workspace) IsInstalled(ctx context.Context) (bool, error) {
 	_, err := w.client.GetRelease(w.Name)
 	if err != nil {
@@ -633,6 +661,9 @@ func (w *Workspace) IsInstalled(ctx context.Context) (bool, error) {
 	return true, nil
 }
 
+// Uninstall removes the workspace Helm release. When lock is true it acquires
+// the distributed workspace lock first so concurrent delete requests are
+// serialised; the lock is released in a deferred call after uninstall completes.
 func (w *Workspace) Uninstall(ctx context.Context, timeout time.Duration, wait bool, lock bool) error {
 	if lock {
 		err := w.lock(timeout)

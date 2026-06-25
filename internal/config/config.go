@@ -1,3 +1,9 @@
+// Use of this source code is governed by a AGPLv3
+// license that can be found in the LICENSE file.
+
+// Package config defines the server configuration structures and the loader
+// that parses, validates, and post-processes the YAML configuration file
+// supplied to the provisioner on startup.
 package config
 
 import (
@@ -83,12 +89,15 @@ type PrivateRegistry struct {
 // This is needed for constructing the FQDN of workspace pods
 var ClusterDomain string = "cluster.local"
 
+// ToValues returns the registry fields as a Helm values map.
 func (r DefaultRegistry) ToValues() map[string]interface{} {
 	return map[string]interface{}{
 		"host": r.Host,
 	}
 }
 
+// ToValues returns the private registry fields as a Helm values map, including
+// the base64-encoded dockerConfigJson when credentials are configured.
 func (r PrivateRegistry) ToValues() map[string]interface{} {
 	values := map[string]interface{}{
 		"certCA": r.CertCA,
@@ -107,6 +116,10 @@ type BlueprintsFileConfig struct {
 	DefaultCustomBlueprint string `yaml:"defaultCustomBlueprint"`
 }
 
+// NewConfig loads and fully validates the server configuration from configFile.
+// Post-load steps include: parsing duration strings, applying defaults for
+// cert-manager, validating the JWT signing method, deduplicating injection
+// namespaces, and resolving relative paths against the config file directory.
 func NewConfig(configFile string) (*Config, error) {
 	var cfg Config
 

@@ -1,3 +1,6 @@
+// Use of this source code is governed by a AGPLv3
+// license that can be found in the LICENSE file.
+
 package server
 
 import (
@@ -25,6 +28,9 @@ func convertToGRPCError(err error) error {
 	return status.Errorf(codes.Internal, "%s", err.Error())
 }
 
+// waitForWorkspacePodGone polls until the named workspace pod has been deleted
+// or timeout elapses. It is used to gate re-provisioning when a workspace is
+// in the Terminating phase.
 func (p *ProvisionerService) waitForWorkspacePodGone(ctx context.Context, name string, timeout time.Duration) error {
 	if name == "" {
 		return fmt.Errorf("workspace name is required")

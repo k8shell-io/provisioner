@@ -1,3 +1,11 @@
+// Use of this source code is governed by a AGPLv3
+// license that can be found in the LICENSE file.
+
+// Package blueprint loads, validates, and evaluates workspace blueprint
+// definitions. Blueprints are YAML documents that describe how a k8shell
+// workspace pod should be configured. They support CEL template expressions,
+// template inheritance (parent/child overriding), and hot-reloading via a
+// filesystem watcher so changes take effect without restarting the server.
 package blueprint
 
 import (
@@ -39,12 +47,17 @@ type RawBlueprint struct {
 	InheritanceChain []string // ordered list of blueprint names from root ancestor to this blueprint
 }
 
+// BlueprintScope holds the runtime context passed to CEL template evaluation.
+// It carries the authenticated user, the target workspace name, and blueprint
+// metadata (repo coordinates, resolved blueprint name) so templates can
+// conditionally configure resources per-user or per-repository.
 type BlueprintScope struct {
 	User          *models.User              `yaml:"user"`
 	WorkspaceName string                    `yaml:"workspaceName"`
 	Metadata      *models.BlueprintMetadata `yaml:"metadata"`
 }
 
+// ToMap serialises the scope to a plain map[string]any for CEL evaluation.
 func (bs *BlueprintScope) ToMap() (map[string]any, error) {
 	data, err := yaml.Marshal(bs)
 	if err != nil {
@@ -479,6 +492,9 @@ func (bm *BlueprintManager) GetBlueprintsSummary() []*models.BlueprintSummary {
 	return summaries
 }
 
+// GetRawBlueprint returns the raw (unevaluated) YAML content of the named
+// blueprint. CEL expressions are returned with a "!cel:" prefix so callers
+// can display the template source without triggering evaluation.
 func (bm *BlueprintManager) GetRawBlueprint(name string) (interface{}, error) {
 	bm.mu.RLock()
 	defer bm.mu.RUnlock()
@@ -510,6 +526,9 @@ func (bm *BlueprintManager) ListBlueprintNames() []string {
 	return names
 }
 
+// GetDefaultUserBlueprint returns the name of the first non-template blueprint
+// (in alphabetical order) that the user is authorised to use. It is used when
+// no blueprint is specified explicitly in the userstr.
 func (bm *BlueprintManager) GetDefaultUserBlueprint(user *models.User) (string, error) {
 	if user == nil {
 		return "", fmt.Errorf("user cannot be nil")

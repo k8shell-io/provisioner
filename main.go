@@ -1,3 +1,10 @@
+// Use of this source code is governed by a AGPLv3
+// license that can be found in the LICENSE file.
+
+// provisioner is the k8shell workspace provisioner daemon. It exposes a gRPC
+// API (ProvisionerService) consumed by the k8shell API server to create, stop,
+// and delete developer workspaces running as Kubernetes pods or injected into
+// existing workloads.
 package main
 
 import (

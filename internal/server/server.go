@@ -1,3 +1,9 @@
+// Use of this source code is governed by a AGPLv3
+// license that can be found in the LICENSE file.
+
+// Package server implements the gRPC ProvisionerService and owns the top-level
+// Server struct that wires together configuration, blueprints, the Helm client,
+// identity, NATS, and the injection watcher into a running service.
 package server
 
 import (
@@ -23,6 +29,9 @@ import (
 	"google.golang.org/grpc"
 )
 
+// Server holds all long-lived dependencies of the provisioner process: config,
+// blueprint manager, Helm/Kubernetes client, identity client, NATS connection,
+// JWT verifier, and the gRPC server handle.
 type Server struct {
 	config          *config.Config
 	log             *zerolog.Logger
@@ -51,6 +60,10 @@ func NewProvisionerService(server *Server) *ProvisionerService {
 	}
 }
 
+// NewServer constructs and fully initialises a Server from the given config
+// file. It loads blueprints, connects to NATS and the identity service, creates
+// the Helm client, registers the gRPC service, and ensures base Kubernetes
+// resources are present before returning.
 func NewServer(configFile string, appVersion string, commit string) (*Server, error) {
 	server := &Server{
 		log: log.NewLogger("server"),
@@ -202,6 +215,9 @@ func NewServer(configFile string, appVersion string, commit string) (*Server, er
 	return server, nil
 }
 
+// GetBlueprintScope constructs a BlueprintScope for CEL template evaluation,
+// filling repository metadata fields with placeholder values when bpMetadata is
+// nil or has empty fields so templates always receive a consistent variable set.
 func (s *Server) GetBlueprintScope(blueprintName string, user *models.User,
 	bpMetadata *models.BlueprintMetadata, workspaceName string) (*blueprint.BlueprintScope, error) {
 

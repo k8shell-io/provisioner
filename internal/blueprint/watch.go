@@ -1,3 +1,6 @@
+// Use of this source code is governed by a AGPLv3
+// license that can be found in the LICENSE file.
+
 package blueprint
 
 import (
@@ -77,6 +80,8 @@ func (w *Watcher) Setup() error {
 	return nil
 }
 
+// addWatch registers path with the underlying fsnotify watcher, skipping
+// Kubernetes shadow directories and paths already watched.
 func (w *Watcher) addWatch(path string) {
 	if isKubeShadow(path) {
 		return
@@ -92,6 +97,7 @@ func (w *Watcher) addWatch(path string) {
 	w.log.Debug().Msgf("Watching: %s", path)
 }
 
+// removeWatch deregisters path from the underlying fsnotify watcher.
 func (w *Watcher) removeWatch(path string) {
 	if _, ok := w.watchedDirs[path]; !ok {
 		return
@@ -103,6 +109,9 @@ func (w *Watcher) removeWatch(path string) {
 	w.log.Debug().Msgf("Unwatched: %s", path)
 }
 
+// addInitialWatches registers the parent directory, the watch root, and every
+// subdirectory beneath it with fsnotify so that new files and directories are
+// picked up without restarting the watcher.
 func (w *Watcher) addInitialWatches() error {
 	parentDir := filepath.Dir(w.watchDir)
 	w.addWatch(parentDir)
@@ -127,6 +136,10 @@ func (w *Watcher) addInitialWatches() error {
 	})
 }
 
+// watchLoop is the main event-processing goroutine. It handles fsnotify events,
+// filters irrelevant filesystem noise (chmod, Kubernetes shadow paths), maintains
+// the watched-directory set as directories are created or removed, and schedules
+// debounced reload callbacks on YAML changes.
 func (w *Watcher) watchLoop(fsW *fsnotify.Watcher, stop chan struct{}) {
 	for {
 		select {
@@ -191,6 +204,9 @@ func (w *Watcher) watchLoop(fsW *fsnotify.Watcher, stop chan struct{}) {
 	}
 }
 
+// scheduleReinit tears down the current fsnotify watcher and recreates it after
+// a short delay. This is necessary when the watched root directory is removed or
+// renamed (e.g. during a Kubernetes ConfigMap update that replaces the symlink).
 func (w *Watcher) scheduleReinit() {
 	w.mu.Lock()
 	if w.reinitOnce {
@@ -224,6 +240,8 @@ func (w *Watcher) scheduleReinit() {
 	}()
 }
 
+// scheduleReload arms (or resets) a debounce timer so that onReload is called
+// once after reloadDelay has elapsed without further filesystem events.
 func (w *Watcher) scheduleReload() {
 	w.mu.Lock()
 	defer w.mu.Unlock()
@@ -251,6 +269,8 @@ func (w *Watcher) scheduleReload() {
 	})
 }
 
+// Close stops the watcher, cancels any pending reload timer, and waits for
+// in-flight reload callbacks to finish before returning.
 func (w *Watcher) Close() error {
 	w.mu.Lock()
 	w.closed = true
@@ -277,6 +297,9 @@ func (w *Watcher) Close() error {
 	return nil
 }
 
+// isKubeShadow reports whether path is a Kubernetes ConfigMap internal shadow
+// entry (e.g. "..data" or "..2024_01_01_…"). These must be skipped to avoid
+// processing the same file twice when both the symlink and the target are seen.
 func isKubeShadow(path string) bool {
 	base := filepath.Base(path)
 	return strings.HasPrefix(base, "..")

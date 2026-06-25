@@ -1,3 +1,6 @@
+// Use of this source code is governed by a AGPLv3
+// license that can be found in the LICENSE file.
+
 package server
 
 import (
@@ -23,6 +26,8 @@ import (
 	"google.golang.org/grpc/status"
 )
 
+// sendProvisionEvent sends a ProvisionEvent over the stream and, if a job is
+// active, appends the event to the NATS KV provisioning job record.
 func (p *ProvisionerService) sendProvisionEvent(
 	stream provisionerv1.ProvisionerService_ProvisionWorkspaceStreamServer,
 	job *ProvisionJobServer,
@@ -48,6 +53,7 @@ type handshakeErrSender interface {
 	sendHandshake(h *provisionerv1.HandshakeResponse) error
 }
 
+// provisionHandshakeSender wraps the provisioning stream to satisfy handshakeErrSender.
 type provisionHandshakeSender struct {
 	s provisionerv1.ProvisionerService_ProvisionWorkspaceStreamServer
 }
@@ -58,6 +64,8 @@ func (w provisionHandshakeSender) sendHandshake(h *provisionerv1.HandshakeRespon
 	})
 }
 
+// sendHandshakeErr delivers an error response during the handshake phase and
+// logs a warning if the send itself fails.
 func (p *ProvisionerService) sendHandshakeErr(sender handshakeErrSender, workspaceName string, handshakeErr error) error {
 	errx := sender.sendHandshake(&provisionerv1.HandshakeResponse{
 		Workspace: workspaceName,
@@ -553,6 +561,9 @@ func (p *ProvisionerService) enforceWorkspaceProvision(
 	return patched, obligationMap, nil
 }
 
+// ProvisionJobServer extends models.ProvisionJob with a NATS KV handle and a
+// monotonic event counter so that provisioning progress can be observed by
+// clients polling the NATS bucket independently of the streaming gRPC connection.
 type ProvisionJobServer struct {
 	models.ProvisionJob `json:",inline"`
 	NextEventId         int64              `json:"-"`
@@ -580,6 +591,8 @@ func NewProvisionJob(WorkspaceName string, username string, kv *natsc.JetStreamK
 	return p
 }
 
+// AddEvent appends a stream event to the job record and persists it to the
+// NATS KV store so async clients can reconstruct the provisioning timeline.
 func (j *ProvisionJobServer) AddEvent(ev *provisionerv1.ProvisionEvent) {
 	event := models.WorkspaceStreamEvent{
 		Id:         j.NextEventId,
@@ -594,6 +607,8 @@ func (j *ProvisionJobServer) AddEvent(ev *provisionerv1.ProvisionEvent) {
 	j.update()
 }
 
+// SetStatus updates the job status and, when transitioning to Completed, stamps
+// the finished-at timestamp before persisting to the NATS KV store.
 func (j *ProvisionJobServer) SetStatus(status models.ProvisionJobStatus) {
 	now := time.Now().UTC()
 	j.Status = status

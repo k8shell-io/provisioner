@@ -1,3 +1,6 @@
+// Use of this source code is governed by a AGPLv3
+// license that can be found in the LICENSE file.
+
 package workspace
 
 import (
@@ -15,6 +18,9 @@ var (
 	ErrLockAlreadyHeld = fmt.Errorf("lock is already held by another process")
 )
 
+// WorkspaceLock provides a distributed mutex for a single workspace using
+// Kubernetes Lease objects (coordination.k8s.io/v1). One lock per workspace
+// prevents concurrent install, upgrade, or delete operations across replicas.
 type WorkspaceLock struct {
 	client    kubernetes.Interface
 	namespace string
@@ -22,6 +28,9 @@ type WorkspaceLock struct {
 	holderID  string
 }
 
+// NewWorkspaceLock returns a WorkspaceLock for lockName in the given namespace.
+// The holder ID is unique per process invocation so concurrent provisioner
+// replicas do not share lock identity.
 func NewWorkspaceLock(client kubernetes.Interface, namespace, lockName string) *WorkspaceLock {
 	return &WorkspaceLock{
 		client:    client,
@@ -166,6 +175,8 @@ func (l *WorkspaceLock) isLeaseAvailable(lease *coordinationv1.Lease) bool {
 	return time.Now().After(expireTime)
 }
 
+// Release deletes the Kubernetes Lease if this instance holds it. It is a no-op
+// when the lease does not exist or is held by a different instance.
 func (l *WorkspaceLock) Release(ctx context.Context) error {
 	leaseClient := l.client.CoordinationV1().Leases(l.namespace)
 

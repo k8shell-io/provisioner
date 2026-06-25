@@ -1,3 +1,6 @@
+// Use of this source code is governed by a AGPLv3
+// license that can be found in the LICENSE file.
+
 package helm
 
 import (
@@ -96,6 +99,7 @@ func ProtoAdapter(kind string, _ kubernetes.Interface) (WorkloadAdapter, error) 
 
 // --- DeploymentAdapter ---
 
+// DeploymentAdapter implements WorkloadAdapter for apps/v1 Deployments.
 type DeploymentAdapter struct {
 	dep *appsv1.Deployment
 }
@@ -138,6 +142,7 @@ func (a *DeploymentAdapter) NewInformer(factory informers.SharedInformerFactory)
 
 // --- StatefulSetAdapter ---
 
+// StatefulSetAdapter implements WorkloadAdapter for apps/v1 StatefulSets.
 type StatefulSetAdapter struct {
 	ss *appsv1.StatefulSet
 }
@@ -180,6 +185,7 @@ func (a *StatefulSetAdapter) NewInformer(factory informers.SharedInformerFactory
 
 // --- DaemonSetAdapter ---
 
+// DaemonSetAdapter implements WorkloadAdapter for apps/v1 DaemonSets.
 type DaemonSetAdapter struct {
 	ds *appsv1.DaemonSet
 }

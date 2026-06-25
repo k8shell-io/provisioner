@@ -1,3 +1,10 @@
+// Use of this source code is governed by a AGPLv3
+// license that can be found in the LICENSE file.
+
+// Package helm wraps the Helm SDK and the Kubernetes client to manage
+// workspace Helm releases and to inject workspace containers into existing
+// workloads (Deployments, StatefulSets, DaemonSets). It also owns the label
+// and annotation constants shared across the provisioner.
 package helm
 
 import (
@@ -32,6 +39,9 @@ const (
 	WORKSPACE_CHART_NAME = "k8shell-workspace"
 )
 
+// Client is the provisioner's Helm and Kubernetes client. It holds the
+// in-memory Helm charts, Kubernetes typed and dynamic clients, and registry
+// configuration needed to install, upgrade, and uninstall workspace releases.
 type Client struct {
 	settings             *cli.EnvSettings
 	log                  *zerolog.Logger
@@ -46,6 +56,8 @@ type Client struct {
 	Commit               string
 }
 
+// InstallOptions carries parameters shared by Install, Upgrade, and Template
+// operations so callers do not need to configure the action objects directly.
 type InstallOptions struct {
 	ReleaseName     string
 	CreateNamespace bool
@@ -57,6 +69,8 @@ type InstallOptions struct {
 	AppVersion      string
 }
 
+// NewClient constructs a Client using in-cluster Kubernetes credentials, loads
+// the embedded workspace Helm chart into memory, and returns a ready-to-use client.
 func NewClient(targetNamespace string, registry config.DefaultRegistry, privateRegistry config.PrivateRegistry) (*Client, error) {
 	settings := cli.New()
 
@@ -112,6 +126,7 @@ func (c *Client) RegistryValues() map[string]interface{} {
 	return values
 }
 
+// KubeClient returns the underlying Kubernetes typed client.
 func (c *Client) KubeClient() kubernetes.Interface {
 	return c.kubeClient
 }
@@ -222,6 +237,8 @@ func (c *Client) applySecret(ctx context.Context, name string, labels map[string
 	return nil
 }
 
+// Template renders the named Helm chart with opts.Values in dry-run / client-only
+// mode and returns the resulting YAML manifest string without contacting the cluster.
 func (c *Client) Template(ctx context.Context, chartName string, opts InstallOptions) (string, error) {
 	actionConfig, err := c.createActionConfig(c.targetNamespace)
 	if err != nil {
@@ -413,6 +430,9 @@ func (c *Client) Uninstall(releaseName string, timeout int, wait bool) error {
 	return nil
 }
 
+// CanUpgrade performs a client-side dry-run upgrade to check whether the given
+// release can be upgraded. It fails if the release does not exist or is in a
+// pending state. Use this before an actual Upgrade to surface config errors early.
 func (c *Client) CanUpgrade(ctx context.Context, opts InstallOptions) error {
 	actionConfig, err := c.createActionConfig(c.targetNamespace)
 	if err != nil {
@@ -465,6 +485,9 @@ func (c *Client) CanUpgrade(ctx context.Context, opts InstallOptions) error {
 	return nil
 }
 
+// CanUpgradeDryRunServer performs a server-side dry-run upgrade, which lets
+// the Kubernetes API server validate admission webhooks and resource constraints
+// without applying any changes.
 func (c *Client) CanUpgradeDryRunServer(ctx context.Context, opts InstallOptions) error {
 	actionConfig, err := c.createActionConfig(c.targetNamespace)
 	if err != nil {
@@ -665,6 +688,9 @@ func cloneMetadata(original *chart.Metadata) *chart.Metadata {
 	return cloned
 }
 
+// normalizeManifest strips trailing whitespace, blank lines, "---" separators,
+// and "# Source:" comments from a Helm manifest so that semantically identical
+// manifests that differ only in formatting produce the same digest.
 func normalizeManifest(m string) (string, error) {
 	m = strings.ReplaceAll(m, "\r\n", "\n")
 	m = strings.TrimSpace(m)
@@ -698,6 +724,8 @@ func normalizeManifest(m string) (string, error) {
 	return b.String(), nil
 }
 
+// manifestDigest returns the SHA-256 hex digest of a normalised Helm manifest,
+// used to detect whether an upgrade actually changes any rendered resource.
 func manifestDigest(m string) (string, error) {
 	n, err := normalizeManifest(m)
 	if err != nil {
