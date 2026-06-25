@@ -28,6 +28,7 @@ permissions:
   contents: read
   checks: write
   pull-requests: write
+  id-token: write   
 
 jobs:
   Tests:
@@ -106,7 +107,7 @@ jobs:
             VERSION=$(git describe --tags --match 'v*' | sed 's/-g.*//')
             IMAGE_TAG="$VERSION"
             IMAGE_TAG_LATEST="latest"
-            RUNTIME="distroless"
+            RUNTIME="release"
           fi
 
           echo "REPO_NAME=$(grep -v '^#' docker/${{ github.event.repository.name }}/BUILD | tail -1)" >> $GITHUB_ENV
@@ -133,6 +134,7 @@ jobs:
           password: ${{ secrets.HARBOR_PASSWORD }}
 
       - name: Build and push image
+        id: build
         uses: docker/build-push-action@v6
         with:
           context: .
@@ -146,17 +148,46 @@ jobs:
             VERSION=${{ env.VERSION }}
             COMMIT_ID=${{ env.COMMIT_ID }}
 
+      - name: Install cosign
+        uses: sigstore/cosign-installer@v3
+
+      - name: Sign image (keyless)
+        run: |
+          cosign sign --yes \
+            "registry.k8shell.io/${{ env.REPO_NAME }}@${{ steps.build.outputs.digest }}"
+
+      - name: Generate SBOM
+        uses: anchore/sbom-action@v0
+        with:
+          image: "registry.k8shell.io/${{ env.REPO_NAME }}@${{ steps.build.outputs.digest }}"
+          format: spdx-json
+          output-file: sbom.spdx.json
+          upload-artifact: false
+
+      - name: Attest SBOM (keyless)
+        run: |
+          cosign attest --yes \
+            --predicate sbom.spdx.json \
+            --type spdxjson \
+            "registry.k8shell.io/${{ env.REPO_NAME }}@${{ steps.build.outputs.digest }}"
+
       - name: Add image info to job summary
         run: |
           echo "## Docker Image Built" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "**Image:** \`registry.k8shell.io/${{ env.REPO_NAME }}:${{ env.IMAGE_TAG }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "**Digest:** \`${{ steps.build.outputs.digest }}\`" >> $GITHUB_STEP_SUMMARY
           echo "**Runtime:** \`${{ env.RUNTIME }}\`" >> $GITHUB_STEP_SUMMARY
           echo "**Version:** \`${{ env.VERSION }}\`" >> $GITHUB_STEP_SUMMARY
           echo "**Commit:** \`${{ env.COMMIT_ID }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "**Signed:** cosign keyless (Fulcio/Rekor)" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "Pull command:" >> $GITHUB_STEP_SUMMARY
           echo '```bash' >> $GITHUB_STEP_SUMMARY
           echo "docker pull registry.k8shell.io/${{ env.REPO_NAME }}:${{ env.IMAGE_TAG }}" >> $GITHUB_STEP_SUMMARY
           echo '```' >> $GITHUB_STEP_SUMMARY
-
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Verify command:" >> $GITHUB_STEP_SUMMARY
+          echo '```bash' >> $GITHUB_STEP_SUMMARY
+          echo "cosign verify --certificate-identity-regexp '^https://github\.com/k8shell-io/.*\.github/workflows/.*@${{ github.ref }}$' --certificate-oidc-issuer https://token.actions.githubusercontent.com registry.k8shell.io/${{ env.REPO_NAME }}@${{ steps.build.outputs.digest }}" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
