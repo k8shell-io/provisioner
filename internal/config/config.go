@@ -25,7 +25,7 @@ type Config struct {
 	TargetNamespace     string                  `yaml:"targetNamespace" validate:"required"`
 	InjectNamespaces    []string                `yaml:"injectNamespaces"`
 	ClusterDomain       string                  `yaml:"clusterDomain"`
-	DefaultRegistry     DefaultRegistry         `yaml:"defaultRegistry" validate:"required"`
+	DefaultRegistry     DefaultRegistry         `yaml:"defaultRegistry"`
 	PrivateRegistry     PrivateRegistry         `yaml:"privateRegistry"`
 	K8shellCapabilities K8shellCapabilities     `yaml:"k8shellCapabilities"`
 	CertManager         CertManagerConfig       `yaml:"certManager"`
@@ -73,7 +73,7 @@ type CertIssuer struct {
 
 // DefaultRegistry is the default container registry host used to prefix image names.
 type DefaultRegistry struct {
-	Host string `yaml:"host" validate:"required"`
+	Host string `yaml:"host"`
 }
 
 // PrivateRegistry holds credentials for a private registry used to create imagePullSecrets
