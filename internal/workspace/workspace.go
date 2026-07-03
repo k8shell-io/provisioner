@@ -14,6 +14,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -62,7 +63,9 @@ type Values struct {
 
 // GetWorkspacesOptions defines the options for retrieving workspaces with filtering
 type GetWorkspacesOptions struct {
-	Username        string
+	// Usernames filters by the owning user(s). Pods matching any listed
+	// username are returned (an OR match).
+	Usernames       []string
 	Organization    string
 	Blueprint       string
 	WorkspaceName   string
@@ -157,7 +160,7 @@ func podMatchesWorkspaceFilters(p *corev1.Pod, opts GetWorkspacesOptions, inject
 		return false
 	}
 
-	if opts.Username != "" && p.Labels[helm.LabelUsername] != opts.Username {
+	if len(opts.Usernames) > 0 && !slices.Contains(opts.Usernames, p.Labels[helm.LabelUsername]) {
 		return false
 	}
 	if opts.Organization != "" && p.Labels[helm.LabelOrganization] != opts.Organization {
@@ -207,18 +210,18 @@ func GetWorkspaces(
 			}
 		}
 	} else if opts.InjectWorkload == "" {
-		labels := map[string]string{}
-		if opts.Username != "" {
-			labels[helm.LabelUsername] = opts.Username
+		labels := map[string][]string{}
+		if len(opts.Usernames) > 0 {
+			labels[helm.LabelUsername] = opts.Usernames
 		}
 		if opts.Organization != "" {
-			labels[helm.LabelOrganization] = opts.Organization
+			labels[helm.LabelOrganization] = []string{opts.Organization}
 		}
 		if opts.Blueprint != "" {
-			labels[helm.LabelBlueprint] = opts.Blueprint
+			labels[helm.LabelBlueprint] = []string{opts.Blueprint}
 		}
 		if opts.CanonicalId != "" {
-			labels[helm.LabelCanonicalId] = opts.CanonicalId
+			labels[helm.LabelCanonicalId] = []string{opts.CanonicalId}
 		}
 		selector := getSelector(labels)
 
@@ -247,24 +250,24 @@ func GetWorkspaces(
 	}
 
 	if len(opts.InjectNamespaces) > 0 {
-		injectedLabels := map[string]string{
-			helm.LabelInjected: "true",
+		injectedLabels := map[string][]string{
+			helm.LabelInjected: {"true"},
 		}
-		if opts.Username != "" {
-			injectedLabels[helm.LabelUsername] = opts.Username
+		if len(opts.Usernames) > 0 {
+			injectedLabels[helm.LabelUsername] = opts.Usernames
 		}
 		if opts.Organization != "" {
-			injectedLabels[helm.LabelOrganization] = opts.Organization
+			injectedLabels[helm.LabelOrganization] = []string{opts.Organization}
 		}
 		if opts.Blueprint != "" {
-			injectedLabels[helm.LabelBlueprint] = opts.Blueprint
+			injectedLabels[helm.LabelBlueprint] = []string{opts.Blueprint}
 		}
 		if opts.CanonicalId != "" {
-			injectedLabels[helm.LabelCanonicalId] = opts.CanonicalId
+			injectedLabels[helm.LabelCanonicalId] = []string{opts.CanonicalId}
 		}
 		if opts.InjectWorkload != "" {
-			injectedLabels[helm.LabelWorkloadName] = opts.InjectWorkload
-			injectedLabels[helm.LabelWorkloadKind] = opts.InjectKind
+			injectedLabels[helm.LabelWorkloadName] = []string{opts.InjectWorkload}
+			injectedLabels[helm.LabelWorkloadKind] = []string{opts.InjectKind}
 		}
 		injectedSelector := getSelector(injectedLabels)
 
@@ -356,9 +359,9 @@ func GetWorkspaces(
 
 // FindworkspaceByName finds a workspace by its name using Helm client and returns the corresponding release
 func FindWorkspaceHelmRelease(_ context.Context, helmClient *helm.Client, name string) (*release.Release, error) {
-	labels := map[string]string{
-		"app.kubernetes.io/name":     helm.WORKSPACE_CHART_NAME,
-		"app.kubernetes.io/instance": name,
+	labels := map[string][]string{
+		"app.kubernetes.io/name":     {helm.WORKSPACE_CHART_NAME},
+		"app.kubernetes.io/instance": {name},
 	}
 
 	selector := getSelector(labels)

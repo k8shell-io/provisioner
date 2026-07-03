@@ -5,7 +5,7 @@ REPORTS_DIR := reports
 SERVICE_NAME ?= $(shell basename $(CURDIR))
 RUNTIME ?= alpine
 
-.PHONY: all init install-test-deps test-static test build test-binary test-self vendor image image-debug image-release coverage clean help
+.PHONY: all init install-test-deps test-static test build test-binary test-self vendor image image-debug image-release reload dlv coverage clean help
 
 # Default target
 all: build
@@ -48,7 +48,7 @@ test: install-test-deps
 
 build:      ##@ Build binaries
 	@echo "Building binaries..."
-	go build -o bin/$(SERVICE_NAME) main.go
+	CGO_ENABLED=0 go build -gcflags="all=-N -l" -o bin/$(SERVICE_NAME) main.go
 	@echo "Build complete!"
 
 test-binary: ##@ Run binary smoke tests
@@ -95,6 +95,14 @@ image: vendor
 		-t $(REPO)/$$(grep -v '^#' docker/$(SERVICE_NAME)/BUILD | tail -1):$$IMAGE_TAG \
 		-f docker/$(SERVICE_NAME)/Dockerfile \
 		.
+
+reload: build ##@ Hot-swap the running provisioner binary in place (dev only)
+              ##@ Finds the container's while-loop entrypoint via /proc, replaces /app/provisioner, and kills the child so the loop respawns it
+	@./scripts/reload.sh
+
+dlv: ##@ Attach delve to the running provisioner process for remote debugging
+     ##@ Headless debug server on 127.0.0.1:2345 (override with DLV_LISTEN) — connect with `dlv connect` or your IDE
+	@./scripts/dlv.sh
 
 coverage:  ##@ Calculate test coverage percentage from coverage.out
 	@go tool cover -func=$(REPORTS_DIR)/coverage.out | grep total | awk '{print $$3}'

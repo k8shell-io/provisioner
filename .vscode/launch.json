@@ -31,6 +31,14 @@
             ],
             "showLog": true,
             //"stopOnEntry": true
+        },
+        {
+            "name": "Connect to Delve server",
+            "type": "go",
+            "request": "attach",
+            "mode": "remote",
+            "port": 2345,
+            "host": "127.0.0.1"
         }
     ]
 }
