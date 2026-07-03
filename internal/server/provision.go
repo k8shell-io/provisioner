@@ -98,10 +98,8 @@ func (p *ProvisionerService) ProvisionWorkspaceStream(
 			"failed to canonicalize userstr: %v", err))
 	}
 
-	expectedWorkspaceName := canUserStr.WorkspaceName()
-
 	if parsedUserStr.Pod() != "" {
-		return p.sendHandshakeErr(msgStream, expectedWorkspaceName, status.Errorf(codes.InvalidArgument,
+		return p.sendHandshakeErr(msgStream, canUserStr.WorkspaceName(), status.Errorf(codes.InvalidArgument,
 			"cannot provision workspace using pod name"))
 	}
 
@@ -110,6 +108,11 @@ func (p *ProvisionerService) ProvisionWorkspaceStream(
 	workloadName := parsedUserStr.WorkloadName()
 	workloadKind := parsedUserStr.WorkloadKind()
 	injectMode := workspaceNamespace != "" && workloadName != ""
+
+	expectedWorkspaceName := canUserStr.WorkspaceName()
+	if injectMode {
+		expectedWorkspaceName = canUserStr.CanonicalId()
+	}
 
 	timeout := int(req.Timeout)
 	if timeout <= 0 {
@@ -336,6 +339,9 @@ func (p *ProvisionerService) prepareWorkspaceWithUserStr(ctx context.Context,
 	identity := userStr.Identity()
 	canonicalUserStr := userStr.CanonicalUserStr()
 	workspaceName := userStr.WorkspaceName()
+	if provisionMode == authz.WorkspaceProvisionModeInject {
+		workspaceName = userStr.CanonicalId()
+	}
 
 	userpb, err := p.server.Identity.FindUser(ctx, &identityv1.FindUserRequest{Username: identity.Username()})
 	if err != nil {
