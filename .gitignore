@@ -5,3 +5,6 @@ docker/provisioner/files/
 vendor/
 reports/
 bin/provisioner
+go.work
+go.work.sum
+common
