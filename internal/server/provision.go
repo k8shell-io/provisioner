@@ -502,6 +502,7 @@ func (p *ProvisionerService) prepareWorkspaceWithUserStr(ctx context.Context,
 	}
 	workspace.SetBlueprintChain(p.server.bpManager.GetBlueprintChain(resolvedBpName))
 	workspace.SetAppliedObligations(obligations)
+	workspace.SetProvisionContext(provisionMode, workloadName, workloadNamespace, workloadKind)
 
 	return workspace, nil
 }

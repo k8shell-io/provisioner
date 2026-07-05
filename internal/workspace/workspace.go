@@ -21,6 +21,7 @@ import (
 
 	"github.com/k8shell-io/common/pkg/api/client/identity"
 	identityv1 "github.com/k8shell-io/common/pkg/api/gen/go/identity/v1"
+	"github.com/k8shell-io/common/pkg/authz"
 	"github.com/k8shell-io/common/pkg/gapi"
 	log "github.com/k8shell-io/common/pkg/logger"
 	"github.com/k8shell-io/common/pkg/models"
@@ -45,15 +46,20 @@ type Workspace struct {
 	client   *helm.Client
 	identify *identity.IdentityClient
 
-	Name           string
-	JobId          string
-	log            *zerolog.Logger
+	Name               string
+	JobId              string
+	log                *zerolog.Logger
 	blueprint          *models.Blueprint
 	blueprintChain     []string // ordered inheritance chain from root ancestor to this blueprint
 	appliedObligations map[string]string
-	user           *models.User
-	userStr        *userstr.CanonicalUserStr
-	workspaceLock  *WorkspaceLock
+	user               *models.User
+	userStr            *userstr.CanonicalUserStr
+	workspaceLock      *WorkspaceLock
+
+	provisionMode     authz.WorkspaceProvisionMode
+	workloadName      string
+	workloadNamespace string
+	workloadKind      string
 }
 
 // Values is a typed container for a Helm values map.
@@ -480,6 +486,17 @@ func (w *Workspace) SetAppliedObligations(obligations map[string]string) {
 	w.appliedObligations = obligations
 }
 
+// SetProvisionContext stores the provision mode and, for inject mode, the
+// target workload identity. It is surfaced to the workspace pod as env vars
+// by Values(). In standalone mode workloadName/Namespace/Kind are empty and
+// no workload env vars are emitted.
+func (w *Workspace) SetProvisionContext(mode authz.WorkspaceProvisionMode, workloadName, workloadNamespace, workloadKind string) {
+	w.provisionMode = mode
+	w.workloadName = workloadName
+	w.workloadNamespace = workloadNamespace
+	w.workloadKind = workloadKind
+}
+
 func (w *Workspace) CreateLock() *WorkspaceLock {
 	return NewWorkspaceLock(
 		w.client.KubeClient(),
@@ -596,6 +613,12 @@ func (w *Workspace) Values() (map[string]interface{}, error) {
 		envMap["GIT_REPOOWNER"] = w.blueprint.Metadata.RepoOwner
 		envMap["GIT_REPONAME"] = w.blueprint.Metadata.RepoName
 		envMap["GIT_REPOREF"] = w.blueprint.Metadata.RepoRef
+	}
+	envMap["PROVISION_MODE"] = string(w.provisionMode)
+	if w.provisionMode == authz.WorkspaceProvisionModeInject {
+		envMap["WORKLOAD_NAME"] = w.workloadName
+		envMap["WORKLOAD_NAMESPACE"] = w.workloadNamespace
+		envMap["WORKLOAD_KIND"] = w.workloadKind
 	}
 	values["env"] = envMap
 
