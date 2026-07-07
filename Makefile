@@ -5,7 +5,7 @@ REPORTS_DIR := reports
 SERVICE_NAME ?= $(shell basename $(CURDIR))
 RUNTIME ?= alpine
 
-.PHONY: all init install-test-deps test-static test build test-binary test-self vendor image image-debug image-release reload dlv coverage clean help
+.PHONY: all init install-test-deps test-static test build test-binary test-self vendor image image-debug image-release reload dlv debug-setup coverage clean help
 
 # Default target
 all: build
@@ -103,6 +103,12 @@ reload: build ##@ Hot-swap the running provisioner binary in place (dev only)
 dlv: ##@ Attach delve to the running provisioner process for remote debugging
      ##@ Headless debug server on 127.0.0.1:2345 (override with DLV_LISTEN) — connect with `dlv connect` or your IDE
 	@./scripts/dlv.sh
+
+debug-setup: ##@ Set up local debug environment
+             ##@ Generates go.work (Go version taken from go.mod) and symlinks the common module for local debugging
+	@GO_VERSION=$$(grep -m1 '^go ' go.mod | awk '{print $$2}') && \
+	printf 'go %s\n\nuse (\n\t.\n\t/opt/shared/common\n)\n' "$$GO_VERSION" > go.work
+	ln -sfn /opt/shared/common common
 
 coverage:  ##@ Calculate test coverage percentage from coverage.out
 	@go tool cover -func=$(REPORTS_DIR)/coverage.out | grep total | awk '{print $$3}'
