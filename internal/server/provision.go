@@ -488,6 +488,15 @@ func (p *ProvisionerService) prepareWorkspaceWithUserStr(ctx context.Context,
 		resolvedBpName = bpName
 	}
 
+	patResp, err := p.server.Identity.CreateAccessToken(ctx, &identityv1.CreateAccessTokenRequest{
+		Username: user.Username,
+		Name:     userStr.CanonicalId(),
+		Scopes:   []string{string(authz.SessionActionList), "user:read:" + string(authz.UserDataTypeCredentials)},
+	})
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "failed to create PAT for workspace: %v", err)
+	}
+
 	var obligations map[string]string
 	blueprintObj, obligations, err = p.enforceWorkspaceProvision(ctx, user, workspaceName, blueprintObj,
 		provisionMode, workloadName, workloadNamespace, workloadKind)
@@ -503,6 +512,7 @@ func (p *ProvisionerService) prepareWorkspaceWithUserStr(ctx context.Context,
 	workspace.SetBlueprintChain(p.server.bpManager.GetBlueprintChain(resolvedBpName))
 	workspace.SetAppliedObligations(obligations)
 	workspace.SetProvisionContext(provisionMode, workloadName, workloadNamespace, workloadKind)
+	workspace.SetPAT(patResp.GetToken())
 
 	return workspace, nil
 }

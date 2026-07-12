@@ -60,6 +60,7 @@ type Workspace struct {
 	workloadName      string
 	workloadNamespace string
 	workloadKind      string
+	pat               string
 }
 
 // Values is a typed container for a Helm values map.
@@ -497,6 +498,12 @@ func (w *Workspace) SetProvisionContext(mode authz.WorkspaceProvisionMode, workl
 	w.workloadKind = workloadKind
 }
 
+// SetPAT stores the personal access token minted for this workspace so it can
+// be surfaced to the workspace pod as the PAT_TOKEN env var by Values().
+func (w *Workspace) SetPAT(pat string) {
+	w.pat = pat
+}
+
 func (w *Workspace) CreateLock() *WorkspaceLock {
 	return NewWorkspaceLock(
 		w.client.KubeClient(),
@@ -608,6 +615,9 @@ func (w *Workspace) Values() (map[string]interface{}, error) {
 		envMap = make(map[string]interface{})
 	}
 	envMap["PROVISIONER_VERSION"] = w.client.AppVersion + "-" + w.client.Commit
+	if w.pat != "" {
+		envMap["K8SHELL_PAT_TOKEN"] = w.pat
+	}
 	if w.blueprint.Metadata.RepoName != "" {
 		envMap["GIT_ADDRESS"] = w.blueprint.Metadata.RepoAddress
 		envMap["GIT_REPOOWNER"] = w.blueprint.Metadata.RepoOwner
