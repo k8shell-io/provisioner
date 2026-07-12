@@ -500,6 +500,7 @@ func (p *ProvisionerService) prepareWorkspaceWithUserStr(ctx context.Context,
 		Username: user.Username,
 		Name:     userStr.CanonicalId(),
 		Scopes:   PAT_SCOPES,
+		Renew:    true,
 	})
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "failed to create PAT for workspace: %v", err)
