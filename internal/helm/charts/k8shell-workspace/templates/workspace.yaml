@@ -91,21 +91,7 @@ spec:
         value: {{ .Values.__user__.username }}
       - name: USEREMAIL
         value: {{ .Values.__user__.email }}
-      - name: USERFULLNAME
-        value: {{ .Values.__user__.fullname }}
-      - name: USER_UID
-        value: {{ .Values.__user__.uid | quote }}
-      - name: USER_GID
-        value: {{ .Values.__user__.gid | quote }}
-      {{- if .Values.__jwtverifierpublickey__ }}
-      - name: JWT_VERIFIER_PUBLIC_KEY
-        value: {{ .Values.__jwtverifierpublickey__ | b64enc | quote }}
-      {{- end }}
-      {{- if .Values.__jwtverifiersigningmethod__ }}
-      - name: JWT_VERIFIER_SIGNING_METHOD
-        value: {{ .Values.__jwtverifiersigningmethod__ | quote }}
-      {{- end }}
-      {{- if .Values.env }}    
+      {{- if .Values.env }}
       {{- range $envName, $envValue := .Values.env }}            
       - name: {{ $envName }}
         value: {{ $envValue | quote }}
@@ -234,6 +220,8 @@ spec:
         path: config.yaml
       - key: blueprint.yaml
         path: blueprint.yaml
+      - key: profile.yaml
+        path: profile.yaml
   - name: main-volume
     configMap:
       name: {{ .Release.Name }}-files

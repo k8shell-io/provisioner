@@ -11,3 +11,5 @@ data:
 {{ .Values.__configyaml__ | indent 4 }}
   blueprint.yaml: |-
 {{ .Values.__blueprintyaml__ | indent 4 }}
+  profile.yaml: |-
+{{ .Values.__profileyaml__ | indent 4 }}

@@ -565,8 +565,6 @@ func (w *Workspace) Values() (map[string]interface{}, error) {
 	values["__organization__"] = w.user.Organization
 	values["__networkpolicy__"] = w.blueprint.Network.NetworkPolicyClass
 	values["__registry__"] = w.client.RegistryValues()
-	values["__jwtverifierpublickey__"] = w.client.JWTVerifierPublicKey
-	values["__jwtverifiersigningmethod__"] = w.config.JWTVerifier.SigningMethod
 	values["__namespace__"] = getNamespace()
 	values["__targetnamespace__"] = w.config.TargetNamespace
 	values["__certmanager__"] = cmValues
@@ -580,6 +578,12 @@ func (w *Workspace) Values() (map[string]interface{}, error) {
 		return nil, fmt.Errorf("failed to build config YAML: %w", err)
 	}
 	values["__configyaml__"] = configYAML
+
+	profileYAML, err := w.buildProfileYAML()
+	if err != nil {
+		return nil, fmt.Errorf("failed to build profile YAML: %w", err)
+	}
+	values["__profileyaml__"] = profileYAML
 
 	rawBpYAML, err := marshalYAMLAllFields(w.blueprint)
 	if err != nil {
