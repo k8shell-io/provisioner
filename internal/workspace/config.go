@@ -6,6 +6,7 @@ package workspace
 import (
 	"encoding/json"
 	"fmt"
+	"strconv"
 
 	k8shelldcfg "github.com/k8shell-io/common/pkg/api/client/k8shelld"
 	"github.com/k8shell-io/common/pkg/gapi"
@@ -101,6 +102,8 @@ func (w *Workspace) buildProfileYAML() (string, error) {
 	if err := json.Unmarshal(jsonBytes, &profileMap); err != nil {
 		return "", fmt.Errorf("failed to unmarshal user profile JSON: %w", err)
 	}
+	profileMap["uid"] = strconv.FormatUint(uint64(u.UID), 10)
+	profileMap["gid"] = strconv.FormatUint(uint64(u.GID), 10)
 
 	out, err := marshalYAML2(profileMap)
 	if err != nil {
