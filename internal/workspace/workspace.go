@@ -14,12 +14,14 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/k8shell-io/common/pkg/api/client/identity"
 	identityv1 "github.com/k8shell-io/common/pkg/api/gen/go/identity/v1"
+	"github.com/k8shell-io/common/pkg/authz"
 	"github.com/k8shell-io/common/pkg/gapi"
 	log "github.com/k8shell-io/common/pkg/logger"
 	"github.com/k8shell-io/common/pkg/models"
@@ -44,15 +46,20 @@ type Workspace struct {
 	client   *helm.Client
 	identify *identity.IdentityClient
 
-	Name           string
-	JobId          string
-	log            *zerolog.Logger
+	Name               string
+	JobId              string
+	log                *zerolog.Logger
 	blueprint          *models.Blueprint
 	blueprintChain     []string // ordered inheritance chain from root ancestor to this blueprint
 	appliedObligations map[string]string
-	user           *models.User
-	userStr        *userstr.CanonicalUserStr
-	workspaceLock  *WorkspaceLock
+	user               *models.User
+	userStr            *userstr.CanonicalUserStr
+	workspaceLock      *WorkspaceLock
+
+	provisionMode     authz.WorkspaceProvisionMode
+	workloadName      string
+	workloadNamespace string
+	workloadKind      string
 }
 
 // Values is a typed container for a Helm values map.
@@ -62,7 +69,9 @@ type Values struct {
 
 // GetWorkspacesOptions defines the options for retrieving workspaces with filtering
 type GetWorkspacesOptions struct {
-	Username        string
+	// Usernames filters by the owning user(s). Pods matching any listed
+	// username are returned (an OR match).
+	Usernames       []string
 	Organization    string
 	Blueprint       string
 	WorkspaceName   string
@@ -157,7 +166,7 @@ func podMatchesWorkspaceFilters(p *corev1.Pod, opts GetWorkspacesOptions, inject
 		return false
 	}
 
-	if opts.Username != "" && p.Labels[helm.LabelUsername] != opts.Username {
+	if len(opts.Usernames) > 0 && !slices.Contains(opts.Usernames, p.Labels[helm.LabelUsername]) {
 		return false
 	}
 	if opts.Organization != "" && p.Labels[helm.LabelOrganization] != opts.Organization {
@@ -207,18 +216,18 @@ func GetWorkspaces(
 			}
 		}
 	} else if opts.InjectWorkload == "" {
-		labels := map[string]string{}
-		if opts.Username != "" {
-			labels[helm.LabelUsername] = opts.Username
+		labels := map[string][]string{}
+		if len(opts.Usernames) > 0 {
+			labels[helm.LabelUsername] = opts.Usernames
 		}
 		if opts.Organization != "" {
-			labels[helm.LabelOrganization] = opts.Organization
+			labels[helm.LabelOrganization] = []string{opts.Organization}
 		}
 		if opts.Blueprint != "" {
-			labels[helm.LabelBlueprint] = opts.Blueprint
+			labels[helm.LabelBlueprint] = []string{opts.Blueprint}
 		}
 		if opts.CanonicalId != "" {
-			labels[helm.LabelCanonicalId] = opts.CanonicalId
+			labels[helm.LabelCanonicalId] = []string{opts.CanonicalId}
 		}
 		selector := getSelector(labels)
 
@@ -247,24 +256,24 @@ func GetWorkspaces(
 	}
 
 	if len(opts.InjectNamespaces) > 0 {
-		injectedLabels := map[string]string{
-			helm.LabelInjected: "true",
+		injectedLabels := map[string][]string{
+			helm.LabelInjected: {"true"},
 		}
-		if opts.Username != "" {
-			injectedLabels[helm.LabelUsername] = opts.Username
+		if len(opts.Usernames) > 0 {
+			injectedLabels[helm.LabelUsername] = opts.Usernames
 		}
 		if opts.Organization != "" {
-			injectedLabels[helm.LabelOrganization] = opts.Organization
+			injectedLabels[helm.LabelOrganization] = []string{opts.Organization}
 		}
 		if opts.Blueprint != "" {
-			injectedLabels[helm.LabelBlueprint] = opts.Blueprint
+			injectedLabels[helm.LabelBlueprint] = []string{opts.Blueprint}
 		}
 		if opts.CanonicalId != "" {
-			injectedLabels[helm.LabelCanonicalId] = opts.CanonicalId
+			injectedLabels[helm.LabelCanonicalId] = []string{opts.CanonicalId}
 		}
 		if opts.InjectWorkload != "" {
-			injectedLabels[helm.LabelWorkloadName] = opts.InjectWorkload
-			injectedLabels[helm.LabelWorkloadKind] = opts.InjectKind
+			injectedLabels[helm.LabelWorkloadName] = []string{opts.InjectWorkload}
+			injectedLabels[helm.LabelWorkloadKind] = []string{opts.InjectKind}
 		}
 		injectedSelector := getSelector(injectedLabels)
 
@@ -356,9 +365,9 @@ func GetWorkspaces(
 
 // FindworkspaceByName finds a workspace by its name using Helm client and returns the corresponding release
 func FindWorkspaceHelmRelease(_ context.Context, helmClient *helm.Client, name string) (*release.Release, error) {
-	labels := map[string]string{
-		"app.kubernetes.io/name":     helm.WORKSPACE_CHART_NAME,
-		"app.kubernetes.io/instance": name,
+	labels := map[string][]string{
+		"app.kubernetes.io/name":     {helm.WORKSPACE_CHART_NAME},
+		"app.kubernetes.io/instance": {name},
 	}
 
 	selector := getSelector(labels)
@@ -477,6 +486,17 @@ func (w *Workspace) SetAppliedObligations(obligations map[string]string) {
 	w.appliedObligations = obligations
 }
 
+// SetProvisionContext stores the provision mode and, for inject mode, the
+// target workload identity. It is surfaced to the workspace pod as env vars
+// by Values(). In standalone mode workloadName/Namespace/Kind are empty and
+// no workload env vars are emitted.
+func (w *Workspace) SetProvisionContext(mode authz.WorkspaceProvisionMode, workloadName, workloadNamespace, workloadKind string) {
+	w.provisionMode = mode
+	w.workloadName = workloadName
+	w.workloadNamespace = workloadNamespace
+	w.workloadKind = workloadKind
+}
+
 func (w *Workspace) CreateLock() *WorkspaceLock {
 	return NewWorkspaceLock(
 		w.client.KubeClient(),
@@ -593,6 +613,12 @@ func (w *Workspace) Values() (map[string]interface{}, error) {
 		envMap["GIT_REPOOWNER"] = w.blueprint.Metadata.RepoOwner
 		envMap["GIT_REPONAME"] = w.blueprint.Metadata.RepoName
 		envMap["GIT_REPOREF"] = w.blueprint.Metadata.RepoRef
+	}
+	envMap["PROVISION_MODE"] = string(w.provisionMode)
+	if w.provisionMode == authz.WorkspaceProvisionModeInject {
+		envMap["WORKLOAD_NAME"] = w.workloadName
+		envMap["WORKLOAD_NAMESPACE"] = w.workloadNamespace
+		envMap["WORKLOAD_KIND"] = w.workloadKind
 	}
 	values["env"] = envMap
 

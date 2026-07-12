@@ -51,7 +51,7 @@ func (p *ProvisionerService) GetWorkspaces(
 
 	workspaces, err := ws.GetWorkspaces(ctx, p.server.helm,
 		ws.GetWorkspacesOptions{
-			Username:         req.Username,
+			Usernames:        req.Usernames,
 			Blueprint:        req.Blueprint,
 			Organization:     req.Organization,
 			WorkspaceName:    req.Workspace,
@@ -103,7 +103,7 @@ func (p *ProvisionerService) GetWorkspacesByUserStr(
 
 	identity := canUserStr.Identity()
 	opts := ws.GetWorkspacesOptions{
-		Username: identity.Username(),
+		Usernames: []string{identity.Username()},
 	}
 
 	if userStr.WorkloadName() != "" {

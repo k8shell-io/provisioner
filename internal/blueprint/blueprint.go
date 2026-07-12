@@ -117,7 +117,6 @@ func TestScope() *BlueprintScope {
 			Fullname:   "Test User",
 			Email:      "testuser@example.com",
 			Password:   "testpassword",
-			AuthKeys:   []string{"ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQC3..."},
 			Locked:     false,
 			Roles:      []models.Role{"role1", "role2"},
 			Blueprints: []string{"testblueprint"},

@@ -147,14 +147,24 @@ func toMap(b any) (map[string]interface{}, error) {
 	return values, nil
 }
 
-// getSelector returns a label selector string from the given labels map.
-func getSelector(labels map[string]string) string {
+// getSelector returns a label selector string from the given label values. A
+// single value for a key produces an equality clause (key=value); multiple
+// values produce a set-based "in" clause (key in (v1,v2)) so pods matching
+// any of the values are selected.
+func getSelector(labels map[string][]string) string {
 	if len(labels) == 0 {
 		return ""
 	}
 	var selectors []string
-	for key, value := range labels {
-		selectors = append(selectors, fmt.Sprintf("%s=%s", key, value))
+	for key, values := range labels {
+		if len(values) == 0 {
+			continue
+		}
+		if len(values) == 1 {
+			selectors = append(selectors, fmt.Sprintf("%s=%s", key, values[0]))
+			continue
+		}
+		selectors = append(selectors, fmt.Sprintf("%s in (%s)", key, strings.Join(values, ",")))
 	}
 	return strings.Join(selectors, ",")
 }
