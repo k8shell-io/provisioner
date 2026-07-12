@@ -26,6 +26,13 @@ import (
 	"google.golang.org/grpc/status"
 )
 
+// PAT_SCOPES defines the scopes for the Personal Access Token created for the workspace.
+var PAT_SCOPES = []string{
+	"session:list:self",
+	"user:read:profile:self",
+	"user:read:credentials:self",
+}
+
 // sendProvisionEvent sends a ProvisionEvent over the stream and, if a job is
 // active, appends the event to the NATS KV provisioning job record.
 func (p *ProvisionerService) sendProvisionEvent(
@@ -491,7 +498,7 @@ func (p *ProvisionerService) prepareWorkspaceWithUserStr(ctx context.Context,
 	patResp, err := p.server.Identity.CreateAccessToken(ctx, &identityv1.CreateAccessTokenRequest{
 		Username: user.Username,
 		Name:     userStr.CanonicalId(),
-		Scopes:   []string{string(authz.SessionActionList), "user:read:" + string(authz.UserDataTypeCredentials)},
+		Scopes:   PAT_SCOPES,
 	})
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "failed to create PAT for workspace: %v", err)
