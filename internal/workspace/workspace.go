@@ -40,6 +40,10 @@ import (
 // Default page size for GetWorkspaces pagination when limit is not specified or invalid
 const WORKSPACE_DEFAULT_PAGE_SIZE = 20
 
+// k8shelldTagOverride, when non-empty, replaces the tag of the k8shelld image
+// configured in the blueprint. Leave empty to use the blueprint's image as-is.
+const k8shelldTagOverride = ""
+
 // Workspace represents a workspace with Helm client
 type Workspace struct {
 	config   *config.Config
@@ -541,6 +545,15 @@ func (w *Workspace) Values() (map[string]interface{}, error) {
 	values, err := toMap(w.blueprint)
 	if err != nil {
 		return nil, fmt.Errorf("failed to convert blueprint to map: %w", err)
+	}
+
+	if k8shelldTagOverride != "" {
+		if k8shelldValues, ok := values["k8shelld"].(map[string]interface{}); ok {
+			if image, ok := k8shelldValues["image"].(string); ok {
+				repo, _, _ := strings.Cut(image, ":")
+				k8shelldValues["image"] = repo + ":" + k8shelldTagOverride
+			}
+		}
 	}
 
 	userValues, err := toMap(w.user)
