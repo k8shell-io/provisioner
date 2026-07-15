@@ -14,7 +14,14 @@ import (
 	ws "github.com/k8shell-io/provisioner/internal/workspace"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	corev1 "k8s.io/api/core/v1"
 )
+
+// userWorkspaceDeleteLockRenewInterval controls how often DeleteUserWorkspaces
+// renews its per-user lock while walking a potentially long list of
+// workspaces. It must be well under the lock's lease duration (30s) so a
+// renewal has multiple chances to succeed before the lease could expire.
+const userWorkspaceDeleteLockRenewInterval = 10 * time.Second
 
 // DeleteWorkspace deletes a workspace asynchronously with distributed locking
 func (p *ProvisionerService) DeleteWorkspace(ctx context.Context,
@@ -149,6 +156,123 @@ func (p *ProvisionerService) DeleteWorkspace(ctx context.Context,
 	return &provisionerv1.DeleteWorkspaceResponse{
 		Message: fmt.Sprintf("Successfully deleted workspace %s", name),
 	}, nil
+}
+
+// DeleteUserWorkspaces hard-deletes every workspace (standalone and injected)
+// owned by a user. It is intended as a cleanup step when a user is removed
+// from the system: the actual deletion runs in the background so this RPC
+// can return quickly to a synchronous caller, but a distributed lock keyed
+// by username ensures only one replica performs the cleanup at a time and
+// that a call made while cleanup is already in progress is rejected rather
+// than starting a second, overlapping run.
+func (p *ProvisionerService) DeleteUserWorkspaces(ctx context.Context,
+	req *provisionerv1.DeleteUserWorkspacesRequest) (*provisionerv1.DeleteUserWorkspacesResponse, error) {
+
+	username := req.Username
+	if username == "" {
+		return nil, status.Errorf(codes.InvalidArgument, "username is required")
+	}
+
+	lockCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+
+	userLock := ws.NewWorkspaceLock(p.server.helm.KubeClient(), p.server.helm.TargetNamespace(), "user-delete-"+username)
+	acquired, err := userLock.TryAcquire(lockCtx)
+	if err != nil {
+		if errors.Is(err, ws.ErrLockAlreadyHeld) {
+			return &provisionerv1.DeleteUserWorkspacesResponse{
+				Message: fmt.Sprintf("Deletion of workspaces for user %s is already in progress", username),
+			}, nil
+		}
+		return nil, status.Errorf(codes.Internal,
+			"Failed to acquire lock for user %s workspace deletion: %v", username, err)
+	}
+	if !acquired {
+		return &provisionerv1.DeleteUserWorkspacesResponse{
+			Message: fmt.Sprintf("Deletion of workspaces for user %s is already in progress", username),
+		}, nil
+	}
+
+	result, err := ws.GetWorkspaces(ctx, p.server.helm, ws.GetWorkspacesOptions{
+		Usernames:        []string{username},
+		InjectNamespaces: p.server.config.InjectNamespaces,
+	})
+	if err != nil {
+		if releaseErr := userLock.Release(context.WithoutCancel(ctx)); releaseErr != nil {
+			p.log.Error().Err(releaseErr).Msgf("Failed to release user-delete lock for %s", username)
+		}
+		return nil, status.Errorf(codes.Internal, "Failed to list workspaces for user %s: %v", username, err)
+	}
+
+	if len(result.Workspaces) == 0 {
+		if releaseErr := userLock.Release(context.WithoutCancel(ctx)); releaseErr != nil {
+			p.log.Error().Err(releaseErr).Msgf("Failed to release user-delete lock for %s", username)
+		}
+		return &provisionerv1.DeleteUserWorkspacesResponse{
+			Message: fmt.Sprintf("No workspaces found for user %s", username),
+		}, nil
+	}
+
+	names := make([]string, 0, len(result.Workspaces))
+	for _, w := range result.Workspaces {
+		names = append(names, w.Name)
+	}
+
+	bgCtx := context.WithoutCancel(ctx)
+	go p.deleteUserWorkspaces(bgCtx, username, userLock, result.Pods)
+
+	return &provisionerv1.DeleteUserWorkspacesResponse{
+		Message:    fmt.Sprintf("Request to delete %d workspace(s) for user %s was submitted", len(names), username),
+		Workspaces: names,
+	}, nil
+}
+
+// deleteUserWorkspaces hard-deletes each pod's workspace in turn and releases
+// userLock when finished. It runs in the background after DeleteUserWorkspaces
+// has already responded to the caller. While it runs, userLock is
+// periodically renewed; if renewal ever fails it means another replica may
+// have taken over the same cleanup (the lease expired before this replica
+// finished), so remaining deletions are abandoned rather than risk two
+// replicas racing through the same user's workspaces at once. Individual
+// workspace failures - including one already being deleted by a concurrent
+// single-workspace DeleteWorkspace call - are logged and skipped so one bad
+// workspace does not block the rest of the batch.
+func (p *ProvisionerService) deleteUserWorkspaces(ctx context.Context, username string,
+	userLock *ws.WorkspaceLock, pods []corev1.Pod) {
+
+	keepAliveCtx, stopKeepAlive := context.WithCancel(ctx)
+	defer stopKeepAlive()
+	lockLost := userLock.KeepAlive(keepAliveCtx, userWorkspaceDeleteLockRenewInterval)
+
+	defer func() {
+		if err := userLock.Release(context.WithoutCancel(ctx)); err != nil {
+			p.log.Error().Err(err).Msgf("Failed to release user-delete lock for %s", username)
+		}
+	}()
+
+	for i := range pods {
+		select {
+		case err := <-lockLost:
+			p.log.Error().Err(err).Msgf(
+				"Lost deletion lock for user %s partway through cleanup; aborting remaining workspaces", username)
+			return
+		default:
+		}
+
+		pod := &pods[i]
+		name := pod.Name
+		if err := ws.DeleteWorkspacePod(ctx, p.server.helm, p.server.Identity, p.server.config, pod); err != nil {
+			if errors.Is(err, ws.ErrLockAlreadyHeld) {
+				p.log.Warn().Msgf("Workspace %s for user %s is already being deleted, skipping", name, username)
+				continue
+			}
+			p.log.Error().Err(err).Msgf("Failed to delete workspace %s for user %s", name, username)
+			continue
+		}
+		p.log.Info().Msgf("Successfully deleted workspace %s for user %s", name, username)
+	}
+
+	p.log.Info().Msgf("Finished deleting workspaces for user %s", username)
 }
 
 // StopWorkspace deletes only the workspace pod, leaving the Helm release and all
