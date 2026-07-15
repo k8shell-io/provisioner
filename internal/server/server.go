@@ -185,11 +185,6 @@ func NewServer(configFile string, appVersion string, commit string) (*Server, er
 		return nil, fmt.Errorf("failed to create Helm client: %w", err)
 	}
 
-	pk, err := server.config.JWTVerifier.GetPublicKey()
-	if err != nil {
-		return nil, fmt.Errorf("failed to get public key for JWT verifier: %w", err)
-	}
-	server.helm.JWTVerifierPublicKey = pk
 	server.helm.AppVersion = appVersion
 	server.helm.Commit = commit
 

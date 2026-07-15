@@ -4,10 +4,13 @@
 package workspace
 
 import (
+	"encoding/json"
 	"fmt"
+	"strconv"
 
 	k8shelldcfg "github.com/k8shell-io/common/pkg/api/client/k8shelld"
 	"github.com/k8shell-io/common/pkg/gapi"
+	"github.com/k8shell-io/common/pkg/models"
 )
 
 // buildConfigYAML constructs the k8shelld config.yaml content from the workspace's
@@ -67,6 +70,44 @@ func (w *Workspace) buildConfigYAML(customNamespace string) (string, error) {
 	out, err := marshalYAML2(cfg)
 	if err != nil {
 		return "", fmt.Errorf("failed to marshal k8shelld config YAML: %w", err)
+	}
+	return string(out), nil
+}
+
+// buildProfileYAML constructs the workspace's /etc/k8shell/profile.yaml content
+// from the provisioning user, using models.UserProfile as the canonical shape.
+// It round-trips through JSON so the YAML keys match UserProfile's json tags.
+func (w *Workspace) buildProfileYAML() (string, error) {
+	u := w.user
+	profile := models.UserProfile{
+		Username:      u.Username,
+		Organization:  u.Organization,
+		Fullname:      u.Fullname,
+		Email:         u.Email,
+		UID:           u.UID,
+		GID:           u.GID,
+		Shell:         u.Shell,
+		Sudo:          u.Sudo,
+		Source:        u.Source,
+		Roles:         u.Roles,
+		Blueprints:    u.Blueprints,
+		AccountLocked: u.Locked,
+	}
+
+	jsonBytes, err := json.Marshal(profile)
+	if err != nil {
+		return "", fmt.Errorf("failed to marshal user profile to JSON: %w", err)
+	}
+	var profileMap map[string]interface{}
+	if err := json.Unmarshal(jsonBytes, &profileMap); err != nil {
+		return "", fmt.Errorf("failed to unmarshal user profile JSON: %w", err)
+	}
+	profileMap["uid"] = strconv.FormatUint(uint64(u.UID), 10)
+	profileMap["gid"] = strconv.FormatUint(uint64(u.GID), 10)
+
+	out, err := marshalYAML2(profileMap)
+	if err != nil {
+		return "", fmt.Errorf("failed to marshal user profile YAML: %w", err)
 	}
 	return string(out), nil
 }

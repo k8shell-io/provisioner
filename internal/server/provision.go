@@ -26,6 +26,14 @@ import (
 	"google.golang.org/grpc/status"
 )
 
+// PAT_SCOPES defines the scopes for the Personal Access Token created for the workspace.
+var PAT_SCOPES = []string{
+	"session:list:self",          // list sessions for workspace user
+	"user:read:profile:self",     // read user profile information (username, fullname, email
+	"user:read:credentials:self", // use credential helpers (git, registry, kubernetes)
+	"user:write:password:self",   // set password for workspace user
+}
+
 // sendProvisionEvent sends a ProvisionEvent over the stream and, if a job is
 // active, appends the event to the NATS KV provisioning job record.
 func (p *ProvisionerService) sendProvisionEvent(
@@ -488,6 +496,16 @@ func (p *ProvisionerService) prepareWorkspaceWithUserStr(ctx context.Context,
 		resolvedBpName = bpName
 	}
 
+	patResp, err := p.server.Identity.CreateAccessToken(ctx, &identityv1.CreateAccessTokenRequest{
+		Username: user.Username,
+		Name:     userStr.CanonicalId(),
+		Scopes:   PAT_SCOPES,
+		Renew:    true,
+	})
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "failed to create PAT for workspace: %v", err)
+	}
+
 	var obligations map[string]string
 	blueprintObj, obligations, err = p.enforceWorkspaceProvision(ctx, user, workspaceName, blueprintObj,
 		provisionMode, workloadName, workloadNamespace, workloadKind)
@@ -503,6 +521,7 @@ func (p *ProvisionerService) prepareWorkspaceWithUserStr(ctx context.Context,
 	workspace.SetBlueprintChain(p.server.bpManager.GetBlueprintChain(resolvedBpName))
 	workspace.SetAppliedObligations(obligations)
 	workspace.SetProvisionContext(provisionMode, workloadName, workloadNamespace, workloadKind)
+	workspace.SetPAT(patResp.GetToken())
 
 	return workspace, nil
 }

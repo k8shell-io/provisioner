@@ -43,17 +43,16 @@ const (
 // in-memory Helm charts, Kubernetes typed and dynamic clients, and registry
 // configuration needed to install, upgrade, and uninstall workspace releases.
 type Client struct {
-	settings             *cli.EnvSettings
-	log                  *zerolog.Logger
-	kubeClient           kubernetes.Interface
-	dynamicClient        dynamic.Interface
-	targetNamespace      string
-	charts               map[string]*chart.Chart
-	Registry             config.DefaultRegistry
-	PrivateRegistry      config.PrivateRegistry
-	JWTVerifierPublicKey string
-	AppVersion           string
-	Commit               string
+	settings        *cli.EnvSettings
+	log             *zerolog.Logger
+	kubeClient      kubernetes.Interface
+	dynamicClient   dynamic.Interface
+	targetNamespace string
+	charts          map[string]*chart.Chart
+	Registry        config.DefaultRegistry
+	PrivateRegistry config.PrivateRegistry
+	AppVersion      string
+	Commit          string
 }
 
 // InstallOptions carries parameters shared by Install, Upgrade, and Template

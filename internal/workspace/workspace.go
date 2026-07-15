@@ -40,6 +40,11 @@ import (
 // Default page size for GetWorkspaces pagination when limit is not specified or invalid
 const WORKSPACE_DEFAULT_PAGE_SIZE = 20
 
+// k8shelldTagOverride, when non-empty, replaces the tag of the k8shelld image
+// configured in the blueprint. Leave empty to use the blueprint's image as-is.
+// this is for debug purposes only when provisioner is running in an injected workspace
+const k8shelldTagOverride = "" //"pr-66-3874e67"
+
 // Workspace represents a workspace with Helm client
 type Workspace struct {
 	config   *config.Config
@@ -60,6 +65,7 @@ type Workspace struct {
 	workloadName      string
 	workloadNamespace string
 	workloadKind      string
+	pat               string
 }
 
 // Values is a typed container for a Helm values map.
@@ -497,6 +503,12 @@ func (w *Workspace) SetProvisionContext(mode authz.WorkspaceProvisionMode, workl
 	w.workloadKind = workloadKind
 }
 
+// SetPAT stores the personal access token minted for this workspace so it can
+// be surfaced to the workspace pod as the PAT_TOKEN env var by Values().
+func (w *Workspace) SetPAT(pat string) {
+	w.pat = pat
+}
+
 func (w *Workspace) CreateLock() *WorkspaceLock {
 	return NewWorkspaceLock(
 		w.client.KubeClient(),
@@ -536,6 +548,15 @@ func (w *Workspace) Values() (map[string]interface{}, error) {
 		return nil, fmt.Errorf("failed to convert blueprint to map: %w", err)
 	}
 
+	if k8shelldTagOverride != "" {
+		if k8shelldValues, ok := values["k8shelld"].(map[string]interface{}); ok {
+			if image, ok := k8shelldValues["image"].(string); ok {
+				repo, _, _ := strings.Cut(image, ":")
+				k8shelldValues["image"] = repo + ":" + k8shelldTagOverride
+			}
+		}
+	}
+
 	userValues, err := toMap(w.user)
 	if err != nil {
 		return nil, fmt.Errorf("failed to convert user to map: %w", err)
@@ -558,8 +579,6 @@ func (w *Workspace) Values() (map[string]interface{}, error) {
 	values["__organization__"] = w.user.Organization
 	values["__networkpolicy__"] = w.blueprint.Network.NetworkPolicyClass
 	values["__registry__"] = w.client.RegistryValues()
-	values["__jwtverifierpublickey__"] = w.client.JWTVerifierPublicKey
-	values["__jwtverifiersigningmethod__"] = w.config.JWTVerifier.SigningMethod
 	values["__namespace__"] = getNamespace()
 	values["__targetnamespace__"] = w.config.TargetNamespace
 	values["__certmanager__"] = cmValues
@@ -573,6 +592,12 @@ func (w *Workspace) Values() (map[string]interface{}, error) {
 		return nil, fmt.Errorf("failed to build config YAML: %w", err)
 	}
 	values["__configyaml__"] = configYAML
+
+	profileYAML, err := w.buildProfileYAML()
+	if err != nil {
+		return nil, fmt.Errorf("failed to build profile YAML: %w", err)
+	}
+	values["__profileyaml__"] = profileYAML
 
 	rawBpYAML, err := marshalYAMLAllFields(w.blueprint)
 	if err != nil {
@@ -608,6 +633,9 @@ func (w *Workspace) Values() (map[string]interface{}, error) {
 		envMap = make(map[string]interface{})
 	}
 	envMap["PROVISIONER_VERSION"] = w.client.AppVersion + "-" + w.client.Commit
+	if w.pat != "" {
+		envMap["K8SHELL_PAT_TOKEN"] = w.pat
+	}
 	if w.blueprint.Metadata.RepoName != "" {
 		envMap["GIT_ADDRESS"] = w.blueprint.Metadata.RepoAddress
 		envMap["GIT_REPOOWNER"] = w.blueprint.Metadata.RepoOwner
