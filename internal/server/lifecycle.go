@@ -261,7 +261,7 @@ func (p *ProvisionerService) deleteUserWorkspaces(ctx context.Context, username 
 
 		pod := &pods[i]
 		name := pod.Name
-		if err := ws.DeleteWorkspacePod(ctx, p.server.helm, p.server.Identity, p.server.config, pod); err != nil {
+		if err := ws.DeleteWorkspacePod(ctx, p.server.helm, pod); err != nil {
 			if errors.Is(err, ws.ErrLockAlreadyHeld) {
 				p.log.Warn().Msgf("Workspace %s for user %s is already being deleted, skipping", name, username)
 				continue

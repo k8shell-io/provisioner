@@ -410,6 +410,22 @@ func NewWorkspaceForEject(name string, helmClient *helm.Client) (*Workspace, err
 	}, nil
 }
 
+// NewWorkspaceForUninstall creates a minimal workspace object sufficient to
+// call Uninstall. Only the workspace name and helm client are required; no
+// identity lookup is performed, since Uninstall only needs the Helm release
+// name. This matters for cleanup flows that run after the owning user has
+// already been deleted, where an identity lookup would fail.
+func NewWorkspaceForUninstall(name string, helmClient *helm.Client) (*Workspace, error) {
+	if name == "" {
+		return nil, fmt.Errorf("workspace name is required")
+	}
+	return &Workspace{
+		Name:   name,
+		log:    log.NewLogger("workspace"),
+		client: helmClient,
+	}, nil
+}
+
 // NewWorkspace creates a new workspace with the specified Helm chart
 func NewWorkspace(
 	workspaceName string,

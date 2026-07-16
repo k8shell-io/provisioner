@@ -9,8 +9,6 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/k8shell-io/common/pkg/api/client/identity"
-	"github.com/k8shell-io/provisioner/internal/config"
 	"github.com/k8shell-io/provisioner/internal/helm"
 	corev1 "k8s.io/api/core/v1"
 )
@@ -21,18 +19,20 @@ import (
 // deleting and releases it when done, mirroring the single-workspace delete
 // path so concurrent requests for the same workspace stay serialised.
 //
-// If that lock is already held — e.g. a concurrent DeleteWorkspace call for
-// the same workspace is in flight — it returns ErrLockAlreadyHeld so bulk
-// callers can skip the workspace and continue rather than fail the batch.
-func DeleteWorkspacePod(ctx context.Context, helmClient *helm.Client, identityClient *identity.IdentityClient,
-	cfg *config.Config, pod *corev1.Pod) error {
-
+// Unlike the single-workspace DeleteWorkspace RPC, this does not look up the
+// owning user's identity record — it is used by user-cleanup flows that run
+// after the user has already been deleted, where that lookup would fail.
+//
+// If the workspace's lock is already held — e.g. a concurrent DeleteWorkspace
+// call for the same workspace is in flight — it returns ErrLockAlreadyHeld so
+// bulk callers can skip the workspace and continue rather than fail the batch.
+func DeleteWorkspacePod(ctx context.Context, helmClient *helm.Client, pod *corev1.Pod) error {
 	if pod.Labels[helm.LabelInjected] == "true" {
 		return ejectWorkspacePod(ctx, helmClient, pod)
 	}
 
 	name := pod.Name
-	w, err := NewWorkspaceFromHelmRelease(ctx, name, helmClient, identityClient, cfg)
+	w, err := NewWorkspaceForUninstall(name, helmClient)
 	if err != nil {
 		return err
 	}
