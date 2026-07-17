@@ -175,6 +175,60 @@ func (l *WorkspaceLock) isLeaseAvailable(lease *coordinationv1.Lease) bool {
 	return time.Now().After(expireTime)
 }
 
+// Renew extends the lease's RenewTime, keeping it from expiring while this
+// instance still holds it. It returns ErrLockAlreadyHeld if another holder
+// has taken over the lease (e.g. because it expired and a different replica
+// acquired it before this renewal ran).
+func (l *WorkspaceLock) Renew(ctx context.Context) error {
+	leaseClient := l.client.CoordinationV1().Leases(l.namespace)
+
+	lease, err := leaseClient.Get(ctx, l.leaseName, metav1.GetOptions{})
+	if err != nil {
+		return fmt.Errorf("failed to get lease for renewal: %w", err)
+	}
+
+	if lease.Spec.HolderIdentity == nil || *lease.Spec.HolderIdentity != l.holderID {
+		return ErrLockAlreadyHeld
+	}
+
+	now := metav1.NewMicroTime(time.Now())
+	lease.Spec.RenewTime = &now
+
+	if _, err := leaseClient.Update(ctx, lease, metav1.UpdateOptions{}); err != nil {
+		return fmt.Errorf("failed to renew lease: %w", err)
+	}
+
+	return nil
+}
+
+// KeepAlive renews the lease every interval until ctx is cancelled or a
+// renewal fails, at which point it sends the failure on the returned channel
+// and stops. Callers holding a lock across a long-running operation should
+// watch this channel and abort if it fires, since it means the lock may no
+// longer be exclusively held.
+func (l *WorkspaceLock) KeepAlive(ctx context.Context, interval time.Duration) <-chan error {
+	lost := make(chan error, 1)
+
+	go func() {
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				if err := l.Renew(ctx); err != nil {
+					lost <- err
+					return
+				}
+			}
+		}
+	}()
+
+	return lost
+}
+
 // Release deletes the Kubernetes Lease if this instance holds it. It is a no-op
 // when the lease does not exist or is held by a different instance.
 func (l *WorkspaceLock) Release(ctx context.Context) error {

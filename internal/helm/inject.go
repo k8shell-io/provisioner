@@ -48,6 +48,14 @@ const (
 
 	// AnnotationUserStr holds the base64-encoded canonical user string on a workspace pod.
 	AnnotationUserStr = "k8shell.io/userstr"
+
+	// LabelStopRequested is stamped on a workspace pod immediately before
+	// Workspace.StopPod deletes it, so the pod still carries the label during
+	// its graceful-termination window. AnalyzePod uses its presence to report
+	// WorkspaceStatusStopping instead of WorkspaceStatusTerminating, since the
+	// Helm release (and the rest of the workspace's resources) is left intact
+	// rather than being torn down.
+	LabelStopRequested = "k8shell.io/stop-requested"
 )
 
 // InjectionState is the structured payload stored in AnnotationInjectionState.
@@ -171,9 +179,10 @@ func (c *Client) InjectionSpecFromTemplate(ctx context.Context,
 	prefix := workspaceCanonicalId + "-"
 
 	tlsSecretName := workspaceCanonicalId + "-tls"
+	patSecretName := workspaceCanonicalId + "-pat"
 	skipVolumes := make(map[string]bool)
 	for _, v := range pod.Spec.Volumes {
-		if v.Secret != nil && v.Secret.SecretName != tlsSecretName {
+		if v.Secret != nil && v.Secret.SecretName != tlsSecretName && v.Secret.SecretName != patSecretName {
 			skipVolumes[v.Name] = true
 		}
 	}
@@ -437,6 +446,9 @@ func (c *Client) DeleteNamespacedWorkspaceResources(ctx context.Context, namespa
 	if err := kc.CoreV1().ConfigMaps(namespace).DeleteCollection(ctx, deleteOpts, listOpts); err != nil && !k8serrors.IsNotFound(err) {
 		return fmt.Errorf("failed to delete configmaps for canonical-id %s: %w", canonicalId, err)
 	}
+	if err := kc.CoreV1().Secrets(namespace).DeleteCollection(ctx, deleteOpts, listOpts); err != nil && !k8serrors.IsNotFound(err) {
+		return fmt.Errorf("failed to delete secrets for canonical-id %s: %w", canonicalId, err)
+	}
 	pvcs, err := kc.CoreV1().PersistentVolumeClaims(namespace).List(ctx, listOpts)
 	if err != nil && !k8serrors.IsNotFound(err) {
 		return fmt.Errorf("failed to list PVCs for canonical-id %s: %w", canonicalId, err)
@@ -545,6 +557,33 @@ func (c *Client) applyGenericResource(ctx context.Context, namespace, key, doc s
 	case "Certificate":
 		if err := c.applyCertificate(ctx, namespace, doc, extraLabels); err != nil {
 			return fmt.Errorf("failed to apply Certificate %s: %w", meta.Metadata.Name, err)
+		}
+
+	case "Secret":
+		var secret corev1.Secret
+		if err := sigsyaml.Unmarshal([]byte(doc), &secret); err != nil {
+			return fmt.Errorf("failed to decode Secret %s: %w", meta.Metadata.Name, err)
+		}
+		secret.Namespace = namespace
+		if secret.Labels == nil {
+			secret.Labels = make(map[string]string)
+		}
+		for k, v := range extraLabels {
+			secret.Labels[k] = v
+		}
+		existing, err := c.kubeClient.CoreV1().Secrets(namespace).Get(ctx, secret.Name, metav1.GetOptions{})
+		if err != nil {
+			if !k8serrors.IsNotFound(err) {
+				return fmt.Errorf("failed to get Secret %s: %w", secret.Name, err)
+			}
+			if _, err := c.kubeClient.CoreV1().Secrets(namespace).Create(ctx, &secret, metav1.CreateOptions{}); err != nil {
+				return fmt.Errorf("failed to create Secret %s: %w", secret.Name, err)
+			}
+		} else {
+			secret.ResourceVersion = existing.ResourceVersion
+			if _, err := c.kubeClient.CoreV1().Secrets(namespace).Update(ctx, &secret, metav1.UpdateOptions{}); err != nil {
+				return fmt.Errorf("failed to update Secret %s: %w", secret.Name, err)
+			}
 		}
 
 	default:

@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/k8shell-io/common/pkg/models"
+	"github.com/k8shell-io/provisioner/internal/helm"
 	"github.com/rs/zerolog"
 	corev1 "k8s.io/api/core/v1"
 	k8serrors "k8s.io/apimachinery/pkg/api/errors"
@@ -29,6 +30,7 @@ const (
 	StageInitializing PodLifecycleStage = "Initializing"
 	StageStarting     PodLifecycleStage = "Starting"
 	StageRunning      PodLifecycleStage = "Running"
+	StageStopping     PodLifecycleStage = "Stopping"
 	StageTerminating  PodLifecycleStage = "Terminating"
 	StageStopped      PodLifecycleStage = "Stopped"
 	StageFailed       PodLifecycleStage = "Failed"
@@ -80,6 +82,8 @@ func stageToStatus(stage PodLifecycleStage) models.WorkspaceStatusMessage {
 		return models.WorkspaceStatusPulling
 	case StageRunning:
 		return models.WorkspaceStatusRunning
+	case StageStopping:
+		return models.WorkspaceStatusStopping
 	case StageTerminating:
 		return models.WorkspaceStatusTerminating
 	case StageStopped:
@@ -148,11 +152,17 @@ func AnalyzePod(pod *corev1.Pod, events []corev1.Event, crashLoopThreshold int32
 	lastFail := podLastFailure(pod)
 
 	if pod.DeletionTimestamp != nil {
+		stage := StageTerminating
+		message := "Workspace is terminating"
+		if pod.Labels[helm.LabelStopRequested] == "true" {
+			stage = StageStopping
+			message = "Workspace is stopping"
+		}
 		return PodStateSnapshot{
 			Created:         pod.CreationTimestamp.Time,
-			Stage:           StageTerminating,
-			Status:          stageToStatus(StageTerminating),
-			Message:         "Workspace is terminating",
+			Stage:           stage,
+			Status:          stageToStatus(stage),
+			Message:         message,
 			Restarts:        restarts,
 			LastFailMessage: lastFail,
 			Events:          podEvents,
