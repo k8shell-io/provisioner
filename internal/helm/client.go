@@ -376,7 +376,15 @@ func (c *Client) PodFromRelease(releaseName string) (*corev1.Pod, error) {
 	if err != nil {
 		return nil, err
 	}
+	return PodManifestFromRelease(rel)
+}
 
+// PodManifestFromRelease extracts the Pod object from an already-fetched Helm
+// release's stored manifest (e.g. from List/ListWithSelector), without an
+// extra round-trip to Helm's release storage. Used to recover a workspace's
+// labels, annotations and spec after its live pod has been deleted (StopPod)
+// while the Helm release itself is left installed.
+func PodManifestFromRelease(rel *release.Release) (*corev1.Pod, error) {
 	for _, doc := range strings.Split(rel.Manifest, "\n---") {
 		doc = strings.TrimSpace(doc)
 		if doc == "" || !strings.Contains(doc, "kind: Pod") {
@@ -384,7 +392,7 @@ func (c *Client) PodFromRelease(releaseName string) (*corev1.Pod, error) {
 		}
 		var pod corev1.Pod
 		if err := sigsyaml.Unmarshal([]byte(doc), &pod); err != nil {
-			return nil, fmt.Errorf("failed to decode pod manifest from release %s: %w", releaseName, err)
+			return nil, fmt.Errorf("failed to decode pod manifest from release %s: %w", rel.Name, err)
 		}
 		if pod.Kind == "Pod" {
 			pod.ResourceVersion = ""
@@ -394,7 +402,7 @@ func (c *Client) PodFromRelease(releaseName string) (*corev1.Pod, error) {
 			return &pod, nil
 		}
 	}
-	return nil, fmt.Errorf("pod not found in release %s manifest", releaseName)
+	return nil, fmt.Errorf("pod not found in release %s manifest", rel.Name)
 }
 
 // UpdatePATSecret refreshes the token key of a workspace's PAT secret

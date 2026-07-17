@@ -42,6 +42,25 @@ func DeleteWorkspacePAT(ctx context.Context, identityClient *identity.IdentityCl
 	return nil
 }
 
+// MintPAT creates a fresh personal access token for the workspace's owning
+// user via the Identity service, stores it on the workspace (see SetPAT) so
+// it is picked up by Values()/RefreshPATSecret, and returns the token. Used
+// before (re)creating a workspace pod, since the previous token is deleted
+// when a workspace is stopped (see DeletePAT).
+func (w *Workspace) MintPAT(ctx context.Context, scopes []string) (string, error) {
+	resp, err := w.identify.CreateAccessToken(ctx, &identityv1.CreateAccessTokenRequest{
+		Username: w.user.Username,
+		Name:     w.canonicalId,
+		Scopes:   scopes,
+		Renew:    true,
+	})
+	if err != nil {
+		return "", fmt.Errorf("failed to create PAT for workspace %s: %w", w.Name, err)
+	}
+	w.SetPAT(resp.GetToken())
+	return resp.GetToken(), nil
+}
+
 // DeleteWorkspacePATFromLabels deletes a workspace's PAT using the
 // username/canonical-id labels already present on its pod (or injected
 // workload pod template). It is used by cleanup paths that intentionally

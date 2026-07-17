@@ -48,6 +48,14 @@ const (
 
 	// AnnotationUserStr holds the base64-encoded canonical user string on a workspace pod.
 	AnnotationUserStr = "k8shell.io/userstr"
+
+	// LabelStopRequested is stamped on a workspace pod immediately before
+	// Workspace.StopPod deletes it, so the pod still carries the label during
+	// its graceful-termination window. AnalyzePod uses its presence to report
+	// WorkspaceStatusStopping instead of WorkspaceStatusTerminating, since the
+	// Helm release (and the rest of the workspace's resources) is left intact
+	// rather than being torn down.
+	LabelStopRequested = "k8shell.io/stop-requested"
 )
 
 // InjectionState is the structured payload stored in AnnotationInjectionState.

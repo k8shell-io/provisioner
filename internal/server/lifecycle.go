@@ -10,6 +10,7 @@ import (
 	"time"
 
 	provisionerv1 "github.com/k8shell-io/common/pkg/api/gen/go/provisioner/v1"
+	"github.com/k8shell-io/common/pkg/models"
 	"github.com/k8shell-io/provisioner/internal/helm"
 	ws "github.com/k8shell-io/provisioner/internal/workspace"
 	"google.golang.org/grpc/codes"
@@ -372,6 +373,88 @@ func (p *ProvisionerService) StopWorkspace(ctx context.Context,
 	return &provisionerv1.StopWorkspaceResponse{
 		Message: fmt.Sprintf("Successfully stopped workspace %s", name),
 	}, nil
+}
+
+// StartWorkspaceStream resumes a previously stopped workspace: it mints a
+// fresh PAT (the previous one was deleted on stop) and recreates the pod from
+// the existing Helm release, streaming progress the same way
+// ProvisionWorkspaceStream does. Calling it on an already-running workspace
+// is rejected with AlreadyExists, mirroring ProvisionWorkspaceStream.
+func (p *ProvisionerService) StartWorkspaceStream(
+	req *provisionerv1.StartWorkspaceRequest,
+	stream provisionerv1.ProvisionerService_StartWorkspaceStreamServer,
+) error {
+	ctx := stream.Context()
+	msgStream := provisionHandshakeSender{stream}
+
+	name := req.Workspace
+	if name == "" {
+		return p.sendHandshakeErr(msgStream, "n/a", status.Errorf(codes.InvalidArgument, "workspace name is required"))
+	}
+
+	if _, pod, findErr := ws.FindWorkspace(ctx, p.server.helm, name, p.server.config.InjectNamespaces); findErr == nil && pod.Labels[helm.LabelInjected] == "true" {
+		return p.sendHandshakeErr(msgStream, name, status.Errorf(codes.FailedPrecondition,
+			"workspace %s is injected into a deployment and cannot be started", name))
+	}
+
+	workspace, err := ws.NewWorkspaceFromHelmRelease(ctx, name, p.server.helm, p.server.Identity, p.server.config)
+	if err != nil {
+		return p.sendHandshakeErr(msgStream, name, convertToGRPCError(err))
+	}
+
+	exists, _, err := workspace.ExistsAndRunning(ctx)
+	if err != nil {
+		return p.sendHandshakeErr(msgStream, name, status.Errorf(codes.Internal,
+			"Failed to check if workspace %s can be started: %v", name, err))
+	}
+	if exists {
+		return p.sendHandshakeErr(msgStream, name, status.Errorf(codes.AlreadyExists,
+			"Workspace %s already exists and is running", name))
+	}
+
+	if _, err := workspace.MintPAT(ctx, PAT_SCOPES); err != nil {
+		return p.sendHandshakeErr(msgStream, name, status.Errorf(codes.Internal,
+			"Failed to create PAT for workspace %s: %v", name, err))
+	}
+
+	timeout := int(req.Timeout)
+	if timeout <= 0 {
+		timeout = 20
+	}
+
+	var job *ProvisionJobServer
+	if p.server.provisionJobsKV != nil {
+		if workspace.JobId != "" {
+			if existing, loadErr := LoadProvisionJob(p.server.provisionJobsKV, workspace.JobId, p.log); loadErr == nil {
+				job = existing
+			} else {
+				p.log.Debug().Err(loadErr).Msgf(
+					"No reusable provision job %s for workspace %s, creating a new one", workspace.JobId, name)
+			}
+		}
+		if job == nil {
+			job = NewProvisionJob(workspace.Name, workspace.Username(), p.server.provisionJobsKV, p.log)
+			workspace.SetJobId(job.ID)
+		}
+		job.SetStatus(models.ProvisionJobRunning)
+	}
+
+	if err := stream.Send(&provisionerv1.ProvisionWorkspaceResponse{
+		Data: &provisionerv1.ProvisionWorkspaceResponse_Handshake{Handshake: &provisionerv1.HandshakeResponse{
+			Workspace: workspace.Name,
+			Jobid:     workspace.JobId,
+		}},
+	}); err != nil {
+		return fmt.Errorf("failed to send handshake response: %w", err)
+	}
+
+	return p.runWorkspaceStream(ctx, stream, workspace.Name, job, req.SendProgress, req.SendEvents,
+		func(messages chan models.WorkspaceStreamEvent) (*models.WorkspaceStatus, error) {
+			return workspace.Provision(ctx, &ws.ProvisionOptions{
+				Timeout:  timeout,
+				Messages: messages,
+			})
+		})
 }
 
 // EjectWorkspace removes a previously injected workspace from a workload and

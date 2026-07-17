@@ -35,6 +35,8 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	k8sErrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
+	corev1client "k8s.io/client-go/kubernetes/typed/core/v1"
 )
 
 // Default page size for GetWorkspaces pagination when limit is not specified or invalid
@@ -211,54 +213,47 @@ func GetWorkspaces(
 	out := make([]*models.WorkspaceDetails, 0)
 	pods := make([]corev1.Pod, 0)
 
-	if opts.WorkspaceName != "" && opts.InjectWorkload == "" {
-		p, err := v1.Pods(targetNamespace).Get(ctx, opts.WorkspaceName, metav1.GetOptions{})
-		if err != nil && !apierrors.IsNotFound(err) {
-			return nil, fmt.Errorf("failed to get workspace pod %q: %w", opts.WorkspaceName, err)
-		}
-		if err == nil && podMatchesWorkspaceFilters(p, opts, false) {
-			if d := workspaceDetailsFromPod(p); d != nil {
-				out = append(out, d)
-				pods = append(pods, *p)
-			}
-		}
-	} else if opts.InjectWorkload == "" {
-		labels := map[string][]string{}
-		if len(opts.Usernames) > 0 {
-			labels[helm.LabelUsername] = opts.Usernames
-		}
-		if opts.Organization != "" {
-			labels[helm.LabelOrganization] = []string{opts.Organization}
-		}
-		if opts.Blueprint != "" {
-			labels[helm.LabelBlueprint] = []string{opts.Blueprint}
-		}
-		if opts.CanonicalId != "" {
-			labels[helm.LabelCanonicalId] = []string{opts.CanonicalId}
-		}
-		selector := getSelector(labels)
+	// The live pod lookup and the stopped-release lookup are independent Kubernetes/Helm
+	// calls, so they run concurrently and are merged below to keep latency down.
+	if opts.InjectWorkload == "" {
+		var (
+			liveDetails, stoppedDetails []*models.WorkspaceDetails
+			livePods, stoppedPods       []corev1.Pod
+			liveErr, stoppedErr         error
+		)
 
-		podList, err := v1.Pods(targetNamespace).List(ctx, metav1.ListOptions{
-			LabelSelector: selector,
-		})
-		if err != nil {
-			if strings.Contains(err.Error(), "unable to parse") {
-				return nil, fmt.Errorf("%w: %s", models.ErrInvalidParameters, selector)
-			}
-			return nil, fmt.Errorf("failed to list workspace pods: %w", err)
+		var wg sync.WaitGroup
+		wg.Add(2)
+		go func() {
+			defer wg.Done()
+			liveDetails, livePods, liveErr = liveStandaloneWorkspaces(ctx, v1, targetNamespace, opts)
+		}()
+		go func() {
+			defer wg.Done()
+			stoppedDetails, stoppedPods, stoppedErr = stoppedWorkspaces(helmClient, targetNamespace, opts)
+		}()
+		wg.Wait()
+
+		if liveErr != nil {
+			return nil, liveErr
+		}
+		if stoppedErr != nil {
+			return nil, stoppedErr
 		}
 
-		for i := range podList.Items {
-			p := &podList.Items[i]
-			if !podMatchesWorkspaceFilters(p, opts, false) {
-				continue
-			}
-			d := workspaceDetailsFromPod(p)
-			if d == nil {
+		out = append(out, liveDetails...)
+		pods = append(pods, livePods...)
+
+		liveNames := make(map[string]bool, len(liveDetails))
+		for _, d := range liveDetails {
+			liveNames[d.Name] = true
+		}
+		for i, d := range stoppedDetails {
+			if liveNames[d.Name] {
 				continue
 			}
 			out = append(out, d)
-			pods = append(pods, *p)
+			pods = append(pods, stoppedPods[i])
 		}
 	}
 
@@ -368,6 +363,138 @@ func GetWorkspaces(
 		Workspaces: out,
 		Pods:       pods,
 	}, nil
+}
+
+// liveStandaloneWorkspaces lists standalone workspaces backed by a currently
+// running pod, either by exact name (opts.WorkspaceName) or by label selector.
+func liveStandaloneWorkspaces(
+	ctx context.Context,
+	v1 corev1client.CoreV1Interface,
+	targetNamespace string,
+	opts GetWorkspacesOptions,
+) ([]*models.WorkspaceDetails, []corev1.Pod, error) {
+	out := make([]*models.WorkspaceDetails, 0)
+	pods := make([]corev1.Pod, 0)
+
+	if opts.WorkspaceName != "" {
+		p, err := v1.Pods(targetNamespace).Get(ctx, opts.WorkspaceName, metav1.GetOptions{})
+		if err != nil && !apierrors.IsNotFound(err) {
+			return nil, nil, fmt.Errorf("failed to get workspace pod %q: %w", opts.WorkspaceName, err)
+		}
+		if err == nil && podMatchesWorkspaceFilters(p, opts, false) {
+			if d := workspaceDetailsFromPod(p); d != nil {
+				out = append(out, d)
+				pods = append(pods, *p)
+			}
+		}
+		return out, pods, nil
+	}
+
+	labels := map[string][]string{}
+	if len(opts.Usernames) > 0 {
+		labels[helm.LabelUsername] = opts.Usernames
+	}
+	if opts.Organization != "" {
+		labels[helm.LabelOrganization] = []string{opts.Organization}
+	}
+	if opts.Blueprint != "" {
+		labels[helm.LabelBlueprint] = []string{opts.Blueprint}
+	}
+	if opts.CanonicalId != "" {
+		labels[helm.LabelCanonicalId] = []string{opts.CanonicalId}
+	}
+	selector := getSelector(labels)
+
+	podList, err := v1.Pods(targetNamespace).List(ctx, metav1.ListOptions{
+		LabelSelector: selector,
+	})
+	if err != nil {
+		if strings.Contains(err.Error(), "unable to parse") {
+			return nil, nil, fmt.Errorf("%w: %s", models.ErrInvalidParameters, selector)
+		}
+		return nil, nil, fmt.Errorf("failed to list workspace pods: %w", err)
+	}
+
+	for i := range podList.Items {
+		p := &podList.Items[i]
+		if !podMatchesWorkspaceFilters(p, opts, false) {
+			continue
+		}
+		d := workspaceDetailsFromPod(p)
+		if d == nil {
+			continue
+		}
+		out = append(out, d)
+		pods = append(pods, *p)
+	}
+
+	return out, pods, nil
+}
+
+// stoppedWorkspaces discovers standalone workspaces whose Helm release is
+// still installed but whose pod has been deleted by StopPod, so they were
+// missed by the live pod listing above. It reconstructs each pod from the
+// release's stored manifest and reports the workspace with status Stopped.
+// Callers dedupe the result against the live pod listing by name, since a pod
+// may start between the two concurrent lookups.
+func stoppedWorkspaces(
+	helmClient *helm.Client,
+	targetNamespace string,
+	opts GetWorkspacesOptions,
+) ([]*models.WorkspaceDetails, []corev1.Pod, error) {
+	labels := map[string][]string{
+		"app.kubernetes.io/name": {helm.WORKSPACE_CHART_NAME},
+	}
+	if len(opts.Usernames) > 0 {
+		labels[helm.LabelUsername] = opts.Usernames
+	}
+	if opts.Organization != "" {
+		labels[helm.LabelOrganization] = []string{opts.Organization}
+	}
+	if opts.Blueprint != "" {
+		labels[helm.LabelBlueprint] = []string{opts.Blueprint}
+	}
+	if opts.WorkspaceName != "" {
+		labels["app.kubernetes.io/instance"] = []string{opts.WorkspaceName}
+	}
+	selector := getSelector(labels)
+
+	releases, err := helmClient.ListWithSelector(targetNamespace, selector)
+	if err != nil {
+		if strings.Contains(err.Error(), "unable to parse") {
+			return nil, nil, fmt.Errorf("%w: %s", models.ErrInvalidParameters, selector)
+		}
+		return nil, nil, fmt.Errorf("failed to list workspace releases: %w", err)
+	}
+
+	out := make([]*models.WorkspaceDetails, 0)
+	pods := make([]corev1.Pod, 0)
+	for _, rel := range releases {
+		pod, err := helm.PodManifestFromRelease(rel)
+		if err != nil {
+			continue
+		}
+		if !podMatchesWorkspaceFilters(pod, opts, false) {
+			continue
+		}
+		if opts.CanonicalId != "" && pod.Labels[helm.LabelCanonicalId] != opts.CanonicalId {
+			continue
+		}
+
+		created := rel.Info.LastDeployed.Time
+		if created.IsZero() {
+			created = rel.Info.FirstDeployed.Time
+		}
+
+		d := workspaceDetailsFromStoppedPod(pod, created)
+		if d == nil {
+			continue
+		}
+		out = append(out, d)
+		pods = append(pods, *pod)
+	}
+
+	return out, pods, nil
 }
 
 // FindworkspaceByName finds a workspace by its name using Helm client and returns the corresponding release
@@ -480,9 +607,11 @@ func NewWorkspaceFromHelmRelease(ctx context.Context, name string, helmClient *h
 	blueprint.Name = blueprintName
 
 	canonicalId, _ := values["__canonicalid__"].(string)
+	jobId, _ := values["__jobid__"].(string)
 
 	ws := &Workspace{
 		Name:        name,
+		JobId:       jobId,
 		log:         log.NewLogger("workspace"),
 		client:      helmClient,
 		identify:    identityClient,
@@ -499,6 +628,15 @@ func NewWorkspaceFromHelmRelease(ctx context.Context, name string, helmClient *h
 // embedded in Helm labels and reported back to clients.
 func (w *Workspace) SetJobId(jobId string) {
 	w.JobId = jobId
+}
+
+// Username returns the username of the workspace's owning user, or "" if the
+// workspace was constructed without a user lookup (e.g. NewWorkspaceForUninstall).
+func (w *Workspace) Username() string {
+	if w.user == nil {
+		return ""
+	}
+	return w.user.Username
 }
 
 // SetBlueprintChain stores the inheritance chain for this workspace's blueprint.
@@ -783,10 +921,19 @@ func (w *Workspace) Uninstall(ctx context.Context, timeout time.Duration, wait b
 }
 
 // StopPod deletes only the workspace pod, leaving the Helm release and all
-// other resources (PVCs, secrets, ConfigMaps) intact.
+// other resources (PVCs, secrets, ConfigMaps) intact. The pod is labeled
+// immediately before deletion so it carries the label through its
+// graceful-termination window, letting AnalyzePod report
+// WorkspaceStatusStopping instead of WorkspaceStatusTerminating.
 func (w *Workspace) StopPod(ctx context.Context) error {
-	err := w.client.KubeClient().CoreV1().Pods(w.client.TargetNamespace()).Delete(ctx, w.Name, metav1.DeleteOptions{})
-	if err != nil {
+	pods := w.client.KubeClient().CoreV1().Pods(w.client.TargetNamespace())
+
+	patch := []byte(fmt.Sprintf(`{"metadata":{"labels":{%q:"true"}}}`, helm.LabelStopRequested))
+	if _, err := pods.Patch(ctx, w.Name, types.MergePatchType, patch, metav1.PatchOptions{}); err != nil && !k8sErrors.IsNotFound(err) {
+		return fmt.Errorf("failed to label workspace pod %s as stopping: %w", w.Name, err)
+	}
+
+	if err := pods.Delete(ctx, w.Name, metav1.DeleteOptions{}); err != nil {
 		if k8sErrors.IsNotFound(err) {
 			return nil
 		}
@@ -798,6 +945,40 @@ func (w *Workspace) StopPod(ctx context.Context) error {
 func workspaceDetailsFromPod(
 	pod *corev1.Pod,
 ) *models.WorkspaceDetails {
+	d := workspaceDetailsCore(pod)
+	if d == nil {
+		return nil
+	}
+	snap := AnalyzePod(pod, nil, defaultCrashLoopThreshold)
+	d.WorkspaceStatus = *snapToWorkspaceStatus(&snap)
+	return d
+}
+
+// workspaceDetailsFromStoppedPod builds workspace details for a workspace whose
+// Helm release is still installed but whose pod has been deleted via StopPod.
+// pod is reconstructed from the release's stored manifest (see
+// helm.PodManifestFromRelease) rather than a live cluster object, so it carries
+// no runtime status; the status is reported directly as Stopped instead of
+// being derived by AnalyzePod.
+func workspaceDetailsFromStoppedPod(pod *corev1.Pod, created time.Time) *models.WorkspaceDetails {
+	d := workspaceDetailsCore(pod)
+	if d == nil {
+		return nil
+	}
+	d.WorkspaceStatus = models.WorkspaceStatus{
+		Created: created,
+		Status:  models.WorkspaceStatusStopped,
+		Message: "Workspace pod is stopped",
+	}
+	return d
+}
+
+// workspaceDetailsCore extracts the fields of WorkspaceDetails derived purely
+// from pod metadata and spec (labels, annotations, containers, volumes),
+// leaving WorkspaceStatus for the caller to fill in. It works equally for a
+// live cluster pod and for a pod reconstructed from a stored Helm release
+// manifest, since both carry the same labels/annotations/spec.
+func workspaceDetailsCore(pod *corev1.Pod) *models.WorkspaceDetails {
 	if pod == nil {
 		return nil
 	}
@@ -845,25 +1026,23 @@ func workspaceDetailsFromPod(
 	tlsEnabled := podMountsSecret(pod, canonicalId+"-tls")
 	identity := canUser.Identity()
 
-	snap := AnalyzePod(pod, nil, defaultCrashLoopThreshold)
 	return &models.WorkspaceDetails{
-		WorkspaceStatus: *snapToWorkspaceStatus(&snap),
-		Name:            pod.Name,
-		Username:        pod.Labels[helm.LabelUsername],
-		RepoOwner:       identity.RepoOwner(),
-		RepoName:        identity.RepoName(),
-		RepoRef:         identity.RepoRef(),
-		Blueprint:       pod.Labels[helm.LabelBlueprint],
-		Organization:    pod.Labels[helm.LabelOrganization],
-		JobId:           pod.Labels[helm.LabelJobId],
-		ServerName:      pod.Labels[helm.LabelCanonicalId] + "." + pod.Namespace,
-		PodIP:           pod.Status.PodIP,
-		Port:            port,
-		TLSEnabled:      tlsEnabled,
-		AppVersion:      appVersion,
-		CPU:             cpu,
-		Memory:          memory,
-		Hostname:        podHostname(pod),
-		Namespace:       pod.Namespace,
+		Name:         pod.Name,
+		Username:     pod.Labels[helm.LabelUsername],
+		RepoOwner:    identity.RepoOwner(),
+		RepoName:     identity.RepoName(),
+		RepoRef:      identity.RepoRef(),
+		Blueprint:    pod.Labels[helm.LabelBlueprint],
+		Organization: pod.Labels[helm.LabelOrganization],
+		JobId:        pod.Labels[helm.LabelJobId],
+		ServerName:   pod.Labels[helm.LabelCanonicalId] + "." + pod.Namespace,
+		PodIP:        pod.Status.PodIP,
+		Port:         port,
+		TLSEnabled:   tlsEnabled,
+		AppVersion:   appVersion,
+		CPU:          cpu,
+		Memory:       memory,
+		Hostname:     podHostname(pod),
+		Namespace:    pod.Namespace,
 	}
 }
