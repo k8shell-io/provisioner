@@ -397,6 +397,28 @@ func (c *Client) PodFromRelease(releaseName string) (*corev1.Pod, error) {
 	return nil, fmt.Errorf("pod not found in release %s manifest", releaseName)
 }
 
+// UpdatePATSecret refreshes the token key of a workspace's PAT secret
+// (named "<releaseName>-pat", rendered by the workspace chart) in place,
+// preserving its existing labels so it stays tracked by the owning Helm
+// release. This lets a rotated PAT be picked up by a pod that is recreated
+// directly from a stored release manifest (see Workspace.doStart), without
+// going through a full Helm install/upgrade.
+func (c *Client) UpdatePATSecret(ctx context.Context, releaseName, token string) error {
+	name := releaseName + "-pat"
+
+	existing, err := c.kubeClient.CoreV1().Secrets(c.targetNamespace).Get(ctx, name, metav1.GetOptions{})
+	if err != nil {
+		return fmt.Errorf("failed to get PAT secret %s: %w", name, err)
+	}
+
+	existing.Data = map[string][]byte{"token": []byte(token)}
+	existing.StringData = nil
+	if _, err := c.kubeClient.CoreV1().Secrets(c.targetNamespace).Update(ctx, existing, metav1.UpdateOptions{}); err != nil {
+		return fmt.Errorf("failed to update PAT secret %s: %w", name, err)
+	}
+	return nil
+}
+
 // GetRelease gets information about a specific release in a namespace
 func (c *Client) GetRelease(releaseName string) (*release.Release, error) {
 	actionConfig, err := c.createActionConfig(c.targetNamespace)

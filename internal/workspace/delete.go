@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/k8shell-io/common/pkg/api/client/identity"
 	"github.com/k8shell-io/provisioner/internal/helm"
 	corev1 "k8s.io/api/core/v1"
 )
@@ -21,14 +22,17 @@ import (
 //
 // Unlike the single-workspace DeleteWorkspace RPC, this does not look up the
 // owning user's identity record — it is used by user-cleanup flows that run
-// after the user has already been deleted, where that lookup would fail.
+// after the user has already been deleted, where that lookup would fail. The
+// workspace's PAT is still deleted, using only the username/canonical-id
+// labels already on pod, via identityClient (which may be nil if identity
+// cleanup should be skipped entirely, e.g. no identity client is configured).
 //
 // If the workspace's lock is already held — e.g. a concurrent DeleteWorkspace
 // call for the same workspace is in flight — it returns ErrLockAlreadyHeld so
 // bulk callers can skip the workspace and continue rather than fail the batch.
-func DeleteWorkspacePod(ctx context.Context, helmClient *helm.Client, pod *corev1.Pod) error {
+func DeleteWorkspacePod(ctx context.Context, helmClient *helm.Client, identityClient *identity.IdentityClient, pod *corev1.Pod) error {
 	if pod.Labels[helm.LabelInjected] == "true" {
-		return ejectWorkspacePod(ctx, helmClient, pod)
+		return ejectWorkspacePod(ctx, helmClient, identityClient, pod)
 	}
 
 	name := pod.Name
@@ -57,13 +61,17 @@ func DeleteWorkspacePod(ctx context.Context, helmClient *helm.Client, pod *corev
 		}
 	}()
 
+	if err := DeleteWorkspacePATFromLabels(ctx, identityClient, pod.Labels); err != nil {
+		w.log.Error().Err(err).Msgf("Failed to delete PAT for workspace %s", name)
+	}
+
 	if err := w.Uninstall(ctx, 10*time.Second, false, false); err != nil {
 		return fmt.Errorf("failed to delete workspace %s: %w", name, err)
 	}
 	return nil
 }
 
-func ejectWorkspacePod(ctx context.Context, helmClient *helm.Client, pod *corev1.Pod) error {
+func ejectWorkspacePod(ctx context.Context, helmClient *helm.Client, identityClient *identity.IdentityClient, pod *corev1.Pod) error {
 	name := pod.Name
 
 	owner, err := FindOwnerWorkload(ctx, helmClient.KubeClient(), pod)
@@ -79,6 +87,10 @@ func ejectWorkspacePod(ctx context.Context, helmClient *helm.Client, pod *corev1
 	w, err := NewWorkspaceForEject(canonicalId, helmClient)
 	if err != nil {
 		return fmt.Errorf("failed to prepare workspace %s for eject: %w", canonicalId, err)
+	}
+
+	if err := DeleteWorkspacePATFromLabels(ctx, identityClient, pod.Labels); err != nil {
+		w.log.Error().Err(err).Msgf("Failed to delete PAT for workspace %s", canonicalId)
 	}
 
 	if err := w.Eject(ctx, &EjectOptions{

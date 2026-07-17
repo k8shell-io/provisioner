@@ -67,6 +67,9 @@ func (p *ProvisionerService) DeleteWorkspace(ctx context.Context,
 			go func() {
 				time.Sleep(time.Duration(req.DelaySeconds) * time.Second)
 				p.log.Debug().Msgf("Starting async eject of workspace %s", name)
+				if delErr := ws.DeleteWorkspacePATFromLabels(bgCtx, p.server.Identity, pod.Labels); delErr != nil {
+					p.log.Error().Err(delErr).Msgf("Failed to delete PAT for workspace %s", name)
+				}
 				if ejectErr := workspace.Eject(bgCtx, ejectOpts); ejectErr != nil {
 					p.log.Error().Err(ejectErr).Msgf("Failed to eject workspace %s", name)
 				} else {
@@ -76,6 +79,9 @@ func (p *ProvisionerService) DeleteWorkspace(ctx context.Context,
 			return &provisionerv1.DeleteWorkspaceResponse{
 				Message: fmt.Sprintf("Request to eject the workspace %s was submitted", name),
 			}, nil
+		}
+		if delErr := ws.DeleteWorkspacePATFromLabels(ctx, p.server.Identity, pod.Labels); delErr != nil {
+			p.log.Error().Err(delErr).Msgf("Failed to delete PAT for workspace %s", name)
 		}
 		if err := workspace.Eject(ctx, ejectOpts); err != nil {
 			return nil, status.Errorf(codes.Internal, "failed to eject workspace %s: %v", name, err)
@@ -261,7 +267,7 @@ func (p *ProvisionerService) deleteUserWorkspaces(ctx context.Context, username 
 
 		pod := &pods[i]
 		name := pod.Name
-		if err := ws.DeleteWorkspacePod(ctx, p.server.helm, pod); err != nil {
+		if err := ws.DeleteWorkspacePod(ctx, p.server.helm, p.server.Identity, pod); err != nil {
 			if errors.Is(err, ws.ErrLockAlreadyHeld) {
 				p.log.Warn().Msgf("Workspace %s for user %s is already being deleted, skipping", name, username)
 				continue
@@ -331,6 +337,10 @@ func (p *ProvisionerService) StopWorkspace(ctx context.Context,
 			time.Sleep(time.Duration(req.DelaySeconds) * time.Second)
 			p.log.Debug().Msgf("Starting async stop of workspace pod %s", name)
 
+			if err := w.DeletePAT(bgCtx); err != nil {
+				p.log.Error().Err(err).Msgf("Failed to delete PAT for workspace %s", name)
+			}
+
 			if err := w.StopPod(bgCtx); err != nil {
 				p.log.Error().Err(err).Msgf("Failed to stop workspace pod %s", name)
 			} else {
@@ -349,6 +359,10 @@ func (p *ProvisionerService) StopWorkspace(ctx context.Context,
 			p.log.Error().Err(unlockErr).Msgf("Failed to release lock after stopping workspace %s", name)
 		}
 	}()
+
+	if err := w.DeletePAT(bgCtx); err != nil {
+		p.log.Error().Err(err).Msgf("Failed to delete PAT for workspace %s", name)
+	}
 
 	if err := w.StopPod(bgCtx); err != nil {
 		return nil, status.Errorf(codes.Internal, "Failed to stop workspace pod %s: %v", name, err)
@@ -395,6 +409,11 @@ func (p *ProvisionerService) EjectWorkspace(
 	timeout := int(req.TimeoutSeconds)
 	if timeout <= 0 {
 		timeout = 60
+	}
+
+	username := adapter.GetPodTemplate().Labels[helm.LabelUsername]
+	if delErr := ws.DeleteWorkspacePAT(ctx, p.server.Identity, username, workspaceCanonicalId); delErr != nil {
+		p.log.Error().Err(delErr).Msgf("Failed to delete PAT for workspace %s", workspaceCanonicalId)
 	}
 
 	if err := workspace.Eject(ctx, &ws.EjectOptions{

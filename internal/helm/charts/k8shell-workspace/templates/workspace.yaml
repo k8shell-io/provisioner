@@ -91,6 +91,11 @@ spec:
         value: {{ .Values.__user__.username }}
       - name: USEREMAIL
         value: {{ .Values.__user__.email }}
+      - name: K8SHELL_PAT_TOKEN
+        valueFrom:
+          secretKeyRef:
+            name: {{ .Release.Name }}-pat
+            key: token
       {{- if .Values.env }}
       {{- range $envName, $envValue := .Values.env }}            
       - name: {{ $envName }}
@@ -116,6 +121,9 @@ spec:
         readOnly: true
       - name: main-volume
         mountPath: /usr/local/k8shell/system
+        readOnly: true
+      - name: pat-secret
+        mountPath: /var/run/secrets/k8shell-pat
         readOnly: true
       {{- if .Values.storages }}
       {{- range $storageName, $storage := .Values.storages }}
@@ -233,6 +241,9 @@ spec:
       - key: __init_{{ printf "%02d" (add $index 1) }}_{{ $script.name }}
         path: __init_{{ printf "%02d" (add $index 1) }}_{{ $script.name }}
         {{- end }}
+  - name: pat-secret
+    secret:
+      secretName: {{ .Release.Name }}-pat
   {{- if .Values.storages }}
   {{- range $storageName, $storage := .Values.storages }}
   {{- if and $storage (kindIs "map" $storage) ($storage.enabled | default false) }}

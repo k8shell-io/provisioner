@@ -66,6 +66,7 @@ type Workspace struct {
 	workloadNamespace string
 	workloadKind      string
 	pat               string
+	canonicalId       string
 }
 
 // Values is a typed container for a Helm values map.
@@ -438,14 +439,15 @@ func NewWorkspace(
 ) (*Workspace, error) {
 
 	return &Workspace{
-		Name:      workspaceName,
-		log:       log.NewLogger("workspace"),
-		client:    helmClient,
-		identify:  identityClient,
-		blueprint: blueprint,
-		config:    config,
-		user:      user,
-		userStr:   userStr,
+		Name:        workspaceName,
+		log:         log.NewLogger("workspace"),
+		client:      helmClient,
+		identify:    identityClient,
+		blueprint:   blueprint,
+		config:      config,
+		user:        user,
+		userStr:     userStr,
+		canonicalId: userStr.CanonicalId(),
 	}, nil
 }
 
@@ -477,14 +479,17 @@ func NewWorkspaceFromHelmRelease(ctx context.Context, name string, helmClient *h
 	}
 	blueprint.Name = blueprintName
 
+	canonicalId, _ := values["__canonicalid__"].(string)
+
 	ws := &Workspace{
-		Name:      name,
-		log:       log.NewLogger("workspace"),
-		client:    helmClient,
-		identify:  identityClient,
-		blueprint: blueprint,
-		user:      user,
-		config:    config,
+		Name:        name,
+		log:         log.NewLogger("workspace"),
+		client:      helmClient,
+		identify:    identityClient,
+		blueprint:   blueprint,
+		user:        user,
+		config:      config,
+		canonicalId: canonicalId,
 	}
 
 	return ws, nil
@@ -523,6 +528,28 @@ func (w *Workspace) SetProvisionContext(mode authz.WorkspaceProvisionMode, workl
 // be surfaced to the workspace pod as the PAT_TOKEN env var by Values().
 func (w *Workspace) SetPAT(pat string) {
 	w.pat = pat
+}
+
+// RefreshPATSecret updates the workspace's PAT secret in the cluster to hold
+// the token currently set via SetPAT. It is used before re-creating a pod
+// directly from a stored Helm release manifest (see doStart), so the
+// recreated pod picks up a freshly rotated token without requiring a full
+// Helm reinstall.
+func (w *Workspace) RefreshPATSecret(ctx context.Context) error {
+	return w.client.UpdatePATSecret(ctx, w.Name, w.pat)
+}
+
+// DeletePAT deletes the personal access token minted for this workspace at
+// the Identity service, if one exists. It is a no-op (not an error) when
+// identity information is unavailable, e.g. for workspace objects built via
+// NewWorkspaceForUninstall/NewWorkspaceForEject for post-user-deletion
+// cleanup — callers on those paths should use DeleteWorkspacePAT directly
+// with data read from the workspace pod's labels instead.
+func (w *Workspace) DeletePAT(ctx context.Context) error {
+	if w.identify == nil || w.user == nil {
+		return nil
+	}
+	return DeleteWorkspacePAT(ctx, w.identify, w.user.Username, w.canonicalId)
 }
 
 func (w *Workspace) CreateLock() *WorkspaceLock {
@@ -649,9 +676,7 @@ func (w *Workspace) Values() (map[string]interface{}, error) {
 		envMap = make(map[string]interface{})
 	}
 	envMap["PROVISIONER_VERSION"] = w.client.AppVersion + "-" + w.client.Commit
-	if w.pat != "" {
-		envMap["K8SHELL_PAT_TOKEN"] = w.pat
-	}
+	values["__pat__"] = w.pat
 	if w.blueprint.Metadata.RepoName != "" {
 		envMap["GIT_ADDRESS"] = w.blueprint.Metadata.RepoAddress
 		envMap["GIT_REPOOWNER"] = w.blueprint.Metadata.RepoOwner
@@ -745,6 +770,10 @@ func (w *Workspace) Uninstall(ctx context.Context, timeout time.Duration, wait b
 				w.log.Error().Err(releaseErr).Msgf("Failed to release lock for workspace %s", w.Name)
 			}
 		}()
+	}
+
+	if err := w.DeletePAT(ctx); err != nil {
+		w.log.Error().Err(err).Msgf("Failed to delete PAT for workspace %s", w.Name)
 	}
 
 	if err := w.client.Uninstall(w.Name, int(timeout.Seconds()), wait); err != nil {

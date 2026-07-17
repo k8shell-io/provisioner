@@ -236,6 +236,14 @@ func (w *Workspace) doInstallation(ctx context.Context, opts *ProvisionOptions) 
 // doStart re-creates the workspace pod by extracting the pod manifest from the
 // stored Helm release and creating the pod directly via the Kubernetes API.
 func (w *Workspace) doStart(ctx context.Context, opts *ProvisionOptions) (*models.WorkspaceStatus, error) {
+	// Refresh the PAT secret before the pod is created: the pod manifest
+	// extracted from the release always references the secret by name, so
+	// updating the secret's contents here (rather than the manifest) is
+	// enough to hand the recreated pod the current, freshly rotated token.
+	if err := w.RefreshPATSecret(ctx); err != nil {
+		return nil, fmt.Errorf("failed to refresh PAT secret: %w", err)
+	}
+
 	pod, err := w.client.PodFromRelease(w.Name)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get pod manifest from release: %w", err)
