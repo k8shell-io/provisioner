@@ -15,5 +15,8 @@
     "go.testFlags": [
         "-v",
         "-count=1"
+    ],
+    "git.scanRepositories": [
+        "common"
     ]
 }

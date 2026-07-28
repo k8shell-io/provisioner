@@ -34,10 +34,18 @@ var PAT_SCOPES = []string{
 	"user:write:password:self",   // set password for workspace user
 }
 
+// workspaceEventStream is satisfied by any generated server-streaming handle
+// that streams ProvisionWorkspaceResponse messages (e.g. ProvisionWorkspaceStream
+// and StartWorkspaceStream), letting the handshake/event-loop plumbing below be
+// shared across those RPCs.
+type workspaceEventStream interface {
+	Send(*provisionerv1.ProvisionWorkspaceResponse) error
+}
+
 // sendProvisionEvent sends a ProvisionEvent over the stream and, if a job is
 // active, appends the event to the NATS KV provisioning job record.
 func (p *ProvisionerService) sendProvisionEvent(
-	stream provisionerv1.ProvisionerService_ProvisionWorkspaceStreamServer,
+	stream workspaceEventStream,
 	job *ProvisionJobServer,
 	event *provisionerv1.ProvisionEvent,
 ) error {
@@ -61,9 +69,9 @@ type handshakeErrSender interface {
 	sendHandshake(h *provisionerv1.HandshakeResponse) error
 }
 
-// provisionHandshakeSender wraps the provisioning stream to satisfy handshakeErrSender.
+// provisionHandshakeSender wraps a workspaceEventStream to satisfy handshakeErrSender.
 type provisionHandshakeSender struct {
-	s provisionerv1.ProvisionerService_ProvisionWorkspaceStreamServer
+	s workspaceEventStream
 }
 
 func (w provisionHandshakeSender) sendHandshake(h *provisionerv1.HandshakeResponse) error {
@@ -190,6 +198,40 @@ func (p *ProvisionerService) ProvisionWorkspaceStream(
 		return fmt.Errorf("failed to send handshake response: %w", err)
 	}
 
+	return p.runWorkspaceStream(ctx, stream, workspace.Name, job, req.SendProgress, req.SendEvents,
+		func(messages chan models.WorkspaceStreamEvent) (*models.WorkspaceStatus, error) {
+			if injectMode {
+				return workspace.Inject(ctx, &ws.InjectOptions{
+					Namespace:            workspaceNamespace,
+					WorkloadName:         workloadTargetName,
+					WorkloadKind:         workloadKind,
+					WorkspaceCanonicalId: canUserStr.CanonicalId(),
+					JobId:                job.ID,
+					Timeout:              timeout,
+					Messages:             messages,
+				})
+			}
+			return workspace.Provision(ctx, &ws.ProvisionOptions{
+				Timeout:  timeout,
+				Messages: messages,
+			})
+		})
+}
+
+// runWorkspaceStream drives the shared handshake-then-events protocol used by
+// ProvisionWorkspaceStream and StartWorkspaceStream: it runs runFn in a
+// goroutine, forwards status/event messages it sends on the messages channel
+// as ProvisionEvent stream messages (translating status transitions into
+// progress percentages when sendProgress is set), and emits a final status
+// event once runFn completes.
+func (p *ProvisionerService) runWorkspaceStream(
+	ctx context.Context,
+	stream workspaceEventStream,
+	workspaceName string,
+	job *ProvisionJobServer,
+	sendProgress, sendEvents bool,
+	runFn func(messages chan models.WorkspaceStreamEvent) (*models.WorkspaceStatus, error),
+) error {
 	messages := make(chan models.WorkspaceStreamEvent, 100)
 	done := make(chan *models.WorkspaceStatus)
 	errorChan := make(chan error)
@@ -201,25 +243,7 @@ func (p *ProvisionerService) ProvisionWorkspaceStream(
 		defer close(done)
 		defer close(errorChan)
 
-		var st *models.WorkspaceStatus
-		var runErr error
-		if injectMode {
-			st, runErr = workspace.Inject(ctx, &ws.InjectOptions{
-				Namespace:            workspaceNamespace,
-				WorkloadName:         workloadTargetName,
-				WorkloadKind:         workloadKind,
-				WorkspaceCanonicalId: canUserStr.CanonicalId(),
-				JobId:                job.ID,
-				Timeout:              timeout,
-				Messages:             messages,
-			})
-		} else {
-			st, runErr = workspace.Provision(ctx, &ws.ProvisionOptions{
-				Timeout:  timeout,
-				Messages: messages,
-			})
-		}
-
+		st, runErr := runFn(messages)
 		if runErr != nil {
 			errorChan <- runErr
 			return
@@ -253,7 +277,7 @@ func (p *ProvisionerService) ProvisionWorkspaceStream(
 				})
 			}
 
-			if req.SendEvents && msg.Type == models.WorkspaceStreamEventTypeEvent {
+			if sendEvents && msg.Type == models.WorkspaceStreamEventTypeEvent {
 				emitEvent(&provisionerv1.ProvisionEvent{
 					Type:       string(models.WorkspaceStreamEventTypeEvent),
 					Timestamp:  msg.Timestamp,
@@ -262,7 +286,7 @@ func (p *ProvisionerService) ProvisionWorkspaceStream(
 				})
 			}
 
-			if req.SendProgress && msg.Type == models.WorkspaceStreamEventTypeStatus {
+			if sendProgress && msg.Type == models.WorkspaceStreamEventTypeStatus {
 				var newPerc int
 				switch msg.Status {
 				case models.WorkspaceStatusProvisioning:
@@ -280,7 +304,7 @@ func (p *ProvisionerService) ProvisionWorkspaceStream(
 					emitEvent(&provisionerv1.ProvisionEvent{
 						Type:       string(models.WorkspaceStreamEventTypeProgress),
 						Timestamp:  time.Now().Format("2006-01-02 15:04:05"),
-						ObjectName: workspace.Name,
+						ObjectName: workspaceName,
 						Status:     fmt.Sprintf("%d", progressPct),
 						Message:    fmt.Sprintf("%d%% complete", progressPct),
 					})
@@ -298,16 +322,16 @@ func (p *ProvisionerService) ProvisionWorkspaceStream(
 			emitEvent(&provisionerv1.ProvisionEvent{
 				Type:       string(models.WorkspaceStreamEventTypeStatus),
 				Timestamp:  time.Now().Format("2006-01-02 15:04:05"),
-				ObjectName: workspace.Name,
+				ObjectName: workspaceName,
 				Status:     string(finalStatus),
 				Message:    finalMessage,
 			})
 
-			if req.SendProgress && progressPct < 100 {
+			if sendProgress && progressPct < 100 {
 				emitEvent(&provisionerv1.ProvisionEvent{
 					Type:       string(models.WorkspaceStreamEventTypeProgress),
 					Timestamp:  time.Now().Format("2006-01-02 15:04:05"),
-					ObjectName: workspace.Name,
+					ObjectName: workspaceName,
 					Status:     "100",
 					Message:    "100% complete",
 				})
@@ -323,7 +347,7 @@ func (p *ProvisionerService) ProvisionWorkspaceStream(
 				emitEvent(&provisionerv1.ProvisionEvent{
 					Type:       string(models.WorkspaceStreamEventTypeStatus),
 					Timestamp:  time.Now().Format("2006-01-02 15:04:05"),
-					ObjectName: workspace.Name,
+					ObjectName: workspaceName,
 					Status:     string(models.WorkspaceStatusError),
 					Message:    runErr.Error(),
 				})
@@ -615,6 +639,30 @@ func NewProvisionJob(WorkspaceName string, username string, kv *natsc.JetStreamK
 		log:         log,
 	}
 	return p
+}
+
+// LoadProvisionJob fetches an existing provision job from the NATS KV store
+// by ID and wraps it in a ProvisionJobServer so further events can be
+// appended and its status updated, continuing the event ID sequence from
+// where the stored record left off. Returns an error if the job is missing
+// or the stored record cannot be decoded.
+func LoadProvisionJob(kv *natsc.JetStreamKV, jobID string, log *zerolog.Logger) (*ProvisionJobServer, error) {
+	entry, err := kv.Get(jobID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get provision job %s: %w", jobID, err)
+	}
+
+	var job models.ProvisionJob
+	if err := json.Unmarshal(entry.Value(), &job); err != nil {
+		return nil, fmt.Errorf("failed to decode provision job %s: %w", jobID, err)
+	}
+
+	return &ProvisionJobServer{
+		ProvisionJob: job,
+		NextEventId:  int64(len(job.Events)) + 1,
+		kv:           kv,
+		log:          log,
+	}, nil
 }
 
 // AddEvent appends a stream event to the job record and persists it to the
