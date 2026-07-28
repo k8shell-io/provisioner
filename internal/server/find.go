@@ -8,7 +8,6 @@ import (
 	"errors"
 
 	commonv1 "github.com/k8shell-io/common/pkg/api/gen/go/common/v1"
-	identityv1 "github.com/k8shell-io/common/pkg/api/gen/go/identity/v1"
 	provisionerv1 "github.com/k8shell-io/common/pkg/api/gen/go/provisioner/v1"
 	"github.com/k8shell-io/common/pkg/gapi"
 	"github.com/k8shell-io/common/pkg/models"
@@ -140,32 +139,20 @@ func (p *ProvisionerService) GetWorkspacesByUserStr(
 	}, nil
 }
 
-// GetUserBlueprints returns the list of blueprint summaries that the given user
-// is authorised to use, filtered from the full set of loaded blueprints.
-func (p *ProvisionerService) GetUserBlueprints(ctx context.Context,
-	req *provisionerv1.GetUserBlueprintsRequest,
-) (*provisionerv1.GetUserBlueprintsResponse, error) {
+// GetBlueprints returns the summaries of every blueprint registered in the
+// provisioner, regardless of user.
+func (p *ProvisionerService) GetBlueprints(_ context.Context,
+	_ *provisionerv1.GetBlueprintsRequest,
+) (*provisionerv1.GetBlueprintsResponse, error) {
 
-	userpb, err := p.server.Identity.FindUser(ctx, &identityv1.FindUserRequest{Username: req.Username})
-	if err != nil {
-		return nil, status.Errorf(codes.NotFound, "Failed to get user: %v", err)
-	}
-	user := gapi.ProtoToUser(userpb)
-
-	allblueprints := p.server.bpManager.GetBlueprintsSummary()
-	var blueprints []*models.BlueprintSummary
-	for _, bp := range allblueprints {
-		if user.HasBlueprint(bp.Name) {
-			blueprints = append(blueprints, bp)
-		}
-	}
+	blueprints := p.server.bpManager.GetBlueprintsSummary()
 
 	var protoBlueprints []*commonv1.BlueprintSummary
 	for _, b := range blueprints {
 		protoBlueprints = append(protoBlueprints, gapi.BlueprintSummaryToProto(b))
 	}
 
-	return &provisionerv1.GetUserBlueprintsResponse{
+	return &provisionerv1.GetBlueprintsResponse{
 		Blueprints: protoBlueprints,
 	}, nil
 }
