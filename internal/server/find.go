@@ -9,6 +9,7 @@ import (
 
 	commonv1 "github.com/k8shell-io/common/pkg/api/gen/go/common/v1"
 	provisionerv1 "github.com/k8shell-io/common/pkg/api/gen/go/provisioner/v1"
+	queryv1 "github.com/k8shell-io/common/pkg/api/gen/go/query/v1"
 	"github.com/k8shell-io/common/pkg/gapi"
 	"github.com/k8shell-io/common/pkg/models"
 	"github.com/k8shell-io/common/pkg/userstr"
@@ -127,6 +128,48 @@ func (p *ProvisionerService) GetWorkspacesByUserStr(
 	workspaces, err := ws.GetWorkspaces(ctx, p.server.helm, opts)
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "failed to list workspaces: %v", err)
+	}
+
+	var protoWorkspaces []*commonv1.WorkspaceDetails
+	for _, w := range workspaces.Workspaces {
+		protoWorkspaces = append(protoWorkspaces, gapi.WorkspaceDetailsToProto(w))
+	}
+
+	return &provisionerv1.GetWorkspacesResponse{
+		Workspaces: protoWorkspaces,
+	}, nil
+}
+
+// GetWorkspacesQuerySchema returns the query.v1.Descriptor advertising which
+// workspace fields are queryable/sortable via QueryWorkspaces.
+func (p *ProvisionerService) GetWorkspacesQuerySchema(_ context.Context,
+	_ *provisionerv1.GetWorkspacesQuerySchemaRequest) (*queryv1.Descriptor, error) {
+	return ws.WorkspacesQueryDescriptor, nil
+}
+
+// QueryWorkspaces retrieves workspaces matching a generic query.v1.Payload,
+// as advertised by GetWorkspacesQuerySchema.
+func (p *ProvisionerService) QueryWorkspaces(
+	ctx context.Context,
+	req *provisionerv1.QueryWorkspacesRequest,
+) (*provisionerv1.GetWorkspacesResponse, error) {
+	workspaces, err := ws.QueryWorkspaces(ctx, p.server.helm, p.server.Identity, p.server.config.InjectNamespaces, req.GetQuery())
+	if err != nil {
+		if errors.Is(err, models.ErrInvalidParameters) {
+			return nil, status.Errorf(codes.InvalidArgument, "invalid query: %v", err)
+		}
+		return nil, status.Errorf(codes.Internal, "failed to query workspaces: %v", err)
+	}
+
+	if p.server.provisionJobsKV != nil {
+		for _, w := range workspaces.Workspaces {
+			if w.JobId != "" {
+				_, err := p.server.provisionJobsKV.Get(w.JobId)
+				if err != nil {
+					w.JobId = ""
+				}
+			}
+		}
 	}
 
 	var protoWorkspaces []*commonv1.WorkspaceDetails
