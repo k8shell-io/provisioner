@@ -18,6 +18,7 @@ import (
 	"github.com/k8shell-io/common/pkg/models"
 	"github.com/k8shell-io/common/pkg/query"
 	"github.com/k8shell-io/provisioner/internal/helm"
+	"k8s.io/apimachinery/pkg/api/resource"
 )
 
 // WorkspacesQueryDescriptor advertises which workspace fields are
@@ -34,6 +35,8 @@ var WorkspacesQueryDescriptor = query.NewDescriptor("workspaces").
 		queryv1.Operator_OPERATOR_EQ, queryv1.Operator_OPERATOR_NE, queryv1.Operator_OPERATOR_IN).
 	Field("blueprint", queryv1.FieldType_FIELD_TYPE_STRING,
 		queryv1.Operator_OPERATOR_EQ, queryv1.Operator_OPERATOR_NE, queryv1.Operator_OPERATOR_IN).
+	Field("origin", queryv1.FieldType_FIELD_TYPE_STRING,
+		queryv1.Operator_OPERATOR_EQ, queryv1.Operator_OPERATOR_NE, queryv1.Operator_OPERATOR_IN).
 	Field("namespace", queryv1.FieldType_FIELD_TYPE_STRING,
 		queryv1.Operator_OPERATOR_EQ, queryv1.Operator_OPERATOR_NE, queryv1.Operator_OPERATOR_IN).
 	Field("status", queryv1.FieldType_FIELD_TYPE_STRING,
@@ -44,6 +47,27 @@ var WorkspacesQueryDescriptor = query.NewDescriptor("workspaces").
 		queryv1.Operator_OPERATOR_EQ, queryv1.Operator_OPERATOR_NE, queryv1.Operator_OPERATOR_IN, queryv1.Operator_OPERATOR_EXISTS).
 	Field("repo_ref", queryv1.FieldType_FIELD_TYPE_STRING,
 		queryv1.Operator_OPERATOR_EQ, queryv1.Operator_OPERATOR_NE, queryv1.Operator_OPERATOR_IN, queryv1.Operator_OPERATOR_EXISTS).
+	// cpu/memory carry Kubernetes quantity strings (e.g. "500m", "8Gi") and
+	// are compared numerically (cores for cpu, bytes for memory — see
+	// quantityFields/matchesQuantity), but are deliberately declared
+	// FIELD_TYPE_STRING rather than FIELD_TYPE_NUMBER: query.v1's generic
+	// Validate parses a NUMBER value with strconv.ParseFloat, which rejects
+	// quantity syntax like "8Gi" outright. Declaring STRING makes generic
+	// validation a no-op for these values (ParseValue accepts any string),
+	// so a payload validates correctly no matter which layer runs it — in
+	// particular an upstream caller that validates against this schema
+	// before ever forwarding the request to QueryWorkspaces. The declared
+	// operators still include gt/gte/lt/lte; query.v1 has no rule tying
+	// ordering operators to FIELD_TYPE_NUMBER, so this is legal, and
+	// QueryWorkspaces enforces the actual numeric semantics itself.
+	Field("cpu", queryv1.FieldType_FIELD_TYPE_STRING,
+		queryv1.Operator_OPERATOR_EQ, queryv1.Operator_OPERATOR_NE,
+		queryv1.Operator_OPERATOR_GT, queryv1.Operator_OPERATOR_GTE,
+		queryv1.Operator_OPERATOR_LT, queryv1.Operator_OPERATOR_LTE).
+	Field("memory", queryv1.FieldType_FIELD_TYPE_STRING,
+		queryv1.Operator_OPERATOR_EQ, queryv1.Operator_OPERATOR_NE,
+		queryv1.Operator_OPERATOR_GT, queryv1.Operator_OPERATOR_GTE,
+		queryv1.Operator_OPERATOR_LT, queryv1.Operator_OPERATOR_LTE).
 	Field("created", queryv1.FieldType_FIELD_TYPE_DATETIME,
 		queryv1.Operator_OPERATOR_EQ, queryv1.Operator_OPERATOR_NE,
 		queryv1.Operator_OPERATOR_GT, queryv1.Operator_OPERATOR_GTE,
@@ -59,17 +83,40 @@ var workspaceFieldValues = map[string]func(w *models.WorkspaceDetails) (string, 
 	"username":     func(w *models.WorkspaceDetails) (string, bool) { return w.Username, w.Username != "" },
 	"organization": func(w *models.WorkspaceDetails) (string, bool) { return w.Organization, w.Organization != "" },
 	"blueprint":    func(w *models.WorkspaceDetails) (string, bool) { return w.Blueprint, w.Blueprint != "" },
+	"origin":       func(w *models.WorkspaceDetails) (string, bool) { return w.Origin, w.Origin != "" },
 	"namespace":    func(w *models.WorkspaceDetails) (string, bool) { return w.Namespace, w.Namespace != "" },
 	"status":       func(w *models.WorkspaceDetails) (string, bool) { return string(w.Status), w.Status != "" },
 	"repo_owner":   func(w *models.WorkspaceDetails) (string, bool) { return w.RepoOwner, w.RepoOwner != "" },
 	"repo_name":    func(w *models.WorkspaceDetails) (string, bool) { return w.RepoName, w.RepoName != "" },
 	"repo_ref":     func(w *models.WorkspaceDetails) (string, bool) { return w.RepoRef, w.RepoRef != "" },
+	"cpu":          func(w *models.WorkspaceDetails) (string, bool) { return w.CPU, w.CPU != "" },
+	"memory":       func(w *models.WorkspaceDetails) (string, bool) { return w.Memory, w.Memory != "" },
 	"created": func(w *models.WorkspaceDetails) (string, bool) {
 		if w.Created.IsZero() {
 			return "", false
 		}
 		return w.Created.UTC().Format(time.RFC3339), true
 	},
+}
+
+// quantityFields are the descriptor fields compared as Kubernetes
+// resource.Quantity magnitudes (cores for cpu, bytes for memory) rather
+// than as opaque text — see matchesQuantity. They're declared
+// FIELD_TYPE_STRING in WorkspacesQueryDescriptor for generic-validation
+// reasons (see the comment there), so matching dispatches on field name
+// instead of the descriptor's nominal type.
+var quantityFields = map[string]bool{"cpu": true, "memory": true}
+
+// quantityToFloat parses a Kubernetes resource.Quantity string (e.g.
+// "500m", "8Gi", or a plain "2") into its absolute magnitude — cores for a
+// cpu quantity, bytes for a memory quantity. resource.Quantity abstracts
+// away the unit suffix, so the same conversion works for both fields.
+func quantityToFloat(raw string) (float64, error) {
+	q, err := resource.ParseQuantity(raw)
+	if err != nil {
+		return 0, fmt.Errorf("invalid quantity %q: %w", raw, err)
+	}
+	return q.AsApproximateFloat64(), nil
 }
 
 // obligationScope is the mandatory, authz-derived restriction the
@@ -349,6 +396,7 @@ func matchesCondition(w *models.WorkspaceDetails, c *queryv1.Condition) (bool, e
 		return false, fmt.Errorf("query: unknown field %q", c.GetField())
 	}
 	typ := fieldType(c.GetField())
+	quantity := quantityFields[c.GetField()]
 	value, present := extract(w)
 
 	switch c.GetOp() {
@@ -363,9 +411,12 @@ func matchesCondition(w *models.WorkspaceDetails, c *queryv1.Condition) (bool, e
 		matched := false
 		if present {
 			var err error
-			if typ == queryv1.FieldType_FIELD_TYPE_DATETIME {
+			switch {
+			case typ == queryv1.FieldType_FIELD_TYPE_DATETIME:
 				matched, err = matchesDatetime(value, queryv1.Operator_OPERATOR_EQ, c.GetValues()[0])
-			} else {
+			case quantity:
+				matched, err = matchesQuantity(value, queryv1.Operator_OPERATOR_EQ, c.GetValues()[0])
+			default:
 				matched = globMatch(c.GetValues()[0], value)
 			}
 			if err != nil {
@@ -393,10 +444,43 @@ func matchesCondition(w *models.WorkspaceDetails, c *queryv1.Condition) (bool, e
 		if !present {
 			return false, nil
 		}
+		if quantity {
+			return matchesQuantity(value, c.GetOp(), c.GetValues()[0])
+		}
 		return matchesDatetime(value, c.GetOp(), c.GetValues()[0])
 
 	default:
 		return false, fmt.Errorf("query: unsupported operator %s", c.GetOp())
+	}
+}
+
+// matchesQuantity compares two Kubernetes resource.Quantity strings (e.g.
+// "500m", "8Gi") by magnitude via quantityToFloat, rather than as text —
+// used for cpu/memory, which query.v1 sees as opaque strings (see
+// quantityFields) but which QueryWorkspaces treats as ordered numbers.
+func matchesQuantity(fieldValue string, op queryv1.Operator, raw string) (bool, error) {
+	fv, err := quantityToFloat(fieldValue)
+	if err != nil {
+		return false, fmt.Errorf("invalid stored quantity %q: %w", fieldValue, err)
+	}
+	cv, err := quantityToFloat(raw)
+	if err != nil {
+		return false, err
+	}
+
+	switch op {
+	case queryv1.Operator_OPERATOR_EQ:
+		return fv == cv, nil
+	case queryv1.Operator_OPERATOR_GT:
+		return fv > cv, nil
+	case queryv1.Operator_OPERATOR_GTE:
+		return fv >= cv, nil
+	case queryv1.Operator_OPERATOR_LT:
+		return fv < cv, nil
+	case queryv1.Operator_OPERATOR_LTE:
+		return fv <= cv, nil
+	default:
+		return false, fmt.Errorf("query: unsupported quantity operator %s", op)
 	}
 }
 
@@ -477,10 +561,20 @@ func sortWorkspaces(list []*models.WorkspaceDetails, sorts []*queryv1.Sort) {
 			if vi == vj {
 				continue
 			}
-			if s.GetDir() == queryv1.SortDir_SORT_DIR_DESC {
-				return vi > vj
+
+			less := vi < vj
+			if quantityFields[s.GetField()] {
+				fi, erri := quantityToFloat(vi)
+				fj, errj := quantityToFloat(vj)
+				if erri == nil && errj == nil {
+					less = fi < fj
+				}
 			}
-			return vi < vj
+
+			if s.GetDir() == queryv1.SortDir_SORT_DIR_DESC {
+				return !less
+			}
+			return less
 		}
 		return false
 	})

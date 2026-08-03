@@ -1026,13 +1026,23 @@ func workspaceDetailsCore(pod *corev1.Pod) *models.WorkspaceDetails {
 	tlsEnabled := podMountsSecret(pod, canonicalId+"-tls")
 	identity := canUser.Identity()
 
+	repoOwner := identity.RepoOwner()
+	repoName := identity.RepoName()
+	blueprint := pod.Labels[helm.LabelBlueprint]
+
+	origin := blueprint
+	if repoOwner != "" && repoName != "" {
+		origin = repoOwner + "/" + repoName
+	}
+
 	return &models.WorkspaceDetails{
 		Name:         pod.Name,
 		Username:     pod.Labels[helm.LabelUsername],
-		RepoOwner:    identity.RepoOwner(),
-		RepoName:     identity.RepoName(),
+		RepoOwner:    repoOwner,
+		RepoName:     repoName,
 		RepoRef:      identity.RepoRef(),
-		Blueprint:    pod.Labels[helm.LabelBlueprint],
+		Blueprint:    blueprint,
+		Origin:       origin,
 		Organization: pod.Labels[helm.LabelOrganization],
 		JobId:        pod.Labels[helm.LabelJobId],
 		ServerName:   pod.Labels[helm.LabelCanonicalId] + "." + pod.Namespace,
