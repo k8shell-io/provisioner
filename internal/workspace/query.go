@@ -47,6 +47,14 @@ var WorkspacesQueryDescriptor = query.NewDescriptor("workspaces").
 		queryv1.Operator_OPERATOR_EQ, queryv1.Operator_OPERATOR_NE, queryv1.Operator_OPERATOR_IN, queryv1.Operator_OPERATOR_EXISTS).
 	Field("repo_ref", queryv1.FieldType_FIELD_TYPE_STRING,
 		queryv1.Operator_OPERATOR_EQ, queryv1.Operator_OPERATOR_NE, queryv1.Operator_OPERATOR_IN, queryv1.Operator_OPERATOR_EXISTS).
+	Field("workspace_type", queryv1.FieldType_FIELD_TYPE_STRING,
+		queryv1.Operator_OPERATOR_EQ, queryv1.Operator_OPERATOR_NE, queryv1.Operator_OPERATOR_IN).
+	// workload_kind/workload_name are only set on injected workspaces, so
+	// they support EXISTS the way the optional repo_* fields do.
+	Field("workload_kind", queryv1.FieldType_FIELD_TYPE_STRING,
+		queryv1.Operator_OPERATOR_EQ, queryv1.Operator_OPERATOR_NE, queryv1.Operator_OPERATOR_IN, queryv1.Operator_OPERATOR_EXISTS).
+	Field("workload_name", queryv1.FieldType_FIELD_TYPE_STRING,
+		queryv1.Operator_OPERATOR_EQ, queryv1.Operator_OPERATOR_NE, queryv1.Operator_OPERATOR_IN, queryv1.Operator_OPERATOR_EXISTS).
 	// cpu/memory carry Kubernetes quantity strings (e.g. "500m", "8Gi") and
 	// are compared numerically (cores for cpu, bytes for memory — see
 	// quantityFields/matchesQuantity), but are deliberately declared
@@ -89,8 +97,13 @@ var workspaceFieldValues = map[string]func(w *models.WorkspaceDetails) (string, 
 	"repo_owner":   func(w *models.WorkspaceDetails) (string, bool) { return w.RepoOwner, w.RepoOwner != "" },
 	"repo_name":    func(w *models.WorkspaceDetails) (string, bool) { return w.RepoName, w.RepoName != "" },
 	"repo_ref":     func(w *models.WorkspaceDetails) (string, bool) { return w.RepoRef, w.RepoRef != "" },
-	"cpu":          func(w *models.WorkspaceDetails) (string, bool) { return w.CPU, w.CPU != "" },
-	"memory":       func(w *models.WorkspaceDetails) (string, bool) { return w.Memory, w.Memory != "" },
+	"workspace_type": func(w *models.WorkspaceDetails) (string, bool) {
+		return string(w.WorkspaceType), w.WorkspaceType != ""
+	},
+	"workload_kind": func(w *models.WorkspaceDetails) (string, bool) { return w.WorkloadKind, w.WorkloadKind != "" },
+	"workload_name": func(w *models.WorkspaceDetails) (string, bool) { return w.WorkloadName, w.WorkloadName != "" },
+	"cpu":           func(w *models.WorkspaceDetails) (string, bool) { return w.CPU, w.CPU != "" },
+	"memory":        func(w *models.WorkspaceDetails) (string, bool) { return w.Memory, w.Memory != "" },
 	"created": func(w *models.WorkspaceDetails) (string, bool) {
 		if w.Created.IsZero() {
 			return "", false
