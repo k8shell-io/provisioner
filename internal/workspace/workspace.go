@@ -1035,6 +1035,17 @@ func workspaceDetailsCore(pod *corev1.Pod) *models.WorkspaceDetails {
 		origin = repoOwner + "/" + repoName
 	}
 
+	// Injection stamps the pod template with LabelInjected plus the kind and
+	// name of the workload it was injected into; a standalone workspace pod
+	// carries none of them.
+	workspaceType := models.WorkspaceTypeStandalone
+	var workloadKind, workloadName string
+	if pod.Labels[helm.LabelInjected] == "true" {
+		workspaceType = models.WorkspaceTypeInjected
+		workloadKind = pod.Labels[helm.LabelWorkloadKind]
+		workloadName = pod.Labels[helm.LabelWorkloadName]
+	}
+
 	return &models.WorkspaceDetails{
 		Name:         pod.Name,
 		Username:     pod.Labels[helm.LabelUsername],
@@ -1054,5 +1065,9 @@ func workspaceDetailsCore(pod *corev1.Pod) *models.WorkspaceDetails {
 		Memory:       memory,
 		Hostname:     podHostname(pod),
 		Namespace:    pod.Namespace,
+
+		WorkspaceType: workspaceType,
+		WorkloadKind:  workloadKind,
+		WorkloadName:  workloadName,
 	}
 }
