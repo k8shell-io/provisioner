@@ -16,6 +16,7 @@ import (
 	ws "github.com/k8shell-io/provisioner/internal/workspace"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 // FindWorkspace retrieves the details of a specific workspace
@@ -180,6 +181,77 @@ func (p *ProvisionerService) QueryWorkspaces(
 	return &provisionerv1.GetWorkspacesResponse{
 		Workspaces: protoWorkspaces,
 	}, nil
+}
+
+// ListInjectNamespaces returns the namespaces the provisioner is configured
+// to allow workload injection into. When injection is cluster-wide ("*"),
+// it lists the namespaces that currently exist in the cluster.
+func (p *ProvisionerService) ListInjectNamespaces(ctx context.Context,
+	_ *provisionerv1.ListInjectNamespacesRequest) (*provisionerv1.ListInjectNamespacesResponse, error) {
+	if !p.server.config.IsClusterWideInjectionEnabled() {
+		return &provisionerv1.ListInjectNamespacesResponse{
+			Namespaces: p.server.config.InjectNamespaces,
+		}, nil
+	}
+
+	nsList, err := p.server.helm.KubeClient().CoreV1().Namespaces().List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "failed to list namespaces: %v", err)
+	}
+
+	namespaces := make([]string, 0, len(nsList.Items))
+	for _, ns := range nsList.Items {
+		namespaces = append(namespaces, ns.Name)
+	}
+
+	return &provisionerv1.ListInjectNamespacesResponse{
+		Namespaces:  namespaces,
+		ClusterWide: true,
+	}, nil
+}
+
+// ListInjectWorkloads returns the workloads a workspace can be injected into,
+// each reporting whether it already hosts an injected workspace and who owns it.
+func (p *ProvisionerService) ListInjectWorkloads(ctx context.Context,
+	req *provisionerv1.ListInjectWorkloadsRequest) (*provisionerv1.ListInjectWorkloadsResponse, error) {
+	namespaces := p.server.config.InjectNamespaces
+	if req.Namespace != "" {
+		if !p.server.config.AllowsInjectionNamespace(req.Namespace) {
+			return nil, status.Errorf(codes.PermissionDenied,
+				"namespace %s is not allowed for injection", req.Namespace)
+		}
+		namespaces = []string{req.Namespace}
+	}
+	if len(namespaces) == 0 {
+		return &provisionerv1.ListInjectWorkloadsResponse{}, nil
+	}
+
+	workloads, err := ws.ListInjectWorkloads(ctx, p.server.helm, namespaces, req.Kinds)
+	if err != nil {
+		if errors.Is(err, models.ErrInvalidParameters) {
+			return nil, status.Errorf(codes.InvalidArgument, "%v", err)
+		}
+		return nil, status.Errorf(codes.Internal, "failed to list inject workloads: %v", err)
+	}
+
+	protoWorkloads := make([]*provisionerv1.InjectWorkload, 0, len(workloads))
+	for _, w := range workloads {
+		protoWorkloads = append(protoWorkloads, &provisionerv1.InjectWorkload{
+			Namespace:    w.Namespace,
+			Kind:         w.Kind,
+			Name:         w.Name,
+			Replicas:     w.Replicas,
+			Injected:     w.Injected,
+			Workspace:    w.Workspace,
+			Username:     w.Username,
+			Organization: w.Organization,
+			Blueprint:    w.Blueprint,
+			RepoSource:   w.RepoSource,
+			RepoRevision: w.RepoRevision,
+		})
+	}
+
+	return &provisionerv1.ListInjectWorkloadsResponse{Workloads: protoWorkloads}, nil
 }
 
 // GetBlueprints returns the summaries of every blueprint registered in the
