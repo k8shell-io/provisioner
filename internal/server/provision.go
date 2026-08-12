@@ -30,7 +30,7 @@ import (
 var PAT_SCOPES = []string{
 	"session:list:self",          // list sessions for workspace user
 	"user:read:profile:self",     // read user profile information (username, fullname, email
-	"user:read:credentials:self", // use credential helpers (git, registry, kubernetes)
+	"user:read:credentials:*:self", // use credential helpers (git, registry, kubernetes)
 	"user:write:password:self",   // set password for workspace user
 }
 
