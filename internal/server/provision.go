@@ -28,10 +28,11 @@ import (
 
 // PAT_SCOPES defines the scopes for the Personal Access Token created for the workspace.
 var PAT_SCOPES = []string{
-	"session:list:self",          // list sessions for workspace user
-	"user:read:profile:self",     // read user profile information (username, fullname, email
+	"session:list:self",            // list sessions for workspace user
+	"user:read:profile:self",       // read user profile information (username, fullname, email
 	"user:read:credentials:*:self", // use credential helpers (git, registry, kubernetes)
-	"user:write:password:self",   // set password for workspace user
+	"user:write:password:self",     // set password for workspace user
+	"workspace:delete:self",        // allow the workspace to delete itself
 }
 
 // workspaceEventStream is satisfied by any generated server-streaming handle
