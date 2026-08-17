@@ -388,7 +388,10 @@ func (p *ProvisionerService) prepareWorkspaceWithUserStr(ctx context.Context,
 	case identity.BlueprintKind() == userstr.BlueprintKindCustom:
 		blueprintpb, err := p.server.Identity.GetBlueprintByUserStr(ctx, &identityv1.UserStr{Userstr: canonicalUserStr})
 		if err != nil {
-			return nil, status.Errorf(codes.InvalidArgument, "failed to get blueprint by userstr: %v", err)
+			if status.Code(err) != codes.NotFound {
+				return nil, status.Errorf(codes.InvalidArgument, "failed to get blueprint by userstr: %v", err)
+			}
+			blueprintpb = &identityv1.Blueprint{}
 		}
 
 		p.log.Debug().Str("userstr", canonicalUserStr).Str("blueprint",
@@ -440,7 +443,7 @@ func (p *ProvisionerService) prepareWorkspaceWithUserStr(ctx context.Context,
 				RepoName:    identity.RepoName(),
 				RepoOwner:   identity.RepoOwner(),
 				RepoRef:     identity.RepoRef(),
-				RepoAddress: blueprintpb.RepoAddress,
+				RepoAddress: user.GitAddress,
 			}
 			scope, errx := p.server.GetBlueprintScope(defaultBp, user, defaultBpMetadata, workspaceName)
 			if errx != nil {
