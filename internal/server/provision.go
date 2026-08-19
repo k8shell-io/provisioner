@@ -28,10 +28,11 @@ import (
 
 // PAT_SCOPES defines the scopes for the Personal Access Token created for the workspace.
 var PAT_SCOPES = []string{
-	"session:list:self",          // list sessions for workspace user
-	"user:read:profile:self",     // read user profile information (username, fullname, email
-	"user:read:credentials:self", // use credential helpers (git, registry, kubernetes)
-	"user:write:password:self",   // set password for workspace user
+	"session:list:self",            // list sessions for workspace user
+	"user:read:profile:self",       // read user profile information (username, fullname, email
+	"user:read:credentials:*:self", // use credential helpers (git, registry, kubernetes)
+	"user:write:password:self",     // set password for workspace user
+	"workspace:delete:self",        // allow the workspace to delete itself
 }
 
 // workspaceEventStream is satisfied by any generated server-streaming handle
@@ -387,7 +388,10 @@ func (p *ProvisionerService) prepareWorkspaceWithUserStr(ctx context.Context,
 	case identity.BlueprintKind() == userstr.BlueprintKindCustom:
 		blueprintpb, err := p.server.Identity.GetBlueprintByUserStr(ctx, &identityv1.UserStr{Userstr: canonicalUserStr})
 		if err != nil {
-			return nil, status.Errorf(codes.InvalidArgument, "failed to get blueprint by userstr: %v", err)
+			if status.Code(err) != codes.NotFound {
+				return nil, status.Errorf(codes.InvalidArgument, "failed to get blueprint by userstr: %v", err)
+			}
+			blueprintpb = &identityv1.Blueprint{}
 		}
 
 		p.log.Debug().Str("userstr", canonicalUserStr).Str("blueprint",
@@ -439,7 +443,7 @@ func (p *ProvisionerService) prepareWorkspaceWithUserStr(ctx context.Context,
 				RepoName:    identity.RepoName(),
 				RepoOwner:   identity.RepoOwner(),
 				RepoRef:     identity.RepoRef(),
-				RepoAddress: blueprintpb.RepoAddress,
+				RepoAddress: user.GitAddress,
 			}
 			scope, errx := p.server.GetBlueprintScope(defaultBp, user, defaultBpMetadata, workspaceName)
 			if errx != nil {
