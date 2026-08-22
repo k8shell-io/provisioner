@@ -182,7 +182,7 @@ func (w *Workspace) doInstallation(ctx context.Context, opts *ProvisionOptions) 
 		return nil, fmt.Errorf("failed to ensure shared storages: %w", err)
 	}
 
-	values, err := w.Values()
+	values, err := w.Values(ctx)
 	if err != nil {
 		return nil, err
 	}

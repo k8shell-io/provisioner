@@ -45,7 +45,7 @@ const WORKSPACE_DEFAULT_PAGE_SIZE = 20
 // k8shelldTagOverride, when non-empty, replaces the tag of the k8shelld image
 // configured in the blueprint. Leave empty to use the blueprint's image as-is.
 // this is for debug purposes only when provisioner is running in an injected workspace
-const k8shelldTagOverride = "" //"pr-66-3874e67"
+const k8shelldTagOverride = "pr-69-bb67386"
 
 // Workspace represents a workspace with Helm client
 type Workspace struct {
@@ -715,11 +715,37 @@ func (w *Workspace) Selector() string {
 	return fmt.Sprintf("app.kubernetes.io/instance=%s", w.Name)
 }
 
+// userEnvVars fetches the effective environment variables for the workspace's
+// owning user from the Identity service — organization-level variables
+// overridden by any user-level override, per ListUserEnvVars semantics.
+// Secret values come back redacted from ListUserEnvVars, so each redacted
+// entry is resolved individually via GetUserEnvVar to recover its real value.
+func (w *Workspace) userEnvVars(ctx context.Context) (map[string]string, error) {
+	list, err := w.identify.ListUserEnvVars(ctx, &identityv1.ListUserEnvVarsRequest{Username: w.user.Username})
+	if err != nil {
+		return nil, fmt.Errorf("failed to list environment variables for user %s: %w", w.user.Username, err)
+	}
+
+	out := make(map[string]string, len(list.EnvVars))
+	for _, ev := range list.EnvVars {
+		if !ev.Redacted {
+			out[ev.Key] = ev.Value
+			continue
+		}
+		full, err := w.identify.GetUserEnvVar(ctx, &identityv1.GetUserEnvVarRequest{Username: w.user.Username, Key: ev.Key})
+		if err != nil {
+			return nil, fmt.Errorf("failed to resolve secret environment variable %q for user %s: %w", ev.Key, w.user.Username, err)
+		}
+		out[ev.Key] = full.Value
+	}
+	return out, nil
+}
+
 // Values builds the complete Helm values map for the workspace by merging the
 // blueprint fields with user data, registry config, cert-manager settings, and
 // provisioner-internal keys (prefixed with "__"). The resulting map is passed
 // directly to Helm install/upgrade/template operations.
-func (w *Workspace) Values() (map[string]interface{}, error) {
+func (w *Workspace) Values(ctx context.Context) (map[string]interface{}, error) {
 	if w.blueprint == nil {
 		return nil, fmt.Errorf("blueprint is nil for workspace %s", w.Name)
 	}
@@ -809,9 +835,18 @@ func (w *Workspace) Values() (map[string]interface{}, error) {
 	}
 	values["__blueprintyaml__"] = string(blueprintYAML)
 
-	envMap, _ := values["env"].(map[string]interface{})
-	if envMap == nil {
-		envMap = make(map[string]interface{})
+	userEnvVars, err := w.userEnvVars(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to build user environment variables: %w", err)
+	}
+	envMap := make(map[string]interface{}, len(userEnvVars))
+	for k, v := range userEnvVars {
+		envMap[k] = v
+	}
+	if blueprintEnv, ok := values["env"].(map[string]interface{}); ok {
+		for k, v := range blueprintEnv {
+			envMap[k] = v
+		}
 	}
 	envMap["PROVISIONER_VERSION"] = w.client.AppVersion + "-" + w.client.Commit
 	values["__pat__"] = w.pat
@@ -836,7 +871,7 @@ func (w *Workspace) Values() (map[string]interface{}, error) {
 // the raw manifest YAML. Job ID and manifest hash are zeroed so successive
 // calls for the same configuration produce identical output.
 func (w *Workspace) Template(ctx context.Context) (string, error) {
-	values, err := w.Values()
+	values, err := w.Values(ctx)
 	if err != nil {
 		return "", err
 	}

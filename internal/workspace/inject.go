@@ -96,7 +96,7 @@ func (w *Workspace) Inject(ctx context.Context, opts *InjectOptions) (*models.Wo
 		return nil, fmt.Errorf("failed to sanitize blueprint for injection: %w", err)
 	}
 
-	values, err := w.Values()
+	values, err := w.Values(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("failed to build helm values: %w", err)
 	}

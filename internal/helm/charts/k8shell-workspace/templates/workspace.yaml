@@ -84,7 +84,9 @@ spec:
       - name: IMAGE
         value:  {{ include "workspace.mainImage" . }}
       - name: WORKSPACE
-        value: {{ .Release.Name }}
+        valueFrom:
+          fieldRef:
+            fieldPath: metadata.name
       - name: BLUEPRINT
         value: {{ .Values.__blueprint__ }}
       - name: USERNAME
