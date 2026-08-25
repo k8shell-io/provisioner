@@ -43,8 +43,9 @@ type RawBlueprint struct {
 	Template         string
 	IsTemplate       bool
 	SourceFile       string
-	Node             *yaml.Node
-	InheritanceChain []string // ordered list of blueprint names from root ancestor to this blueprint
+	Node             *yaml.Node // fully merged (own + inherited) content
+	OwnNode          *yaml.Node // content defined directly on this blueprint, before merging with Template
+	InheritanceChain []string   // ordered list of blueprint names from root ancestor to this blueprint
 }
 
 // BlueprintScope holds the runtime context passed to CEL template evaluation.
@@ -474,6 +475,19 @@ func (bm *BlueprintManager) GetBlueprintChain(name string) []string {
 	return rawBp.InheritanceChain
 }
 
+// GetBlueprintTemplate returns the name of the immediate parent Template for
+// the given blueprint name, or "" if it does not inherit from one. Returns
+// ErrBlueprintNotFound if name is not a registered blueprint.
+func (bm *BlueprintManager) GetBlueprintTemplate(name string) (string, error) {
+	bm.mu.RLock()
+	defer bm.mu.RUnlock()
+	rawBp, exists := bm.rawBlueprints[name]
+	if !exists {
+		return "", fmt.Errorf("blueprint %s not found: %w", name, ErrBlueprintNotFound)
+	}
+	return rawBp.Template, nil
+}
+
 // GetBlueprintsSummary returns a summary of all available blueprints without evaluating CEL expressions.
 func (bm *BlueprintManager) GetBlueprintsSummary() []*models.BlueprintSummary {
 	bm.mu.RLock()
@@ -491,8 +505,9 @@ func (bm *BlueprintManager) GetBlueprintsSummary() []*models.BlueprintSummary {
 }
 
 // GetRawBlueprint returns the raw (unevaluated) YAML content of the named
-// blueprint. CEL expressions are returned with a "!cel:" prefix so callers
-// can display the template source without triggering evaluation.
+// blueprint, fully merged with any inherited Template content. CEL
+// expressions are returned with a "!cel:" prefix so callers can display the
+// template source without triggering evaluation.
 func (bm *BlueprintManager) GetRawBlueprint(name string) (interface{}, error) {
 	bm.mu.RLock()
 	defer bm.mu.RUnlock()
@@ -502,7 +517,30 @@ func (bm *BlueprintManager) GetRawBlueprint(name string) (interface{}, error) {
 		return nil, fmt.Errorf("blueprint %s not found: %w", name, ErrBlueprintNotFound)
 	}
 
-	clonedNode := bm.cloneAndProcessCELNodes(rawBp.Node)
+	return bm.decodeRawNode(rawBp.Node)
+}
+
+// GetRawBlueprintOwn returns the raw (unevaluated) YAML content defined
+// directly on the named blueprint, excluding any content inherited from its
+// Template. A field present in GetRawBlueprint's output but absent here is
+// inherited rather than set on this blueprint. CEL expressions are returned
+// with a "!cel:" prefix, as in GetRawBlueprint.
+func (bm *BlueprintManager) GetRawBlueprintOwn(name string) (interface{}, error) {
+	bm.mu.RLock()
+	defer bm.mu.RUnlock()
+
+	rawBp, exists := bm.rawBlueprints[name]
+	if !exists {
+		return nil, fmt.Errorf("blueprint %s not found: %w", name, ErrBlueprintNotFound)
+	}
+
+	return bm.decodeRawNode(rawBp.OwnNode)
+}
+
+// decodeRawNode clones node (preserving CEL expressions as "!cel:"-prefixed
+// strings) and decodes it into a plain interface{} tree.
+func (bm *BlueprintManager) decodeRawNode(node *yaml.Node) (interface{}, error) {
+	clonedNode := bm.cloneAndProcessCELNodes(node)
 
 	var temp interface{}
 	if err := clonedNode.Decode(&temp); err != nil {

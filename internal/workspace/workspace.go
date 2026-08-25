@@ -45,7 +45,7 @@ const WORKSPACE_DEFAULT_PAGE_SIZE = 20
 // k8shelldTagOverride, when non-empty, replaces the tag of the k8shelld image
 // configured in the blueprint. Leave empty to use the blueprint's image as-is.
 // this is for debug purposes only when provisioner is running in an injected workspace
-const k8shelldTagOverride = "" //"pr-66-3874e67"
+const k8shelldTagOverride = "pr-69-a8078e4" //"pr-66-3874e67"
 
 // Workspace represents a workspace with Helm client
 type Workspace struct {
@@ -69,6 +69,7 @@ type Workspace struct {
 	workloadKind      string
 	pat               string
 	canonicalId       string
+	userEnvVars       map[string]string
 }
 
 // Values is a typed container for a Helm values map.
@@ -812,6 +813,9 @@ func (w *Workspace) Values() (map[string]interface{}, error) {
 	envMap, _ := values["env"].(map[string]interface{})
 	if envMap == nil {
 		envMap = make(map[string]interface{})
+	}
+	for k, v := range w.userEnvVars {
+		envMap[k] = v
 	}
 	envMap["PROVISIONER_VERSION"] = w.client.AppVersion + "-" + w.client.Commit
 	values["__pat__"] = w.pat

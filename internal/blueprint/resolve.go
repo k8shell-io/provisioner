@@ -42,10 +42,13 @@ func (bm *BlueprintManager) resolveRawTemplate(bpName string, visited map[string
 		return nil, fmt.Errorf("blueprint '%s' not found: %w", bpName, ErrBlueprintNotFound)
 	}
 
+	ownNode := bp.Node
+
 	if bp.Template == "" {
 		if len(bp.InheritanceChain) == 0 {
 			bp.InheritanceChain = []string{bpName}
 		}
+		bp.OwnNode = ownNode
 		return bp, nil
 	}
 
@@ -69,6 +72,7 @@ func (bm *BlueprintManager) resolveRawTemplate(bpName string, visited map[string
 		Template:         bp.Template,
 		IsTemplate:       bp.IsTemplate,
 		Node:             mergedNode,
+		OwnNode:          ownNode,
 		InheritanceChain: append(parent.InheritanceChain, bpName),
 	}, nil
 }

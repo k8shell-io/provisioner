@@ -13,9 +13,11 @@ import (
 	"github.com/k8shell-io/common/pkg/gapi"
 	"github.com/k8shell-io/common/pkg/models"
 	"github.com/k8shell-io/common/pkg/userstr"
+	"github.com/k8shell-io/provisioner/internal/blueprint"
 	ws "github.com/k8shell-io/provisioner/internal/workspace"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	"gopkg.in/yaml.v3"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
@@ -269,5 +271,48 @@ func (p *ProvisionerService) GetBlueprints(_ context.Context,
 
 	return &provisionerv1.GetBlueprintsResponse{
 		Blueprints: protoBlueprints,
+	}, nil
+}
+
+// GetBlueprint returns the full raw (unevaluated) spec of a single
+// blueprint by name, both merged with its inherited Template and as defined
+// directly on the blueprint itself, so callers can tell which fields are
+// inherited rather than set on this blueprint.
+func (p *ProvisionerService) GetBlueprint(_ context.Context,
+	req *provisionerv1.GetBlueprintRequest,
+) (*provisionerv1.GetBlueprintResponse, error) {
+
+	raw, err := p.server.bpManager.GetRawBlueprint(req.Name)
+	if err != nil {
+		if errors.Is(err, blueprint.ErrBlueprintNotFound) {
+			return nil, status.Errorf(codes.NotFound, "Blueprint %s not found", req.Name)
+		}
+		return nil, status.Errorf(codes.Internal, "Failed to get blueprint: %v", err)
+	}
+
+	own, err := p.server.bpManager.GetRawBlueprintOwn(req.Name)
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "Failed to get blueprint: %v", err)
+	}
+
+	template, err := p.server.bpManager.GetBlueprintTemplate(req.Name)
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "Failed to get blueprint: %v", err)
+	}
+
+	b, err := yaml.Marshal(raw)
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "Failed to marshal blueprint: %v", err)
+	}
+
+	ownB, err := yaml.Marshal(own)
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "Failed to marshal blueprint: %v", err)
+	}
+
+	return &provisionerv1.GetBlueprintResponse{
+		Blueprint:    b,
+		OwnBlueprint: ownB,
+		Template:     template,
 	}, nil
 }
