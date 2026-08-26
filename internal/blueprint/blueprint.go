@@ -230,6 +230,12 @@ func (bm *BlueprintManager) validateAllBlueprints() []error {
 		for _, e := range validateStorageSizeLimits(bp) {
 			allErrors = append(allErrors, fmt.Errorf("blueprint '%s': %w", name, e))
 		}
+		for _, e := range validateResourceQuantities(bp) {
+			allErrors = append(allErrors, fmt.Errorf("blueprint '%s': %w", name, e))
+		}
+		for _, e := range validateEnvNames(bp) {
+			allErrors = append(allErrors, fmt.Errorf("blueprint '%s': %w", name, e))
+		}
 		for _, e := range validateSecurityContexts(bp) {
 			allErrors = append(allErrors, fmt.Errorf("blueprint '%s': %w", name, e))
 		}
@@ -238,20 +244,87 @@ func (bm *BlueprintManager) validateAllBlueprints() []error {
 	return allErrors
 }
 
+// fieldError pairs a validation message with the dotted blueprint field path
+// it applies to (e.g. "resources.cpu", "storages[home].sizeLimit"), so callers
+// that need structured output (ValidateRawBlueprint) can report a field
+// without re-parsing the message text. Field is deliberately not part of the
+// error message itself, matching how go-playground/validator's FieldError
+// separates the two.
+type fieldError struct {
+	field   string
+	message string
+}
+
+func (e *fieldError) Error() string { return e.message }
+
+// Field returns the dotted blueprint field path the error applies to.
+func (e *fieldError) Field() string { return e.field }
+
+func newFieldError(field, format string, args ...interface{}) error {
+	return &fieldError{field: field, message: fmt.Sprintf(format, args...)}
+}
+
+// envNameRE matches a POSIX-conformant environment variable name: a letter
+// or underscore, followed by any number of letters, digits, or underscores.
+var envNameRE = regexp.MustCompile(`^[a-zA-Z_][a-zA-Z0-9_]*$`)
+
+// validateEnvNames checks that every key in the blueprint's env map is a
+// valid environment variable name. models.Blueprint.Env carries no validate
+// tag on its keys, so a value like "TEST X" would otherwise pass.
+func validateEnvNames(bp *models.Blueprint) []error {
+	var errs []error
+	for name := range bp.Env {
+		if !envNameRE.MatchString(name) {
+			errs = append(errs, newFieldError(fmt.Sprintf("env[%s]", name), "env %q is not a valid environment variable name", name))
+		}
+	}
+	return errs
+}
+
+// validateResourceQuantities checks that every CPU/memory limit on the
+// blueprint is a valid Kubernetes resource quantity (e.g. "500m", "2",
+// "512Mi"). The "required" struct tag on models.Resources only rejects an
+// empty string, so a malformed value like "4ddsfsdf" would otherwise pass.
+func validateResourceQuantities(bp *models.Blueprint) []error {
+	type namedQuantity struct {
+		name  string
+		value string
+	}
+
+	quantities := []namedQuantity{
+		{"resources.cpu", bp.Resources.CPU},
+		{"resources.memory", bp.Resources.Memory},
+		{"podman.resources.cpu", bp.Podman.Resources.CPU},
+		{"podman.resources.memory", bp.Podman.Resources.Memory},
+	}
+
+	var errs []error
+	for _, q := range quantities {
+		if q.value == "" {
+			continue
+		}
+		if _, err := resource.ParseQuantity(q.value); err != nil {
+			errs = append(errs, newFieldError(q.name, "%s: %q is not a valid Kubernetes quantity: %v", q.name, q.value, err))
+		}
+	}
+	return errs
+}
+
 // validateStorageSizeLimits checks that sizeLimit is only specified on emptyDir and memory
 // storage types, and that its value is a valid Kubernetes resource quantity.
 func validateStorageSizeLimits(bp *models.Blueprint) []error {
 	type namedStorage struct {
-		name    string
+		name    string // display name, e.g. "home" or "podman.home"
+		path    string // field path, e.g. "storages[home]" or "podman.storages[home]"
 		storage models.Storage
 	}
 
 	var all []namedStorage
 	for name, s := range bp.Storages {
-		all = append(all, namedStorage{name, s})
+		all = append(all, namedStorage{name: name, path: fmt.Sprintf("storages[%s]", name), storage: s})
 	}
 	for name, s := range bp.Podman.Storages {
-		all = append(all, namedStorage{"podman." + name, s})
+		all = append(all, namedStorage{name: "podman." + name, path: fmt.Sprintf("podman.storages[%s]", name), storage: s})
 	}
 
 	var errs []error
@@ -267,10 +340,12 @@ func validateStorageSizeLimits(bp *models.Blueprint) []error {
 		switch storageType {
 		case "emptyDir", "memory":
 			if _, err := resource.ParseQuantity(s.SizeLimit); err != nil {
-				errs = append(errs, fmt.Errorf("storage %q: sizeLimit %q is not a valid Kubernetes quantity: %w", ns.name, s.SizeLimit, err))
+				errs = append(errs, newFieldError(ns.path+".sizeLimit",
+					"storage %q: sizeLimit %q is not a valid Kubernetes quantity: %v", ns.name, s.SizeLimit, err))
 			}
 		default:
-			errs = append(errs, fmt.Errorf("storage %q: sizeLimit is only valid for emptyDir and memory types, got type %q", ns.name, storageType))
+			errs = append(errs, newFieldError(ns.path+".sizeLimit",
+				"storage %q: sizeLimit is only valid for emptyDir and memory types, got type %q", ns.name, storageType))
 		}
 	}
 	return errs
@@ -280,16 +355,17 @@ func validateStorageSizeLimits(bp *models.Blueprint) []error {
 // to catch structural errors early, before any Kubernetes API call is made.
 func validateClaimSpecs(bp *models.Blueprint) []error {
 	type namedStorage struct {
-		name    string
+		name    string // display name, e.g. "home" or "podman.home"
+		path    string // field path, e.g. "storages[home]" or "podman.storages[home]"
 		storage models.Storage
 	}
 
 	var all []namedStorage
 	for name, s := range bp.Storages {
-		all = append(all, namedStorage{name, s})
+		all = append(all, namedStorage{name: name, path: fmt.Sprintf("storages[%s]", name), storage: s})
 	}
 	for name, s := range bp.Podman.Storages {
-		all = append(all, namedStorage{"podman." + name, s})
+		all = append(all, namedStorage{name: "podman." + name, path: fmt.Sprintf("podman.storages[%s]", name), storage: s})
 	}
 
 	var errs []error
@@ -299,12 +375,12 @@ func validateClaimSpecs(bp *models.Blueprint) []error {
 		}
 		jsonRaw, err := json.Marshal(ns.storage.ClaimSpec)
 		if err != nil {
-			errs = append(errs, fmt.Errorf("storage %q: failed to marshal claimSpec: %w", ns.name, err))
+			errs = append(errs, newFieldError(ns.path+".claimSpec", "storage %q: failed to marshal claimSpec: %v", ns.name, err))
 			continue
 		}
 		var spec corev1.PersistentVolumeClaimSpec
 		if err := json.Unmarshal(jsonRaw, &spec); err != nil {
-			errs = append(errs, fmt.Errorf("storage %q: invalid claimSpec: %w", ns.name, err))
+			errs = append(errs, newFieldError(ns.path+".claimSpec", "storage %q: invalid claimSpec: %v", ns.name, err))
 		}
 	}
 	return errs
@@ -319,27 +395,27 @@ func validateSecurityContexts(bp *models.Blueprint) []error {
 	if len(bp.SecurityContext) > 0 {
 		jsonRaw, err := json.Marshal(bp.SecurityContext)
 		if err != nil {
-			errs = append(errs, fmt.Errorf("securityContext: failed to marshal: %w", err))
+			errs = append(errs, newFieldError("securityContext", "securityContext: failed to marshal: %v", err))
 		} else {
 			var spec corev1.SecurityContext
 			if err := json.Unmarshal(jsonRaw, &spec); err != nil {
-				errs = append(errs, fmt.Errorf("securityContext: invalid: %w", err))
+				errs = append(errs, newFieldError("securityContext", "securityContext: invalid: %v", err))
 			} else {
 				if spec.RunAsUser != nil && *spec.RunAsUser != 0 {
-					errs = append(errs, fmt.Errorf("securityContext: runAsUser must be 0, got %d", *spec.RunAsUser))
+					errs = append(errs, newFieldError("securityContext.runAsUser", "securityContext: runAsUser must be 0, got %d", *spec.RunAsUser))
 				}
 				if spec.RunAsGroup != nil && *spec.RunAsGroup != 0 {
-					errs = append(errs, fmt.Errorf("securityContext: runAsGroup must be 0, got %d", *spec.RunAsGroup))
+					errs = append(errs, newFieldError("securityContext.runAsGroup", "securityContext: runAsGroup must be 0, got %d", *spec.RunAsGroup))
 				}
 
 				if spec.RunAsNonRoot != nil && *spec.RunAsNonRoot {
-					errs = append(errs, fmt.Errorf("securityContext: runAsNonRoot cannot be true"))
+					errs = append(errs, newFieldError("securityContext.runAsNonRoot", "securityContext: runAsNonRoot cannot be true"))
 				}
 				if spec.ReadOnlyRootFilesystem != nil && *spec.ReadOnlyRootFilesystem {
-					errs = append(errs, fmt.Errorf("securityContext: readOnlyRootFilesystem cannot be true"))
+					errs = append(errs, newFieldError("securityContext.readOnlyRootFilesystem", "securityContext: readOnlyRootFilesystem cannot be true"))
 				}
 				if spec.AllowPrivilegeEscalation != nil && !*spec.AllowPrivilegeEscalation {
-					errs = append(errs, fmt.Errorf("securityContext: allowPrivilegeEscalation cannot be false"))
+					errs = append(errs, newFieldError("securityContext.allowPrivilegeEscalation", "securityContext: allowPrivilegeEscalation cannot be false"))
 				}
 
 				if spec.Capabilities != nil {
@@ -359,16 +435,16 @@ func validateSecurityContexts(bp *models.Blueprint) []error {
 
 						for _, reqCap := range requiredCaps {
 							if !addedCaps[reqCap] {
-								errs = append(errs,
-									fmt.Errorf("securityContext: %s capability is required by k8shelld but dropped with ALL", reqCap))
+								errs = append(errs, newFieldError("securityContext.capabilities",
+									"securityContext: %s capability is required by k8shelld but dropped with ALL", reqCap))
 							}
 						}
 					} else {
 						for _, cap := range spec.Capabilities.Drop {
 							for _, reqCap := range requiredCaps {
 								if cap == reqCap {
-									errs = append(errs,
-										fmt.Errorf("securityContext: cannot drop %s capability", cap))
+									errs = append(errs, newFieldError("securityContext.capabilities",
+										"securityContext: cannot drop %s capability", cap))
 								}
 							}
 						}
@@ -381,11 +457,11 @@ func validateSecurityContexts(bp *models.Blueprint) []error {
 	if len(bp.Podman.SecurityContext) > 0 {
 		jsonRaw, err := json.Marshal(bp.Podman.SecurityContext)
 		if err != nil {
-			errs = append(errs, fmt.Errorf("podman.securityContext: failed to marshal: %w", err))
+			errs = append(errs, newFieldError("podman.securityContext", "podman.securityContext: failed to marshal: %v", err))
 		} else {
 			var spec corev1.SecurityContext
 			if err := json.Unmarshal(jsonRaw, &spec); err != nil {
-				errs = append(errs, fmt.Errorf("podman.securityContext: invalid: %w", err))
+				errs = append(errs, newFieldError("podman.securityContext", "podman.securityContext: invalid: %v", err))
 			}
 		}
 	}

@@ -316,3 +316,30 @@ func (p *ProvisionerService) GetBlueprint(_ context.Context,
 		Template:     template,
 	}, nil
 }
+
+// ValidateBlueprint validates a standalone blueprint YAML document without
+// registering it in the provisioner, returning every validation problem found.
+func (p *ProvisionerService) ValidateBlueprint(_ context.Context,
+	req *provisionerv1.ValidateBlueprintRequest,
+) (*provisionerv1.ValidateBlueprintResponse, error) {
+
+	issues, err := p.server.bpManager.ValidateRawBlueprint(req.Yaml)
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "Failed to validate blueprint: %v", err)
+	}
+
+	protoErrors := make([]*provisionerv1.BlueprintValidationError, 0, len(issues))
+	for _, issue := range issues {
+		protoErrors = append(protoErrors, &provisionerv1.BlueprintValidationError{
+			Line:    int32(issue.Line),
+			Column:  int32(issue.Column),
+			Field:   issue.Field,
+			Message: issue.Message,
+		})
+	}
+
+	return &provisionerv1.ValidateBlueprintResponse{
+		Valid:  len(protoErrors) == 0,
+		Errors: protoErrors,
+	}, nil
+}
