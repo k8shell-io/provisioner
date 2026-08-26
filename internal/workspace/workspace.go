@@ -45,7 +45,7 @@ const WORKSPACE_DEFAULT_PAGE_SIZE = 20
 // k8shelldTagOverride, when non-empty, replaces the tag of the k8shelld image
 // configured in the blueprint. Leave empty to use the blueprint's image as-is.
 // this is for debug purposes only when provisioner is running in an injected workspace
-const k8shelldTagOverride = "pr-69-a8078e4" //"pr-66-3874e67"
+const k8shelldTagOverride = "" //"pr-69-a8078e4"
 
 // Workspace represents a workspace with Helm client
 type Workspace struct {
