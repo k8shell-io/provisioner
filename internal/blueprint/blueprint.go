@@ -46,6 +46,14 @@ type RawBlueprint struct {
 	Node             *yaml.Node // fully merged (own + inherited) content
 	OwnNode          *yaml.Node // content defined directly on this blueprint, before merging with Template
 	InheritanceChain []string   // ordered list of blueprint names from root ancestor to this blueprint
+
+	// Org is non-empty for a blueprint loaded from the database via
+	// OrgBlueprintStore (see orgstore.go), naming the organization it is
+	// scoped to. Empty for a file-based blueprint. An org blueprint is keyed
+	// in BlueprintManager.rawBlueprints under orgBlueprintKey(Org, Name)
+	// rather than its bare Name, so it can coexist with a file-based
+	// blueprint of the same name.
+	Org string
 }
 
 // BlueprintScope holds the runtime context passed to CEL template evaluation.
@@ -86,6 +94,11 @@ type LoadOptions struct {
 	Dir         string
 	Strategies  MergeStrategies
 	EnableWatch bool
+
+	// OrgStore, when set, supplies org-scoped blueprint definitions from the
+	// database that are merged with the file-based blueprints loaded from
+	// Dir. Nil disables org blueprint support entirely.
+	OrgStore OrgBlueprintStore
 }
 
 // BlueprintManager manages blueprints with lazy CEL evaluation.
@@ -96,6 +109,7 @@ type BlueprintManager struct {
 	strategies    MergeStrategies          // Custom strategies for merging lists in blueprints
 	processor     *config.Processor        // YAML processor for parsing and validating blueprints
 	watcher       *Watcher                 // the file watcher
+	orgStore      OrgBlueprintStore        // optional database-backed store of org-scoped blueprints
 	mu            sync.RWMutex             // Mutex for thread-safe access to rawBlueprints
 }
 
@@ -141,7 +155,8 @@ func NewBlueprintManager(opts LoadOptions) (*BlueprintManager, error) {
 			EnableEnvVarExpansion: false,
 			EnableFileTag:         true,
 		}),
-		mu: sync.RWMutex{},
+		orgStore: opts.OrgStore,
+		mu:       sync.RWMutex{},
 	}
 
 	if opts.EnableWatch {
@@ -183,6 +198,10 @@ func (bm *BlueprintManager) loadAndValidateBlueprints() (err error) {
 
 	if err = bm.loadRawBlueprints(bm.watcher.watchDir); err != nil {
 		return fmt.Errorf("failed to load blueprints: %w", err)
+	}
+
+	if err = bm.loadOrgBlueprints(); err != nil {
+		return fmt.Errorf("failed to load org blueprints: %w", err)
 	}
 
 	if err = bm.resolveInheritance(); err != nil {
@@ -498,7 +517,7 @@ func (bm *BlueprintManager) GetBlueprint(name string, scope *BlueprintScope) (*m
 	}
 
 	bm.mu.RLock()
-	rawBp, exists := bm.rawBlueprints[name]
+	rawBp, exists := bm.lookupRawBlueprint(name, scope)
 	bm.mu.RUnlock()
 
 	if !exists {
@@ -564,13 +583,19 @@ func (bm *BlueprintManager) GetBlueprintTemplate(name string) (string, error) {
 	return rawBp.Template, nil
 }
 
-// GetBlueprintsSummary returns a summary of all available blueprints without evaluating CEL expressions.
+// GetBlueprintsSummary returns a summary of all available file-based, global
+// blueprints without evaluating CEL expressions. Org-scoped database
+// blueprints (see orgstore.go) are excluded — they are not part of the
+// global catalog and are listed per-org via ListOrgBlueprints instead.
 func (bm *BlueprintManager) GetBlueprintsSummary() []*models.BlueprintSummary {
 	bm.mu.RLock()
 	defer bm.mu.RUnlock()
 
 	summaries := make([]*models.BlueprintSummary, 0, len(bm.rawBlueprints))
 	for name, bp := range bm.rawBlueprints {
+		if bp.Org != "" {
+			continue
+		}
 		summaries = append(summaries, &models.BlueprintSummary{
 			Name:        name,
 			Description: bp.Description,
@@ -626,13 +651,17 @@ func (bm *BlueprintManager) decodeRawNode(node *yaml.Node) (interface{}, error) 
 	return temp, nil
 }
 
-// ListBlueprintNames returns all available blueprint names.
+// ListBlueprintNames returns all available file-based, global blueprint
+// names. Org-scoped database blueprints are excluded (see GetBlueprintsSummary).
 func (bm *BlueprintManager) ListBlueprintNames() []string {
 	bm.mu.RLock()
 	defer bm.mu.RUnlock()
 
 	names := make([]string, 0, len(bm.rawBlueprints))
-	for name := range bm.rawBlueprints {
+	for name, bp := range bm.rawBlueprints {
+		if bp.Org != "" {
+			continue
+		}
 		names = append(names, name)
 	}
 	return names
