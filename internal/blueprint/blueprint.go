@@ -258,6 +258,9 @@ func (bm *BlueprintManager) validateAllBlueprints() []error {
 		for _, e := range validateSecurityContexts(bp) {
 			allErrors = append(allErrors, fmt.Errorf("blueprint '%s': %w", name, e))
 		}
+		for _, e := range validateDescriptionRequired(bp) {
+			allErrors = append(allErrors, fmt.Errorf("blueprint '%s': %w", name, e))
+		}
 	}
 
 	return allErrors
@@ -281,6 +284,25 @@ func (e *fieldError) Field() string { return e.field }
 
 func newFieldError(field, format string, args ...interface{}) error {
 	return &fieldError{field: field, message: fmt.Sprintf(format, args...)}
+}
+
+// RequireDescription controls whether validateDescriptionRequired rejects a
+// blueprint with an empty or missing description. Disabled by default, so
+// blueprints without one are allowed for now; flip to true once every
+// blueprint in use has been given one. Description is never inherited from
+// a Template regardless of this switch — see the "description" exclusion in
+// mergeYAMLNodesWithTags (resolve.go).
+var RequireDescription = false
+
+// validateDescriptionRequired checks that bp.Description is set. Kept as a
+// provisioner-local check rather than a "required" tag on the shared
+// models.Blueprint.Description field so RequireDescription can toggle it at
+// runtime; a struct tag can't be.
+func validateDescriptionRequired(bp *models.Blueprint) []error {
+	if RequireDescription && bp.Description == "" {
+		return []error{newFieldError("description", "description is required")}
+	}
+	return nil
 }
 
 // envNameRE matches a POSIX-conformant environment variable name: a letter
@@ -370,6 +392,71 @@ func validateStorageSizeLimits(bp *models.Blueprint) []error {
 	return errs
 }
 
+// validateStorageOwnerIDs checks that fsOwnerUid/fsOwnerGid on every storage
+// entry (workspace and podman) are valid integers, using docBytes — the
+// fully CEL-evaluated document, decoded generically — rather than the typed
+// models.Blueprint. Storage.FsOwnerUid/FsOwnerGid are *int fields, so a
+// non-numeric value (e.g. "abc") fails yaml.v3's struct decode with a
+// generic "cannot unmarshal" TypeError that carries no field path; worse,
+// yaml.v3 still leaves the pointer allocated and pointing at zero rather
+// than nil, making the bad input indistinguishable from a legitimately-set
+// "fsOwnerUid: 0" once decoded into bp. Checking the raw, still-intact value
+// here reports a properly field-pathed issue instead.
+func validateStorageOwnerIDs(docBytes []byte) []error {
+	var raw map[string]interface{}
+	if err := yaml.Unmarshal(docBytes, &raw); err != nil {
+		// Already reported by the main struct decode; nothing more to add.
+		return nil
+	}
+
+	var errs []error
+	errs = append(errs, checkStorageOwnerIDs("storages", raw["storages"])...)
+	if podman, ok := raw["podman"].(map[string]interface{}); ok {
+		errs = append(errs, checkStorageOwnerIDs("podman.storages", podman["storages"])...)
+	}
+	return errs
+}
+
+// checkStorageOwnerIDs validates fsOwnerUid/fsOwnerGid across every entry of
+// a raw storages map (already-decoded generic YAML, keyed by storage name).
+func checkStorageOwnerIDs(pathPrefix string, storages interface{}) []error {
+	m, ok := storages.(map[string]interface{})
+	if !ok {
+		return nil
+	}
+
+	var errs []error
+	for name, raw := range m {
+		storage, ok := raw.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		for _, key := range [...]string{"fsOwnerUid", "fsOwnerGid"} {
+			v, present := storage[key]
+			if !present || v == nil {
+				continue
+			}
+			if !isYAMLInteger(v) {
+				field := fmt.Sprintf("%s[%s].%s", pathPrefix, name, key)
+				errs = append(errs, newFieldError(field, "%s: %v is not a valid integer", field, v))
+			}
+		}
+	}
+	return errs
+}
+
+// isYAMLInteger reports whether v is one of the integer types yaml.v3
+// produces when decoding a scalar into interface{} (a non-numeric value
+// decodes to string instead, a fractional one to float64).
+func isYAMLInteger(v interface{}) bool {
+	switch v.(type) {
+	case int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64:
+		return true
+	default:
+		return false
+	}
+}
+
 // validateClaimSpecs decodes each storage claimSpec into corev1.PersistentVolumeClaimSpec
 // to catch structural errors early, before any Kubernetes API call is made.
 func validateClaimSpecs(bp *models.Blueprint) []error {
@@ -397,12 +484,122 @@ func validateClaimSpecs(bp *models.Blueprint) []error {
 			errs = append(errs, newFieldError(ns.path+".claimSpec", "storage %q: failed to marshal claimSpec: %v", ns.name, err))
 			continue
 		}
+		// Strict decoding (DisallowUnknownFields) so a typo'd claimSpec
+		// field (e.g. "storageClassNamex") is reported instead of silently
+		// dropped, leaving spec's corresponding field at its zero value —
+		// the same failure mode fixed for securityContext below.
 		var spec corev1.PersistentVolumeClaimSpec
-		if err := json.Unmarshal(jsonRaw, &spec); err != nil {
+		dec := json.NewDecoder(bytes.NewReader(jsonRaw))
+		dec.DisallowUnknownFields()
+		if err := dec.Decode(&spec); err != nil {
 			errs = append(errs, newFieldError(ns.path+".claimSpec", "storage %q: invalid claimSpec: %v", ns.name, err))
+		}
+
+		errs = append(errs, validateClaimSpecResourceNames(ns.path, ns.storage.ClaimSpec)...)
+	}
+	return errs
+}
+
+// validPVCResourceNames is the only resource name Kubernetes accepts under a
+// PersistentVolumeClaimSpec's resources.requests/limits: "storage".
+// PersistentVolumeClaimSpec.Resources (VolumeResourceRequirements) types
+// Requests/Limits as plain map[ResourceName]resource.Quantity, so a typo'd
+// key like "storagex" decodes without error — DisallowUnknownFields only
+// rejects unrecognized struct fields, never arbitrary map keys — and would
+// otherwise only be caught once the Kubernetes API server rejects the PVC
+// at apply time.
+var validPVCResourceNames = map[string]bool{"storage": true}
+
+// validateClaimSpecResourceNames checks every key under claimSpec's
+// resources.requests/resources.limits against validPVCResourceNames.
+// claimSpec is the raw, undecoded map (models.Storage.ClaimSpec), inspected
+// directly since VolumeResourceRequirements' own struct decode can't catch
+// an invalid map key.
+func validateClaimSpecResourceNames(path string, claimSpec map[string]interface{}) []error {
+	resources, ok := claimSpec["resources"].(map[string]interface{})
+	if !ok {
+		return nil
+	}
+
+	var errs []error
+	for _, section := range [...]string{"requests", "limits"} {
+		entries, ok := resources[section].(map[string]interface{})
+		if !ok {
+			continue
+		}
+		for name := range entries {
+			if !validPVCResourceNames[name] {
+				field := fmt.Sprintf("%s.claimSpec.resources.%s", path, section)
+				errs = append(errs, newFieldError(field,
+					"%s: %q is not a valid resource name for a PersistentVolumeClaim (expected \"storage\")", field, name))
+			}
 		}
 	}
 	return errs
+}
+
+// validCapabilityNames is the set of Linux capability names Kubernetes'
+// SecurityContext.Capabilities accepts (without the kernel's "CAP_" prefix),
+// per capabilities(7). "ALL" is a wildcard token recognized by container
+// runtimes for drop (and, less commonly, add) rather than an actual
+// capability, and is accepted here for the same reason the required-caps
+// check below already treats "drop: [ALL]" specially.
+var validCapabilityNames = map[corev1.Capability]bool{
+	"ALL": true,
+
+	"AUDIT_CONTROL": true, "AUDIT_READ": true, "AUDIT_WRITE": true,
+	"BLOCK_SUSPEND": true, "BPF": true, "CHECKPOINT_RESTORE": true,
+	"CHOWN": true, "DAC_OVERRIDE": true, "DAC_READ_SEARCH": true,
+	"FOWNER": true, "FSETID": true,
+	"IPC_LOCK": true, "IPC_OWNER": true,
+	"KILL":  true,
+	"LEASE": true, "LINUX_IMMUTABLE": true,
+	"MAC_ADMIN": true, "MAC_OVERRIDE": true, "MKNOD": true,
+	"NET_ADMIN": true, "NET_BIND_SERVICE": true, "NET_BROADCAST": true, "NET_RAW": true,
+	"PERFMON": true,
+	"SETFCAP": true, "SETGID": true, "SETPCAP": true, "SETUID": true,
+	"SYS_ADMIN": true, "SYS_BOOT": true, "SYS_CHROOT": true, "SYS_MODULE": true,
+	"SYS_NICE": true, "SYS_PACCT": true, "SYS_PTRACE": true, "SYS_RAWIO": true,
+	"SYS_RESOURCE": true, "SYS_TIME": true, "SYS_TTY_CONFIG": true,
+	"SYSLOG":     true,
+	"WAKE_ALARM": true,
+}
+
+// validateCapabilityNames reports an issue for each entry in caps.Add/Drop
+// that isn't a real Linux capability name (or the "ALL" wildcard), catching
+// typos like "SYS_PTRACEx" that corev1.Capability's plain string type can't
+// reject on its own. fieldPrefix is the dotted path to caps itself (e.g.
+// "securityContext.capabilities").
+func validateCapabilityNames(fieldPrefix string, caps *corev1.Capabilities) []error {
+	if caps == nil {
+		return nil
+	}
+	var errs []error
+	for _, c := range caps.Add {
+		if !validCapabilityNames[c] {
+			errs = append(errs, newFieldError(fieldPrefix+".add", "%s.add: %q is not a valid Linux capability", fieldPrefix, c))
+		}
+	}
+	for _, c := range caps.Drop {
+		if !validCapabilityNames[c] {
+			errs = append(errs, newFieldError(fieldPrefix+".drop", "%s.drop: %q is not a valid Linux capability", fieldPrefix, c))
+		}
+	}
+	return errs
+}
+
+// decodeSecurityContextStrict decodes jsonRaw into a corev1.SecurityContext,
+// rejecting any field that doesn't exist on that type. A plain
+// json.Unmarshal silently ignores unknown fields (e.g. a typo'd
+// "capabilitiesx" instead of "capabilities"), leaving spec zeroed out
+// instead of reporting an error — which then hides every downstream check
+// below that depends on spec.Capabilities, since it stays nil.
+func decodeSecurityContextStrict(jsonRaw []byte) (corev1.SecurityContext, error) {
+	var spec corev1.SecurityContext
+	dec := json.NewDecoder(bytes.NewReader(jsonRaw))
+	dec.DisallowUnknownFields()
+	err := dec.Decode(&spec)
+	return spec, err
 }
 
 // validateSecurityContexts decodes Blueprint.SecurityContext and Podman.SecurityContext
@@ -416,8 +613,8 @@ func validateSecurityContexts(bp *models.Blueprint) []error {
 		if err != nil {
 			errs = append(errs, newFieldError("securityContext", "securityContext: failed to marshal: %v", err))
 		} else {
-			var spec corev1.SecurityContext
-			if err := json.Unmarshal(jsonRaw, &spec); err != nil {
+			spec, err := decodeSecurityContextStrict(jsonRaw)
+			if err != nil {
 				errs = append(errs, newFieldError("securityContext", "securityContext: invalid: %v", err))
 			} else {
 				if spec.RunAsUser != nil && *spec.RunAsUser != 0 {
@@ -438,6 +635,8 @@ func validateSecurityContexts(bp *models.Blueprint) []error {
 				}
 
 				if spec.Capabilities != nil {
+					errs = append(errs, validateCapabilityNames("securityContext.capabilities", spec.Capabilities)...)
+
 					droppedAll := false
 					for _, cap := range spec.Capabilities.Drop {
 						if cap == "ALL" {
@@ -477,11 +676,10 @@ func validateSecurityContexts(bp *models.Blueprint) []error {
 		jsonRaw, err := json.Marshal(bp.Podman.SecurityContext)
 		if err != nil {
 			errs = append(errs, newFieldError("podman.securityContext", "podman.securityContext: failed to marshal: %v", err))
+		} else if spec, err := decodeSecurityContextStrict(jsonRaw); err != nil {
+			errs = append(errs, newFieldError("podman.securityContext", "podman.securityContext: invalid: %v", err))
 		} else {
-			var spec corev1.SecurityContext
-			if err := json.Unmarshal(jsonRaw, &spec); err != nil {
-				errs = append(errs, newFieldError("podman.securityContext", "podman.securityContext: invalid: %v", err))
-			}
+			errs = append(errs, validateCapabilityNames("podman.securityContext.capabilities", spec.Capabilities)...)
 		}
 	}
 

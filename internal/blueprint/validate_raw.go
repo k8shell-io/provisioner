@@ -41,14 +41,17 @@ type ValidationIssue struct {
 var yamlErrorLineRE = regexp.MustCompile(`line (\d+)`)
 var unknownFieldRE = regexp.MustCompile(`field (\S+) not found`)
 
-// yamlcel's Eval/EvalToBytes build a dotted/bracketed path (e.g.
-// "k8shelld.image", "network.allowEgressToCIDRs[0]") as it walks the
-// template, already in exactly our field-path format, and embeds it in the
-// wrapped error text: evalCELValueWithPath does
-// fmt.Errorf("failed to evaluate '%s': %w", path, err), and
-// evalCELNodeWithPath/parseCELValue similarly wrap with the path. These
-// extract that path so a CEL failure points at the actual expression field
-// instead of the generic fieldCEL sentinel.
+// yamlcel's Eval/EvalToBytes build a dotted path (e.g. "k8shelld.image") as
+// it walks the template and embeds it in the wrapped error text:
+// evalCELValueWithPath does fmt.Errorf("failed to evaluate '%s': %w", path,
+// err), and evalCELNodeWithPath/parseCELValue similarly wrap with the path.
+// These extract that path so a CEL failure points at the actual expression
+// field instead of the generic fieldCEL sentinel. A list index already
+// comes through bracketed (e.g. "network.allowEgressToCIDRs[0]"), matching
+// this codebase's own convention, but a map key (e.g. a storage name) comes
+// through as a plain dotted segment ("storages.shared...") since yaml-cel
+// has no notion of which fields are user-keyed maps — bracketMapKeys fixes
+// that up before the path is used as a Field.
 var (
 	celEvalPathRE  = regexp.MustCompile(`failed to evaluate '([^']*)'`)
 	celValuePathRE = regexp.MustCompile(`(?:empty CELValue at path|failed to parse value for key) '([^']*)'`)
@@ -65,19 +68,58 @@ const (
 	fieldCEL  = "cel"
 )
 
+// mapFieldPrefixes lists the dotted prefixes of blueprint fields that are
+// user-keyed maps (Storages, Podman.Storages, Env, Apps, ExtFiles,
+// Podman.ExtFiles), checked longest-first so "podman.storages" is matched
+// before the "storages" it would otherwise collide with. claimSpec is
+// deliberately excluded even though it's also a map in the Go model: its
+// keys are fixed PersistentVolumeClaimSpec field names (resources,
+// storageClassName, ...), not user-chosen identifiers, so every other
+// Field this package reports already addresses it with plain dots (e.g.
+// "storages[home].claimSpec.resources.requests").
+var mapFieldPrefixes = []string{
+	"podman.storages",
+	"podman.extFiles",
+	"storages",
+	"extFiles",
+	"apps",
+	"env",
+}
+
+// bracketMapKeys rewrites the first user-keyed map segment in path (per
+// mapFieldPrefixes) from yaml-cel's plain-dot form ("storages.shared...")
+// into this codebase's bracketed convention ("storages[shared]..."), so a
+// CEL error's Field matches every other issue's format (see
+// TestValidateRawBlueprintFieldPathFormat) instead of needing a second
+// parser downstream.
+func bracketMapKeys(path string) string {
+	for _, prefix := range mapFieldPrefixes {
+		rest, ok := strings.CutPrefix(path, prefix+".")
+		if !ok {
+			continue
+		}
+		key, tail, hasTail := strings.Cut(rest, ".")
+		if hasTail {
+			return fmt.Sprintf("%s[%s].%s", prefix, key, tail)
+		}
+		return fmt.Sprintf("%s[%s]", prefix, key)
+	}
+	return path
+}
+
 // celErrorField recovers the dotted/bracketed field path from a
 // yamlcel evaluation error, falling back to the enclosing section name and
 // finally to the generic fieldCEL sentinel if the message names neither.
 func celErrorField(err error) string {
 	msg := err.Error()
 	if m := celEvalPathRE.FindStringSubmatch(msg); m != nil {
-		return m[1]
+		return bracketMapKeys(m[1])
 	}
 	if m := celValuePathRE.FindStringSubmatch(msg); m != nil {
-		return m[1]
+		return bracketMapKeys(m[1])
 	}
 	if m := celSectionRE.FindStringSubmatch(msg); m != nil {
-		return m[1]
+		return bracketMapKeys(m[1])
 	}
 	return fieldCEL
 }
@@ -164,15 +206,23 @@ func structValidationMessage(fe govalidator.FieldError) string {
 // registering it in the manager. If the document references an existing
 // template via `template:`, that template's already-resolved definition is
 // merged in exactly as it would be for a blueprint loaded from disk.
-func (bm *BlueprintManager) ValidateRawBlueprint(data []byte) ([]ValidationIssue, error) {
+//
+// The second return value is the raw (unevaluated) result of that merge —
+// the same shape GetRawBlueprint returns for an already-registered
+// blueprint, but for this standalone document — so an editor can preview
+// the full inherited blueprint as the "own" fields are added, changed, or
+// removed. It is only populated when the submission is valid (the first
+// return value is empty): a caller should fix the reported issues first
+// rather than being handed a preview built from an invalid document.
+func (bm *BlueprintManager) ValidateRawBlueprint(data []byte) ([]ValidationIssue, interface{}, error) {
 	var doc yaml.Node
 	if err := yaml.Unmarshal(data, &doc); err != nil {
-		return []ValidationIssue{yamlErrorToIssue(err)}, nil
+		return []ValidationIssue{yamlErrorToIssue(err)}, nil, nil
 	}
 
 	node, err := bm.resolveValidationNode(&doc)
 	if err != nil {
-		return []ValidationIssue{{Field: fieldYAML, Message: err.Error()}}, nil
+		return []ValidationIssue{{Field: fieldYAML, Message: err.Error()}}, nil, nil
 	}
 	node = restoreCELNodes(node)
 
@@ -191,18 +241,18 @@ func (bm *BlueprintManager) ValidateRawBlueprint(data []byte) ([]ValidationIssue
 				Field:   "template",
 				Message: fmt.Sprintf("template %q not found", templateName),
 				Line:    findKeyLine(node, "template"),
-			}}, nil
+			}}, nil, nil
 		}
 
 		mergedNode, err = bm.mergeYAMLNodes(parent.Node, node)
 		if err != nil {
-			return nil, fmt.Errorf("failed to merge template %q: %w", templateName, err)
+			return nil, nil, fmt.Errorf("failed to merge template %q: %w", templateName, err)
 		}
 	}
 
 	var tmpl yamlcel.CELTemplate
 	if err := mergedNode.Decode(&tmpl); err != nil {
-		return []ValidationIssue{{Field: fieldYAML, Message: fmt.Sprintf("failed to parse CEL template: %v", err)}}, nil
+		return []ValidationIssue{{Field: fieldYAML, Message: fmt.Sprintf("failed to parse CEL template: %v", err)}}, nil, nil
 	}
 
 	name, _ := bpData["name"].(string)
@@ -211,20 +261,25 @@ func (bm *BlueprintManager) ValidateRawBlueprint(data []byte) ([]ValidationIssue
 
 	mapScope, err := scope.ToMap()
 	if err != nil {
-		return nil, fmt.Errorf("failed to convert scope to map: %w", err)
+		return nil, nil, fmt.Errorf("failed to convert scope to map: %w", err)
 	}
 	mapScope["blueprint"] = name
 
 	docBytes, err := tmpl.EvalToBytes(mapScope, map[string]string{})
 	if err != nil {
-		return []ValidationIssue{{Field: celErrorField(err), Message: fmt.Sprintf("CEL evaluation failed: %v", err)}}, nil
+		return []ValidationIssue{{Field: celErrorField(err), Message: fmt.Sprintf("CEL evaluation failed: %v", err)}}, nil, nil
+	}
+
+	var preDecodeIssues []ValidationIssue
+	for _, e := range validateStorageOwnerIDs(docBytes) {
+		preDecodeIssues = append(preDecodeIssues, errorToIssue(e))
 	}
 
 	var bp models.Blueprint
 	decoder := yaml.NewDecoder(bytes.NewReader(docBytes))
 	decoder.KnownFields(bm.knownFields)
 
-	var issues []ValidationIssue
+	issues := preDecodeIssues
 	if err := decoder.Decode(&bp); err != nil {
 		// A *yaml.TypeError (unknown field, type mismatch, ...) still leaves
 		// every other field decoded into bp, so fold its issues in and keep
@@ -232,7 +287,7 @@ func (bm *BlueprintManager) ValidateRawBlueprint(data []byte) ([]ValidationIssue
 		// other decode error means bp is unusable, so bail out with just that.
 		var typeErr *yaml.TypeError
 		if !errors.As(err, &typeErr) {
-			return decodeErrorToIssues(err), nil
+			return append(issues, decodeErrorToIssues(err)...), nil, nil
 		}
 		issues = append(issues, decodeErrorToIssues(err)...)
 	}
@@ -253,8 +308,20 @@ func (bm *BlueprintManager) ValidateRawBlueprint(data []byte) ([]ValidationIssue
 	for _, e := range validateSecurityContexts(&bp) {
 		issues = append(issues, errorToIssue(e))
 	}
+	for _, e := range validateDescriptionRequired(&bp) {
+		issues = append(issues, errorToIssue(e))
+	}
 
-	return issues, nil
+	if len(issues) > 0 {
+		return issues, nil, nil
+	}
+
+	resolved, err := bm.decodeRawNode(mergedNode)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to decode merged blueprint: %w", err)
+	}
+
+	return nil, resolved, nil
 }
 
 // errorToIssue converts an error from one of the blueprint.go semantic

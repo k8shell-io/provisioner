@@ -18,6 +18,7 @@ COPY vendor ./vendor
 
 COPY main.go ./
 COPY internal ./internal
+COPY db ./db
 
 ENV GOFLAGS="-mod=vendor"
 
@@ -38,6 +39,7 @@ COPY vendor ./vendor
 
 COPY main.go ./
 COPY internal ./internal
+COPY db ./db
 
 ENV GOFLAGS="-mod=vendor"
 
@@ -50,6 +52,7 @@ FROM registry.k8shell.io/docker/library/alpine:3.21.3 AS alpine
 
 RUN mkdir /app
 COPY --from=build-debug /go/bin/provisioner /app/provisioner
+COPY --from=build-debug /go/src/provisioner/db /app/db
 WORKDIR /app
 ENTRYPOINT ["sh", "-c", "while true; do /app/provisioner \"$@\"; done", "--"]
 
@@ -57,6 +60,7 @@ ENTRYPOINT ["sh", "-c", "while true; do /app/provisioner \"$@\"; done", "--"]
 FROM gcr.io/distroless/static-debian12:nonroot AS release
 
 COPY --from=build-release --chown=nonroot:nonroot /go/bin/provisioner /app/provisioner
+COPY --from=build-release --chown=nonroot:nonroot /go/src/provisioner/db /app/db
 
 USER nonroot:nonroot
 WORKDIR /app

@@ -177,7 +177,7 @@ func (p *ProvisionerService) DeleteOrgBlueprint(_ context.Context,
 // same way ValidateBlueprint does, returning an InvalidArgument status
 // naming the first problem found when invalid.
 func (p *ProvisionerService) validateOrgBlueprintYaml(yaml []byte) error {
-	issues, err := p.server.bpManager.ValidateRawBlueprint(yaml)
+	issues, _, err := p.server.bpManager.ValidateRawBlueprint(yaml)
 	if err != nil {
 		return status.Errorf(codes.Internal, "failed to validate blueprint: %v", err)
 	}

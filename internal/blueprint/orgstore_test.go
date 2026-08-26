@@ -72,11 +72,11 @@ podman:
 func TestOrgBlueprintOverridesFileBlueprintForItsOrg(t *testing.T) {
 	store := &fakeOrgStore{}
 	bm := newTestManagerWithOrgStore(t, map[string]string{
-		"dev.yaml": "name: dev\nimage: myimage:latest\n" + requiredBlueprintFields,
+		"dev.yaml": "name: dev\ndescription: test blueprint\nimage: myimage:latest\n" + requiredBlueprintFields,
 	}, store)
 
 	store.set([]*models.OrgBlueprint{
-		{Org: "acme", Name: "dev", YAML: []byte("name: dev\nimage: acme-image:latest\n" + requiredBlueprintFields)},
+		{Org: "acme", Name: "dev", YAML: []byte("name: dev\ndescription: test blueprint\nimage: acme-image:latest\n" + requiredBlueprintFields)},
 	})
 	if err := bm.ReloadOrgBlueprints(); err != nil {
 		t.Fatalf("reload failed: %v", err)
@@ -104,11 +104,11 @@ func TestOrgBlueprintOverridesFileBlueprintForItsOrg(t *testing.T) {
 func TestOrgBlueprintInheritsFileTemplate(t *testing.T) {
 	store := &fakeOrgStore{}
 	bm := newTestManagerWithOrgStore(t, map[string]string{
-		"base.yaml": "name: base\nisTemplate: true\nimage: base-image:latest\n" + requiredBlueprintFields,
+		"base.yaml": "name: base\nisTemplate: true\ndescription: test template\nimage: base-image:latest\n" + requiredBlueprintFields,
 	}, store)
 
 	store.set([]*models.OrgBlueprint{
-		{Org: "acme", Name: "custom", YAML: []byte("name: custom\ntemplate: base\n")},
+		{Org: "acme", Name: "custom", YAML: []byte("name: custom\ntemplate: base\ndescription: test org blueprint\n")},
 	})
 	if err := bm.ReloadOrgBlueprints(); err != nil {
 		t.Fatalf("reload failed: %v", err)
@@ -126,11 +126,11 @@ func TestOrgBlueprintInheritsFileTemplate(t *testing.T) {
 func TestGetBlueprintsSummaryExcludesOrgBlueprints(t *testing.T) {
 	store := &fakeOrgStore{}
 	bm := newTestManagerWithOrgStore(t, map[string]string{
-		"dev.yaml": "name: dev\nimage: myimage:latest\n" + requiredBlueprintFields,
+		"dev.yaml": "name: dev\ndescription: test blueprint\nimage: myimage:latest\n" + requiredBlueprintFields,
 	}, store)
 
 	store.set([]*models.OrgBlueprint{
-		{Org: "acme", Name: "custom", YAML: []byte("name: custom\nimage: custom-image:latest\n" + requiredBlueprintFields)},
+		{Org: "acme", Name: "custom", YAML: []byte("name: custom\ndescription: test org blueprint\nimage: custom-image:latest\n" + requiredBlueprintFields)},
 	})
 	if err := bm.ReloadOrgBlueprints(); err != nil {
 		t.Fatalf("reload failed: %v", err)
@@ -149,7 +149,7 @@ func TestGetBlueprintsSummaryExcludesOrgBlueprints(t *testing.T) {
 
 func TestOrgBlueprintNotFoundWithoutStore(t *testing.T) {
 	bm := newTestManagerWithOrgStore(t, map[string]string{
-		"dev.yaml": "name: dev\nimage: myimage:latest\n" + requiredBlueprintFields,
+		"dev.yaml": "name: dev\ndescription: test blueprint\nimage: myimage:latest\n" + requiredBlueprintFields,
 	}, nil)
 
 	bp, err := bm.GetBlueprint("dev", scopeForOrg("acme"))
