@@ -13,6 +13,7 @@ import (
 	"github.com/k8shell-io/common/pkg/gapi"
 	"github.com/k8shell-io/common/pkg/models"
 	"github.com/k8shell-io/common/pkg/userstr"
+	"github.com/k8shell-io/common/pkg/utils"
 	"github.com/k8shell-io/provisioner/internal/blueprint"
 	ws "github.com/k8shell-io/provisioner/internal/workspace"
 	"google.golang.org/grpc/codes"
@@ -331,8 +332,8 @@ func (p *ProvisionerService) ValidateBlueprint(_ context.Context,
 	protoErrors := make([]*provisionerv1.BlueprintValidationError, 0, len(issues))
 	for _, issue := range issues {
 		protoErrors = append(protoErrors, &provisionerv1.BlueprintValidationError{
-			Line:    int32(issue.Line),
-			Column:  int32(issue.Column),
+			Line:    utils.SafeIntToInt32(issue.Line),
+			Column:  utils.SafeIntToInt32(issue.Column),
 			Field:   issue.Field,
 			Message: issue.Message,
 		})
