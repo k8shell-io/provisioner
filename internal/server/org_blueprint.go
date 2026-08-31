@@ -36,7 +36,12 @@ func (p *ProvisionerService) CreateBlueprint(_ context.Context,
 		return nil, err
 	}
 
-	name, description, isTemplate, err := blueprint.ParseBlueprintMeta(req.GetYaml())
+	yamlDoc, err := blueprint.CanonicalizeRawBlueprint(req.GetYaml())
+	if err != nil {
+		return nil, status.Errorf(codes.InvalidArgument, "invalid blueprint yaml: %v", err)
+	}
+
+	name, description, _, isTemplate, err := blueprint.ParseBlueprintMeta(yamlDoc)
 	if err != nil {
 		return nil, status.Errorf(codes.InvalidArgument, "invalid blueprint yaml: %v", err)
 	}
@@ -44,7 +49,12 @@ func (p *ProvisionerService) CreateBlueprint(_ context.Context,
 		return nil, status.Error(codes.InvalidArgument, "blueprint yaml must set a name")
 	}
 
-	bp, err := p.server.DB.CreateBlueprint(req.GetOrg(), name, description, req.GetYaml(), isTemplate)
+	if p.server.bpManager.HasGlobalBlueprint(name) {
+		return nil, status.Errorf(codes.AlreadyExists,
+			"blueprint '%s' already exists as a global blueprint and cannot be redefined for an org", name)
+	}
+
+	bp, err := p.server.DB.CreateBlueprint(req.GetOrg(), name, description, yamlDoc, isTemplate)
 	if err != nil {
 		switch {
 		case errors.Is(err, dbpkg.ErrBlueprintExists):
@@ -84,7 +94,12 @@ func (p *ProvisionerService) UpdateBlueprint(_ context.Context,
 		return nil, err
 	}
 
-	name, description, _, err := blueprint.ParseBlueprintMeta(req.GetYaml())
+	yamlDoc, err := blueprint.CanonicalizeRawBlueprint(req.GetYaml())
+	if err != nil {
+		return nil, status.Errorf(codes.InvalidArgument, "invalid blueprint yaml: %v", err)
+	}
+
+	name, description, _, _, err := blueprint.ParseBlueprintMeta(yamlDoc)
 	if err != nil {
 		return nil, status.Errorf(codes.InvalidArgument, "invalid blueprint yaml: %v", err)
 	}
@@ -92,7 +107,7 @@ func (p *ProvisionerService) UpdateBlueprint(_ context.Context,
 		return nil, status.Error(codes.InvalidArgument, "blueprint yaml must set a name")
 	}
 
-	bp, err := p.server.DB.UpdateBlueprint(req.GetOrg(), name, &description, req.GetYaml())
+	bp, err := p.server.DB.UpdateBlueprint(req.GetOrg(), name, &description, yamlDoc)
 	if err != nil {
 		if errors.Is(err, dbpkg.ErrBlueprintNotFound) {
 			return nil, status.Errorf(codes.NotFound, "blueprint '%s' not found for org '%s'", name, req.GetOrg())

@@ -264,7 +264,10 @@ func (p *ProvisionerService) ListBlueprints(_ context.Context,
 	_ *provisionerv1.ListBlueprintsRequest,
 ) (*provisionerv1.ListBlueprintsResponse, error) {
 
-	blueprints := p.server.bpManager.GetBlueprintsSummary()
+	blueprints, err := p.server.bpManager.GetBlueprintsSummary()
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "Failed to list blueprints: %v", err)
+	}
 
 	var protoBlueprints []*commonv1.BlueprintSummary
 	for _, b := range blueprints {

@@ -235,14 +235,15 @@ func (bm *BlueprintManager) validateAllBlueprints() []error {
 	var allErrors []error
 
 	bm.mu.RLock()
-	blueprintNames := make([]string, 0, len(bm.rawBlueprints))
-	for name := range bm.rawBlueprints {
-		blueprintNames = append(blueprintNames, name)
+	rawBlueprints := make([]*RawBlueprint, 0, len(bm.rawBlueprints))
+	for _, rawBp := range bm.rawBlueprints {
+		rawBlueprints = append(rawBlueprints, rawBp)
 	}
 	bm.mu.RUnlock()
 
-	for _, name := range blueprintNames {
-		bp, err := bm.GetBlueprint(name, validationScope)
+	for _, rawBp := range rawBlueprints {
+		name := rawBp.Name
+		bp, err := bm.evaluateRawBlueprint(rawBp, name, validationScope)
 		if err != nil {
 			allErrors = append(allErrors, fmt.Errorf("blueprint '%s': %w", name, err))
 			continue
@@ -722,14 +723,32 @@ func (bm *BlueprintManager) GetBlueprint(name string, scope *BlueprintScope) (*m
 		return nil, fmt.Errorf("scope cannot be nil")
 	}
 
-	bm.mu.RLock()
-	rawBp, exists := bm.lookupRawBlueprint(name, scope)
-	bm.mu.RUnlock()
-
-	if !exists {
-		return nil, fmt.Errorf("blueprint %s not found: %w", name, ErrBlueprintNotFound)
+	var org string
+	if scope.User != nil {
+		org = scope.User.Organization
 	}
 
+	rawBp, ok, err := bm.lookupOrgFromStore(org, name)
+	if err != nil {
+		return nil, err
+	}
+	if !ok {
+		bm.mu.RLock()
+		fileBp, exists := bm.rawBlueprints[name]
+		bm.mu.RUnlock()
+		if !exists || fileBp.Org != "" {
+			return nil, fmt.Errorf("blueprint %s not found: %w", name, ErrBlueprintNotFound)
+		}
+		rawBp = fileBp
+	}
+
+	return bm.evaluateRawBlueprint(rawBp, name, scope)
+}
+
+// evaluateRawBlueprint evaluates rawBp's CEL template against scope and
+// decodes the result into a models.Blueprint. name is used only for error
+// messages and the "blueprint" CEL variable.
+func (bm *BlueprintManager) evaluateRawBlueprint(rawBp *RawBlueprint, name string, scope *BlueprintScope) (*models.Blueprint, error) {
 	scope.Metadata.Name = NormalizeDNSLabel(rawBp.Name)
 	var tmpl yamlcel.CELTemplate
 	if err := rawBp.Node.Decode(&tmpl); err != nil {
@@ -790,29 +809,52 @@ func (bm *BlueprintManager) GetBlueprintTemplate(name string) (string, error) {
 }
 
 // GetBlueprintsSummary returns a summary of every registered blueprint
-// without evaluating CEL expressions: the file-based, global blueprints and
-// every org-scoped database blueprint (see orgstore.go). Org names the
-// organization an org-scoped blueprint belongs to (empty for a global one),
-// IsGlobal is its inverse, and Template names the immediate parent template,
-// if any.
-func (bm *BlueprintManager) GetBlueprintsSummary() []*models.BlueprintSummary {
+// without evaluating CEL expressions: the file-based, global blueprints from
+// the in-memory cache plus every org-scoped database blueprint read fresh
+// from the backing store, so a row created or deleted out of band shows up
+// immediately. Org names the organization an org-scoped blueprint belongs to
+// (empty for a global one), IsGlobal is its inverse, and Template names the
+// immediate parent template, if any.
+func (bm *BlueprintManager) GetBlueprintsSummary() ([]*models.BlueprintSummary, error) {
 	bm.mu.RLock()
-	defer bm.mu.RUnlock()
-
 	summaries := make([]*models.BlueprintSummary, 0, len(bm.rawBlueprints))
 	for _, bp := range bm.rawBlueprints {
+		if bp.Org != "" {
+			continue // org blueprints are served from the store, below
+		}
 		summaries = append(summaries, &models.BlueprintSummary{
 			Name:        bp.Name,
 			Description: bp.Description,
 			IsTemplate:  bp.IsTemplate,
-			Org:         bp.Org,
-			IsGlobal:    bp.Org == "",
+			IsGlobal:    true,
 			Template:    bp.Template,
 			CreatedAt:   bp.CreatedAt,
 			UpdatedAt:   bp.UpdatedAt,
 		})
 	}
-	return summaries
+	bm.mu.RUnlock()
+
+	if bm.orgStore == nil {
+		return summaries, nil
+	}
+
+	orgBlueprints, err := bm.orgStore.ListAllBlueprints()
+	if err != nil {
+		return nil, fmt.Errorf("list org blueprints from store: %w", err)
+	}
+	for _, ob := range orgBlueprints {
+		_, _, template, _, _ := ParseBlueprintMeta(ob.YAML)
+		summaries = append(summaries, &models.BlueprintSummary{
+			Name:        ob.Name,
+			Description: ob.Description,
+			IsTemplate:  ob.IsTemplate,
+			Org:         ob.Org,
+			Template:    template,
+			CreatedAt:   ob.CreatedAt,
+			UpdatedAt:   ob.UpdatedAt,
+		})
+	}
+	return summaries, nil
 }
 
 // GetRawBlueprint returns the raw (unevaluated) YAML content of the named
@@ -849,25 +891,26 @@ func (bm *BlueprintManager) GetRawBlueprintOwn(name string) (interface{}, error)
 }
 
 // GetRawBlueprintScoped resolves name the same way GetRawBlueprint does, but
-// first looks for an org-scoped database blueprint named name in org, falling
-// back to the file-based/global blueprint when org is empty or has no such
-// blueprint. It returns the fully merged content, the content defined
-// directly on the blueprint (own), and the name of the immediate parent
-// template, if any. CEL expressions are returned with a "!cel:" prefix, as
-// in GetRawBlueprint.
+// when org is set it serves the org-scoped blueprint straight from the
+// backing store (so a row changed or deleted out of band is reflected
+// immediately), falling back to the file-based/global blueprint when org is
+// empty or has no such row. It returns the fully merged content, the content
+// defined directly on the blueprint (own), and the name of the immediate
+// parent template, if any. CEL expressions are returned with a "!cel:"
+// prefix, as in GetRawBlueprint.
 func (bm *BlueprintManager) GetRawBlueprintScoped(org, name string) (merged, own interface{}, template string, err error) {
-	bm.mu.RLock()
-	defer bm.mu.RUnlock()
-
-	var rawBp *RawBlueprint
-	if org != "" {
-		rawBp = bm.rawBlueprints[orgBlueprintKey(org, name)]
+	rawBp, ok, err := bm.lookupOrgFromStore(org, name)
+	if err != nil {
+		return nil, nil, "", err
 	}
-	if rawBp == nil {
-		rawBp = bm.rawBlueprints[name]
-	}
-	if rawBp == nil {
-		return nil, nil, "", fmt.Errorf("blueprint %s not found: %w", name, ErrBlueprintNotFound)
+	if !ok {
+		bm.mu.RLock()
+		fileBp, exists := bm.rawBlueprints[name]
+		bm.mu.RUnlock()
+		if !exists || fileBp.Org != "" {
+			return nil, nil, "", fmt.Errorf("blueprint %s not found: %w", name, ErrBlueprintNotFound)
+		}
+		rawBp = fileBp
 	}
 
 	if merged, err = bm.decodeRawNode(rawBp.Node); err != nil {
@@ -906,6 +949,19 @@ func (bm *BlueprintManager) ListBlueprintNames() []string {
 		names = append(names, name)
 	}
 	return names
+}
+
+// HasGlobalBlueprint reports whether a file-based, global blueprint (template
+// or not) named name is currently registered. Org-scoped database blueprints
+// are not considered. Used to stop an org blueprint from being created under
+// a name that a global blueprint already owns, which it would otherwise
+// silently shadow for that org.
+func (bm *BlueprintManager) HasGlobalBlueprint(name string) bool {
+	bm.mu.RLock()
+	defer bm.mu.RUnlock()
+
+	bp, ok := bm.rawBlueprints[name]
+	return ok && bp.Org == ""
 }
 
 // GetDefaultUserBlueprint returns the name of the first non-template blueprint

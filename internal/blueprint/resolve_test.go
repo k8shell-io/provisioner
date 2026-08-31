@@ -60,7 +60,11 @@ func TestDescriptionOverridesTemplate(t *testing.T) {
 			requiredBlueprintFields,
 	})
 
-	for _, s := range bm.GetBlueprintsSummary() {
+	sums, err := bm.GetBlueprintsSummary()
+	if err != nil {
+		t.Fatalf("GetBlueprintsSummary: %v", err)
+	}
+	for _, s := range sums {
 		if s.Name == "child" && s.Description != "Child's own description" {
 			t.Fatalf("expected summary description to keep the child's own, got %q", s.Description)
 		}

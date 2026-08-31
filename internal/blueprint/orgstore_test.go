@@ -4,6 +4,7 @@
 package blueprint
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"sync"
@@ -11,20 +12,39 @@ import (
 	"time"
 
 	"github.com/k8shell-io/common/pkg/models"
+	"gopkg.in/yaml.v3"
 )
 
 // fakeOrgStore is an in-memory OrgBlueprintStore for tests.
 type fakeOrgStore struct {
 	mu         sync.Mutex
 	blueprints []*models.OrgBlueprint
+	err        error // when set, every store call returns it
 }
 
 func (f *fakeOrgStore) ListAllBlueprints() ([]*models.OrgBlueprint, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if f.err != nil {
+		return nil, f.err
+	}
 	out := make([]*models.OrgBlueprint, len(f.blueprints))
 	copy(out, f.blueprints)
 	return out, nil
+}
+
+func (f *fakeOrgStore) LookupBlueprint(org, name string) (*models.OrgBlueprint, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.err != nil {
+		return nil, f.err
+	}
+	for _, bp := range f.blueprints {
+		if bp.Org == org && bp.Name == name {
+			return bp, nil
+		}
+	}
+	return nil, nil
 }
 
 func (f *fakeOrgStore) set(blueprints []*models.OrgBlueprint) {
@@ -137,8 +157,12 @@ func TestGetBlueprintsSummaryIncludesOrgBlueprints(t *testing.T) {
 		t.Fatalf("reload failed: %v", err)
 	}
 
+	sums, err := bm.GetBlueprintsSummary()
+	if err != nil {
+		t.Fatalf("GetBlueprintsSummary: %v", err)
+	}
 	byName := map[string]*models.BlueprintSummary{}
-	for _, s := range bm.GetBlueprintsSummary() {
+	for _, s := range sums {
 		byName[s.Name] = s
 	}
 
@@ -183,8 +207,12 @@ func TestGetBlueprintsSummaryReportsTimestamps(t *testing.T) {
 		t.Fatalf("reload failed: %v", err)
 	}
 
+	sums, err := bm.GetBlueprintsSummary()
+	if err != nil {
+		t.Fatalf("GetBlueprintsSummary: %v", err)
+	}
 	byName := map[string]*models.BlueprintSummary{}
-	for _, s := range bm.GetBlueprintsSummary() {
+	for _, s := range sums {
 		byName[s.Name] = s
 	}
 
@@ -205,6 +233,140 @@ func TestGetBlueprintsSummaryReportsTimestamps(t *testing.T) {
 	}
 	if !custom.CreatedAt.Equal(created) || !custom.UpdatedAt.Equal(updated) {
 		t.Fatalf("org blueprint should carry the db row timestamps, got %v / %v", custom.CreatedAt, custom.UpdatedAt)
+	}
+}
+
+func TestOrgBlueprintServedFromStoreWithoutReload(t *testing.T) {
+	store := &fakeOrgStore{}
+	bm := newTestManagerWithOrgStore(t, map[string]string{
+		"base.yaml": "name: base\nisTemplate: true\ndescription: test template\nimage: base-image:latest\n" + requiredBlueprintFields,
+	}, store)
+
+	store.set([]*models.OrgBlueprint{
+		{Org: "acme", Name: "custom", YAML: []byte("name: custom\ntemplate: base\ndescription: org bp\nimage: v1:latest\n")},
+	})
+	if err := bm.ReloadOrgBlueprints(); err != nil {
+		t.Fatalf("reload failed: %v", err)
+	}
+
+	// A change made straight in the store, with no reload, is visible.
+	store.set([]*models.OrgBlueprint{
+		{Org: "acme", Name: "custom", YAML: []byte("name: custom\ntemplate: base\ndescription: org bp\nimage: v2:latest\n")},
+	})
+	bp, err := bm.GetBlueprint("custom", scopeForOrg("acme"))
+	if err != nil {
+		t.Fatalf("GetBlueprint after out-of-band update: %v", err)
+	}
+	if bp.Image != "v2:latest" {
+		t.Fatalf("expected updated image v2:latest without a reload, got %q", bp.Image)
+	}
+
+	// A delete made straight in the store, with no reload, takes effect.
+	store.set(nil)
+
+	if _, err := bm.GetBlueprint("custom", scopeForOrg("acme")); !errors.Is(err, ErrBlueprintNotFound) {
+		t.Fatalf("expected ErrBlueprintNotFound after out-of-band delete, got %v", err)
+	}
+
+	sums, err := bm.GetBlueprintsSummary()
+	if err != nil {
+		t.Fatalf("GetBlueprintsSummary: %v", err)
+	}
+	for _, s := range sums {
+		if s.Name == "custom" {
+			t.Fatalf("deleted org blueprint still listed: %+v", s)
+		}
+	}
+}
+
+func TestHasGlobalBlueprint(t *testing.T) {
+	store := &fakeOrgStore{}
+	bm := newTestManagerWithOrgStore(t, map[string]string{
+		"dev.yaml": "name: dev\ndescription: test blueprint\nimage: myimage:latest\n" + requiredBlueprintFields,
+	}, store)
+
+	store.set([]*models.OrgBlueprint{
+		{Org: "acme", Name: "custom", YAML: []byte("name: custom\ndescription: org bp\nimage: c:latest\n" + requiredBlueprintFields)},
+	})
+	if err := bm.ReloadOrgBlueprints(); err != nil {
+		t.Fatalf("reload failed: %v", err)
+	}
+
+	if !bm.HasGlobalBlueprint("dev") {
+		t.Fatalf("expected 'dev' to be reported as a global blueprint")
+	}
+	if bm.HasGlobalBlueprint("custom") {
+		t.Fatalf("org-scoped 'custom' must not be reported as global")
+	}
+	if bm.HasGlobalBlueprint("nope") {
+		t.Fatalf("unknown blueprint must not be reported as global")
+	}
+}
+
+func TestOrgBlueprintCELStringFormsEvaluate(t *testing.T) {
+	// An org blueprint row may hold a CEL expression that was degraded to a
+	// plain string: "!cel:" (fetch/edit round-trip) or "!cel " (naive
+	// marshaller). Both must be evaluated on load, not used literally.
+	forms := map[string]string{
+		"colon prefix":   `hostname: "!cel:user.username"`,
+		"space prefix":   `hostname: "!cel user.username"`,
+		"native cel tag": `hostname: !cel "user.username"`,
+	}
+
+	for name, hostnameLine := range forms {
+		t.Run(name, func(t *testing.T) {
+			store := &fakeOrgStore{}
+			bm := newTestManagerWithOrgStore(t, map[string]string{
+				"base.yaml": "name: base\nisTemplate: true\ndescription: test template\nimage: base-image:latest\n" + requiredBlueprintFields,
+			}, store)
+
+			store.set([]*models.OrgBlueprint{{
+				Org: "acme", Name: "custom",
+				YAML: []byte("name: custom\ntemplate: base\ndescription: org bp\n" + hostnameLine + "\n"),
+			}})
+			if err := bm.ReloadOrgBlueprints(); err != nil {
+				t.Fatalf("reload failed: %v", err)
+			}
+
+			bp, err := bm.GetBlueprint("custom", scopeForOrg("acme"))
+			if err != nil {
+				t.Fatalf("GetBlueprint failed: %v", err)
+			}
+			if bp.Hostname != "testuser" {
+				t.Fatalf("expected CEL expression to evaluate to %q, got %q", "testuser", bp.Hostname)
+			}
+		})
+	}
+}
+
+func TestCanonicalizeRawBlueprintRestoresCELTag(t *testing.T) {
+	for _, in := range []string{
+		`hostname: "!cel:user.username"`,
+		`hostname: "!cel user.username"`,
+		`hostname: !cel "user.username"`,
+	} {
+		out, err := CanonicalizeRawBlueprint([]byte("name: c\n" + in + "\n"))
+		if err != nil {
+			t.Fatalf("CanonicalizeRawBlueprint(%q): %v", in, err)
+		}
+
+		var doc yaml.Node
+		if err := yaml.Unmarshal(out, &doc); err != nil {
+			t.Fatalf("re-parse %q: %v", out, err)
+		}
+		mapping := doc.Content[0]
+		var tag, val string
+		for i := 0; i+1 < len(mapping.Content); i += 2 {
+			if mapping.Content[i].Value == "hostname" {
+				tag, val = mapping.Content[i+1].Tag, mapping.Content[i+1].Value
+			}
+		}
+		if tag != "!cel" {
+			t.Fatalf("input %q -> canonical %q: hostname tag = %q, want !cel", in, out, tag)
+		}
+		if val != "user.username" {
+			t.Fatalf("input %q -> canonical %q: hostname value = %q, want user.username", in, out, val)
+		}
 	}
 }
 

@@ -387,6 +387,53 @@ env:
 	assertAllFieldsSet(t, issues)
 }
 
+// TestValidateRawBlueprintUnknownFieldFormat checks that a structural decode
+// error (an unknown field on a nested type) is reported in the same shape as
+// a value/CEL issue: a dotted/bracketed Field path from the blueprint root
+// and a Message with no "line N:" prefix or leaking Go type name.
+func TestValidateRawBlueprintUnknownFieldFormat(t *testing.T) {
+	bm := newTestManager(t, nil)
+
+	yaml := []byte(`
+name: my-blueprint
+description: A test blueprint
+image: myimage:latest
+k8shelld:
+  image: k8shelld-image:latest
+resources:
+  cpu: 500m
+  memory: 512Mi
+podman:
+  resources:
+    cpu: 500m
+    memory: 512Mi
+storages:
+  home:
+    enabled: true
+    enabledx: false
+    path: /home/x
+    type: local
+`)
+
+	issues, _, err := bm.ValidateRawBlueprint(yaml)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(issues) != 1 {
+		t.Fatalf("expected exactly one issue, got %+v", issues)
+	}
+	got := issues[0]
+	if got.Field != "storages[home].enabledx" {
+		t.Errorf("Field = %q, want %q", got.Field, "storages[home].enabledx")
+	}
+	if got.Message != `unknown field "enabledx"` {
+		t.Errorf("Message = %q, want %q", got.Message, `unknown field "enabledx"`)
+	}
+	if got.Line != 0 {
+		t.Errorf("Line = %d, want 0 (position is carried by Field, like value issues)", got.Line)
+	}
+}
+
 // TestValidateRawBlueprintFieldPathFormat pins down the exact field-path
 // format the frontend relies on to attach an error to the right form field:
 // dot-separated, fully qualified from the blueprint root, lowerCamelCase

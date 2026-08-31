@@ -26,6 +26,13 @@ import (
 // convention back, so it must be reversed before CEL evaluation.
 const celDisplayPrefix = "!cel:"
 
+// celTagPrefix is the other way a `!cel` node degrades to a plain string: a
+// YAML marshaller that does not know `!cel` is a wanted local tag emits the
+// tag and its value as one space-separated scalar ("!cel <expr>"). Blueprint
+// rows written before CEL was stored canonically carry this form, so
+// restoreCELNodes accepts it too.
+const celTagPrefix = "!cel "
+
 // ValidationIssue is a single problem found while validating a raw blueprint
 // YAML document. Line and Column are 1-indexed positions in the submitted
 // YAML; both are 0 when the underlying check does not report a position
@@ -40,6 +47,11 @@ type ValidationIssue struct {
 
 var yamlErrorLineRE = regexp.MustCompile(`line (\d+)`)
 var unknownFieldRE = regexp.MustCompile(`field (\S+) not found`)
+
+// decodeLinePrefixRE strips yaml.v3's leading "line N: " from a decode error
+// so the message reads like every other value/CEL issue (which carry no line
+// prefix); the position is conveyed by Field instead.
+var decodeLinePrefixRE = regexp.MustCompile(`^line \d+: `)
 
 // yamlcel's Eval/EvalToBytes build a dotted path (e.g. "k8shelld.image") as
 // it walks the template and embeds it in the wrapped error text:
@@ -287,9 +299,9 @@ func (bm *BlueprintManager) ValidateRawBlueprint(data []byte) ([]ValidationIssue
 		// other decode error means bp is unusable, so bail out with just that.
 		var typeErr *yaml.TypeError
 		if !errors.As(err, &typeErr) {
-			return append(issues, decodeErrorToIssues(err)...), nil, nil
+			return append(issues, decodeErrorToIssues(err, docBytes)...), nil, nil
 		}
-		issues = append(issues, decodeErrorToIssues(err)...)
+		issues = append(issues, decodeErrorToIssues(err, docBytes)...)
 	}
 
 	issues = append(issues, structFieldIssues(&bp)...)
@@ -376,9 +388,16 @@ func restoreCELNodes(node *yaml.Node) *yaml.Node {
 		Column:      node.Column,
 	}
 
-	if node.Kind == yaml.ScalarNode && strings.HasPrefix(node.Value, celDisplayPrefix) {
-		cloned.Tag = "!cel"
-		cloned.Value = strings.TrimPrefix(node.Value, celDisplayPrefix)
+	if node.Kind == yaml.ScalarNode {
+		if expr, ok := strings.CutPrefix(node.Value, celDisplayPrefix); ok {
+			cloned.Tag = "!cel"
+			cloned.Value = expr
+			cloned.Style = 0
+		} else if expr, ok := strings.CutPrefix(node.Value, celTagPrefix); ok {
+			cloned.Tag = "!cel"
+			cloned.Value = strings.TrimLeft(expr, " ")
+			cloned.Style = 0
+		}
 	}
 
 	if len(node.Content) > 0 {
@@ -389,6 +408,27 @@ func restoreCELNodes(node *yaml.Node) *yaml.Node {
 	}
 
 	return cloned
+}
+
+// CanonicalizeRawBlueprint re-serializes a raw blueprint YAML document so that
+// every CEL expression is stored as a real `!cel`-tagged node rather than a
+// plain string carrying a "!cel:" or "!cel " prefix (the forms a fetch/edit
+// round-trip or a naive marshaller can leave behind). The document structure,
+// key order and comments are otherwise preserved. Callers persisting a
+// blueprint (e.g. CreateBlueprint/UpdateBlueprint) should store the result of
+// this instead of the bytes they received, so the database always holds a
+// document that evaluates correctly when loaded.
+func CanonicalizeRawBlueprint(data []byte) ([]byte, error) {
+	var doc yaml.Node
+	if err := yaml.Unmarshal(data, &doc); err != nil {
+		return nil, fmt.Errorf("parse blueprint yaml: %w", err)
+	}
+
+	out, err := yaml.Marshal(restoreCELNodes(&doc))
+	if err != nil {
+		return nil, fmt.Errorf("re-serialize blueprint yaml: %w", err)
+	}
+	return out, nil
 }
 
 // findKeyLine returns the source line of the given top-level key in a
@@ -415,6 +455,68 @@ func parseYAMLErrorLine(msg string) int {
 	return n
 }
 
+// yamlPathAtLine returns the dotted blueprint path (map keys joined with ".",
+// sequence entries as "[i]") of the mapping key or value node located on the
+// given 1-indexed line of root, or "" when nothing sits on that line. It is
+// used to turn a yaml.v3 decode error's bare line number into the same
+// field-path format every value/CEL issue already uses.
+func yamlPathAtLine(root *yaml.Node, line int) string {
+	if root == nil || line <= 0 {
+		return ""
+	}
+
+	var found string
+	var walk func(n *yaml.Node, path string)
+	walk = func(n *yaml.Node, path string) {
+		if found != "" || n == nil {
+			return
+		}
+		switch n.Kind {
+		case yaml.DocumentNode:
+			for _, c := range n.Content {
+				walk(c, path)
+			}
+		case yaml.MappingNode:
+			for i := 0; i+1 < len(n.Content); i += 2 {
+				k, v := n.Content[i], n.Content[i+1]
+				child := k.Value
+				if path != "" {
+					child = path + "." + child
+				}
+				if k.Line == line || v.Line == line {
+					found = child
+					return
+				}
+				walk(v, child)
+			}
+		case yaml.SequenceNode:
+			for i, c := range n.Content {
+				child := fmt.Sprintf("%s[%d]", path, i)
+				if c.Line == line {
+					found = child
+					return
+				}
+				walk(c, child)
+			}
+		}
+	}
+	walk(root, "")
+	return found
+}
+
+// cleanDecodeMessage rewrites a yaml.v3 decode error message into the same
+// register as the value/CEL issue messages: the "line N: " prefix is dropped
+// (the location is in Field) and an unknown-field error is restated without
+// the leaking Go type name ("field enabledx not found in type models.Storage"
+// becomes `unknown field "enabledx"`).
+func cleanDecodeMessage(msg string) string {
+	msg = decodeLinePrefixRE.ReplaceAllString(msg, "")
+	if m := unknownFieldRE.FindStringSubmatch(msg); m != nil {
+		return fmt.Sprintf("unknown field %q", m[1])
+	}
+	return msg
+}
+
 func yamlErrorToIssue(err error) ValidationIssue {
 	return ValidationIssue{Field: fieldYAML, Message: err.Error(), Line: parseYAMLErrorLine(err.Error())}
 }
@@ -429,16 +531,29 @@ func parseYAMLErrorField(msg string) string {
 	return fieldYAML
 }
 
-// decodeErrorToIssues splits a yaml.v3 decode error into one ValidationIssue
-// per underlying message, extracting a line number and field from each when present.
-func decodeErrorToIssues(err error) []ValidationIssue {
+// decodeErrorToIssues splits a yaml.v3 decode error (unknown field, type
+// mismatch) into one ValidationIssue per underlying message, reported in the
+// same shape as every value/CEL issue: Field is the dotted/bracketed path
+// from the blueprint root (resolved from the error's line against doc, the
+// bytes that were decoded), and Message carries no "line N:" prefix or Go
+// type detail. doc is the CEL-evaluated document the decoder read, so its
+// line numbers line up with the error's.
+func decodeErrorToIssues(err error, doc []byte) []ValidationIssue {
 	var typeErr *yaml.TypeError
-	if errors.As(err, &typeErr) {
-		issues := make([]ValidationIssue, 0, len(typeErr.Errors))
-		for _, m := range typeErr.Errors {
-			issues = append(issues, ValidationIssue{Message: m, Line: parseYAMLErrorLine(m), Field: parseYAMLErrorField(m)})
-		}
-		return issues
+	if !errors.As(err, &typeErr) {
+		return []ValidationIssue{{Field: fieldYAML, Message: cleanDecodeMessage(err.Error())}}
 	}
-	return []ValidationIssue{yamlErrorToIssue(err)}
+
+	var root yaml.Node
+	_ = yaml.Unmarshal(doc, &root) // best effort: an unparsed tree just yields "" paths
+
+	issues := make([]ValidationIssue, 0, len(typeErr.Errors))
+	for _, m := range typeErr.Errors {
+		field := bracketMapKeys(yamlPathAtLine(&root, parseYAMLErrorLine(m)))
+		if field == "" {
+			field = parseYAMLErrorField(m) // fall back to the bare leaf name, else fieldYAML
+		}
+		issues = append(issues, ValidationIssue{Field: field, Message: cleanDecodeMessage(m)})
+	}
+	return issues
 }

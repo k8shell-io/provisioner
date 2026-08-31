@@ -93,6 +93,17 @@ func (d *DB) GetBlueprint(org, name string) (*models.OrgBlueprint, error) {
 	return bp, nil
 }
 
+// LookupBlueprint behaves like GetBlueprint but returns (nil, nil) instead of
+// ErrBlueprintNotFound when no row with that (org, name) exists, for callers
+// that treat "absent" as a normal outcome rather than an error.
+func (d *DB) LookupBlueprint(org, name string) (*models.OrgBlueprint, error) {
+	bp, err := d.GetBlueprint(org, name)
+	if errors.Is(err, ErrBlueprintNotFound) {
+		return nil, nil
+	}
+	return bp, err
+}
+
 // ListBlueprints returns every blueprint stored for a single org, ordered by name.
 func (d *DB) ListBlueprints(org string) ([]*models.OrgBlueprint, error) {
 	rows, err := d.Pool.Query(context.Background(),
