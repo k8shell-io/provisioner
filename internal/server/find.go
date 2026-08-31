@@ -257,11 +257,12 @@ func (p *ProvisionerService) ListInjectWorkloads(ctx context.Context,
 	return &provisionerv1.ListInjectWorkloadsResponse{Workloads: protoWorkloads}, nil
 }
 
-// GetBlueprints returns the summaries of every blueprint registered in the
-// provisioner, regardless of user.
-func (p *ProvisionerService) GetBlueprints(_ context.Context,
-	_ *provisionerv1.GetBlueprintsRequest,
-) (*provisionerv1.GetBlueprintsResponse, error) {
+// ListBlueprints returns a summary of every blueprint the provisioner knows
+// about: the file-based, global blueprints and every org-scoped database
+// blueprint.
+func (p *ProvisionerService) ListBlueprints(_ context.Context,
+	_ *provisionerv1.ListBlueprintsRequest,
+) (*provisionerv1.ListBlueprintsResponse, error) {
 
 	blueprints := p.server.bpManager.GetBlueprintsSummary()
 
@@ -270,34 +271,25 @@ func (p *ProvisionerService) GetBlueprints(_ context.Context,
 		protoBlueprints = append(protoBlueprints, gapi.BlueprintSummaryToProto(b))
 	}
 
-	return &provisionerv1.GetBlueprintsResponse{
+	return &provisionerv1.ListBlueprintsResponse{
 		Blueprints: protoBlueprints,
 	}, nil
 }
 
 // GetBlueprint returns the full raw (unevaluated) spec of a single
-// blueprint by name, both merged with its inherited Template and as defined
-// directly on the blueprint itself, so callers can tell which fields are
-// inherited rather than set on this blueprint.
+// blueprint, both merged with its inherited Template and as defined directly
+// on the blueprint itself, so callers can tell which fields are inherited
+// rather than set on this blueprint. When req.Org is set, an org-scoped
+// database blueprint of that name takes precedence over a file-based one.
 func (p *ProvisionerService) GetBlueprint(_ context.Context,
 	req *provisionerv1.GetBlueprintRequest,
 ) (*provisionerv1.GetBlueprintResponse, error) {
 
-	raw, err := p.server.bpManager.GetRawBlueprint(req.Name)
+	raw, own, template, err := p.server.bpManager.GetRawBlueprintScoped(req.GetOrg(), req.GetName())
 	if err != nil {
 		if errors.Is(err, blueprint.ErrBlueprintNotFound) {
-			return nil, status.Errorf(codes.NotFound, "Blueprint %s not found", req.Name)
+			return nil, status.Errorf(codes.NotFound, "Blueprint %s not found", req.GetName())
 		}
-		return nil, status.Errorf(codes.Internal, "Failed to get blueprint: %v", err)
-	}
-
-	own, err := p.server.bpManager.GetRawBlueprintOwn(req.Name)
-	if err != nil {
-		return nil, status.Errorf(codes.Internal, "Failed to get blueprint: %v", err)
-	}
-
-	template, err := p.server.bpManager.GetBlueprintTemplate(req.Name)
-	if err != nil {
 		return nil, status.Errorf(codes.Internal, "Failed to get blueprint: %v", err)
 	}
 

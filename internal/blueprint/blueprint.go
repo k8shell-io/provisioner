@@ -47,6 +47,14 @@ type RawBlueprint struct {
 	OwnNode          *yaml.Node // content defined directly on this blueprint, before merging with Template
 	InheritanceChain []string   // ordered list of blueprint names from root ancestor to this blueprint
 
+	// CreatedAt and UpdatedAt record when the blueprint was first registered
+	// and last changed. For a file-based blueprint both are set to the source
+	// file's last-modified time (a file carries no separate creation record);
+	// for an org blueprint loaded via OrgBlueprintStore they are the database
+	// row's timestamps.
+	CreatedAt time.Time
+	UpdatedAt time.Time
+
 	// Org is non-empty for a blueprint loaded from the database via
 	// OrgBlueprintStore (see orgstore.go), naming the organization it is
 	// scoped to. Empty for a file-based blueprint. An org blueprint is keyed
@@ -781,23 +789,27 @@ func (bm *BlueprintManager) GetBlueprintTemplate(name string) (string, error) {
 	return rawBp.Template, nil
 }
 
-// GetBlueprintsSummary returns a summary of all available file-based, global
-// blueprints without evaluating CEL expressions. Org-scoped database
-// blueprints (see orgstore.go) are excluded — they are not part of the
-// global catalog and are listed per-org via ListOrgBlueprints instead.
+// GetBlueprintsSummary returns a summary of every registered blueprint
+// without evaluating CEL expressions: the file-based, global blueprints and
+// every org-scoped database blueprint (see orgstore.go). Org names the
+// organization an org-scoped blueprint belongs to (empty for a global one),
+// IsGlobal is its inverse, and Template names the immediate parent template,
+// if any.
 func (bm *BlueprintManager) GetBlueprintsSummary() []*models.BlueprintSummary {
 	bm.mu.RLock()
 	defer bm.mu.RUnlock()
 
 	summaries := make([]*models.BlueprintSummary, 0, len(bm.rawBlueprints))
-	for name, bp := range bm.rawBlueprints {
-		if bp.Org != "" {
-			continue
-		}
+	for _, bp := range bm.rawBlueprints {
 		summaries = append(summaries, &models.BlueprintSummary{
-			Name:        name,
+			Name:        bp.Name,
 			Description: bp.Description,
 			IsTemplate:  bp.IsTemplate,
+			Org:         bp.Org,
+			IsGlobal:    bp.Org == "",
+			Template:    bp.Template,
+			CreatedAt:   bp.CreatedAt,
+			UpdatedAt:   bp.UpdatedAt,
 		})
 	}
 	return summaries
@@ -834,6 +846,37 @@ func (bm *BlueprintManager) GetRawBlueprintOwn(name string) (interface{}, error)
 	}
 
 	return bm.decodeRawNode(rawBp.OwnNode)
+}
+
+// GetRawBlueprintScoped resolves name the same way GetRawBlueprint does, but
+// first looks for an org-scoped database blueprint named name in org, falling
+// back to the file-based/global blueprint when org is empty or has no such
+// blueprint. It returns the fully merged content, the content defined
+// directly on the blueprint (own), and the name of the immediate parent
+// template, if any. CEL expressions are returned with a "!cel:" prefix, as
+// in GetRawBlueprint.
+func (bm *BlueprintManager) GetRawBlueprintScoped(org, name string) (merged, own interface{}, template string, err error) {
+	bm.mu.RLock()
+	defer bm.mu.RUnlock()
+
+	var rawBp *RawBlueprint
+	if org != "" {
+		rawBp = bm.rawBlueprints[orgBlueprintKey(org, name)]
+	}
+	if rawBp == nil {
+		rawBp = bm.rawBlueprints[name]
+	}
+	if rawBp == nil {
+		return nil, nil, "", fmt.Errorf("blueprint %s not found: %w", name, ErrBlueprintNotFound)
+	}
+
+	if merged, err = bm.decodeRawNode(rawBp.Node); err != nil {
+		return nil, nil, "", err
+	}
+	if own, err = bm.decodeRawNode(rawBp.OwnNode); err != nil {
+		return nil, nil, "", err
+	}
+	return merged, own, rawBp.Template, nil
 }
 
 // decodeRawNode clones node (preserving CEL expressions as "!cel:"-prefixed
@@ -951,7 +994,23 @@ func (bm *BlueprintManager) loadRawBlueprints(dir string) error {
 			return fmt.Errorf("failed to process !include in '%s': %w", path, err)
 		}
 
-		return bm.extractRawBlueprints(root, path)
+		if err := bm.extractRawBlueprints(root, path); err != nil {
+			return err
+		}
+
+		// Stamp every blueprint that came from this file with the file's
+		// last-modified time. A file carries no separate creation record, so
+		// CreatedAt and UpdatedAt are deliberately the same value.
+		if info, ierr := d.Info(); ierr == nil {
+			mt := info.ModTime()
+			for _, bp := range bm.rawBlueprints {
+				if bp.SourceFile == path && bp.CreatedAt.IsZero() {
+					bp.CreatedAt = mt
+					bp.UpdatedAt = mt
+				}
+			}
+		}
+		return nil
 	})
 }
 

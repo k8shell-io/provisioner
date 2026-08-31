@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/k8shell-io/common/pkg/models"
 )
@@ -123,7 +124,7 @@ func TestOrgBlueprintInheritsFileTemplate(t *testing.T) {
 	}
 }
 
-func TestGetBlueprintsSummaryExcludesOrgBlueprints(t *testing.T) {
+func TestGetBlueprintsSummaryIncludesOrgBlueprints(t *testing.T) {
 	store := &fakeOrgStore{}
 	bm := newTestManagerWithOrgStore(t, map[string]string{
 		"dev.yaml": "name: dev\ndescription: test blueprint\nimage: myimage:latest\n" + requiredBlueprintFields,
@@ -136,14 +137,74 @@ func TestGetBlueprintsSummaryExcludesOrgBlueprints(t *testing.T) {
 		t.Fatalf("reload failed: %v", err)
 	}
 
-	summaries := bm.GetBlueprintsSummary()
-	for _, s := range summaries {
-		if s.Name == "custom" {
-			t.Fatalf("org blueprint leaked into global summary: %+v", s)
-		}
+	byName := map[string]*models.BlueprintSummary{}
+	for _, s := range bm.GetBlueprintsSummary() {
+		byName[s.Name] = s
 	}
-	if len(summaries) != 1 || summaries[0].Name != "dev" {
-		t.Fatalf("expected only the file-based 'dev' summary, got %+v", summaries)
+
+	dev, ok := byName["dev"]
+	if !ok {
+		t.Fatalf("expected the file-based 'dev' summary, got %+v", byName)
+	}
+	if dev.Org != "" || !dev.IsGlobal {
+		t.Fatalf("expected 'dev' to be a global blueprint, got %+v", dev)
+	}
+
+	custom, ok := byName["custom"]
+	if !ok {
+		t.Fatalf("expected the org-scoped 'custom' summary, got %+v", byName)
+	}
+	if custom.Org != "acme" || custom.IsGlobal {
+		t.Fatalf("expected 'custom' to be scoped to org 'acme', got %+v", custom)
+	}
+}
+
+func TestGetBlueprintsSummaryReportsTimestamps(t *testing.T) {
+	store := &fakeOrgStore{}
+	bm := newTestManagerWithOrgStore(t, map[string]string{
+		"dev.yaml": "name: dev\ndescription: test blueprint\nimage: myimage:latest\n" + requiredBlueprintFields,
+	}, store)
+
+	fileMTime := bm.rawBlueprints["dev"].UpdatedAt
+	if fileMTime.IsZero() {
+		t.Fatalf("expected file-based blueprint to carry a non-zero mtime")
+	}
+
+	created := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
+	updated := time.Date(2026, 6, 7, 8, 9, 10, 0, time.UTC)
+	store.set([]*models.OrgBlueprint{
+		{
+			Org: "acme", Name: "custom",
+			YAML:      []byte("name: custom\ndescription: test org blueprint\nimage: custom-image:latest\n" + requiredBlueprintFields),
+			CreatedAt: created, UpdatedAt: updated,
+		},
+	})
+	if err := bm.ReloadOrgBlueprints(); err != nil {
+		t.Fatalf("reload failed: %v", err)
+	}
+
+	byName := map[string]*models.BlueprintSummary{}
+	for _, s := range bm.GetBlueprintsSummary() {
+		byName[s.Name] = s
+	}
+
+	dev := byName["dev"]
+	if dev == nil {
+		t.Fatalf("missing 'dev' summary")
+	}
+	if !dev.CreatedAt.Equal(dev.UpdatedAt) {
+		t.Fatalf("file blueprint created/updated should match, got %v / %v", dev.CreatedAt, dev.UpdatedAt)
+	}
+	if dev.CreatedAt.IsZero() {
+		t.Fatalf("file blueprint timestamps should be the file mtime, got zero")
+	}
+
+	custom := byName["custom"]
+	if custom == nil {
+		t.Fatalf("missing 'custom' summary")
+	}
+	if !custom.CreatedAt.Equal(created) || !custom.UpdatedAt.Equal(updated) {
+		t.Fatalf("org blueprint should carry the db row timestamps, got %v / %v", custom.CreatedAt, custom.UpdatedAt)
 	}
 }
 

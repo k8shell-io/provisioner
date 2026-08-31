@@ -5,6 +5,7 @@ package blueprint
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/k8shell-io/common/pkg/models"
 	"gopkg.in/yaml.v3"
@@ -20,6 +21,37 @@ type OrgBlueprintStore interface {
 	// on every (re)load, mirroring how loadRawBlueprints re-walks the file
 	// tree on every reload.
 	ListAllBlueprints() ([]*models.OrgBlueprint, error)
+}
+
+// ParseBlueprintMeta reads the identifying metadata — name, description and
+// isTemplate — from a raw blueprint YAML document, applying the same
+// top-level `blueprint:` unwrapping rule the loader uses. It does not
+// validate the document (callers do that separately via ValidateRawBlueprint);
+// it only extracts the fields the database row is keyed and filtered by.
+func ParseBlueprintMeta(data []byte) (name, description string, isTemplate bool, err error) {
+	var doc yaml.Node
+	if err = yaml.Unmarshal(data, &doc); err != nil {
+		return "", "", false, err
+	}
+
+	node := &doc
+	if node.Kind == yaml.DocumentNode && len(node.Content) > 0 {
+		node = node.Content[0]
+	}
+
+	var bpData map[string]interface{}
+	if err = node.Decode(&bpData); err != nil {
+		return "", "", false, fmt.Errorf("blueprint document is not a mapping: %w", err)
+	}
+	if inner, ok := bpData["blueprint"].(map[string]interface{}); ok {
+		bpData = inner
+	}
+
+	name, _ = bpData["name"].(string)
+	description, _ = bpData["description"].(string)
+	description = strings.Join(strings.Fields(description), " ")
+	isTemplate, _ = bpData["isTemplate"].(bool)
+	return name, description, isTemplate, nil
 }
 
 // orgBlueprintKey is the bm.rawBlueprints key an org blueprint is stored
@@ -88,6 +120,8 @@ func (bm *BlueprintManager) loadOrgBlueprints() error {
 			Template:    template,
 			IsTemplate:  ob.IsTemplate,
 			SourceFile:  fmt.Sprintf("db:%s/%s", ob.Org, ob.Name),
+			CreatedAt:   ob.CreatedAt,
+			UpdatedAt:   ob.UpdatedAt,
 			Node:        node,
 		}
 	}
