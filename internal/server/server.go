@@ -35,6 +35,8 @@ import (
 // JWT verifier, and the gRPC server handle.
 type Server struct {
 	config          *config.Config
+	appVersion      string
+	commit          string
 	log             *zerolog.Logger
 	nats            *natsc.NATSClient
 	Identity        *identity.IdentityClient
@@ -68,7 +70,9 @@ func NewProvisionerService(server *Server) *ProvisionerService {
 // resources are present before returning.
 func NewServer(configFile string, appVersion string, commit string) (*Server, error) {
 	server := &Server{
-		log: log.NewLogger("server"),
+		log:        log.NewLogger("server"),
+		appVersion: appVersion,
+		commit:     commit,
 	}
 
 	server.log.Info().Str("version", appVersion).Str("commit", commit).Msg("Starting provisioner")
