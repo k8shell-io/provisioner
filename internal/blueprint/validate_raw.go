@@ -308,6 +308,9 @@ func (bm *BlueprintManager) ValidateRawBlueprint(data []byte) ([]ValidationIssue
 	for _, e := range validateClaimSpecs(&bp) {
 		issues = append(issues, errorToIssue(e))
 	}
+	for _, e := range validateStorageTypes(&bp) {
+		issues = append(issues, errorToIssue(e))
+	}
 	for _, e := range validateStorageSizeLimits(&bp) {
 		issues = append(issues, errorToIssue(e))
 	}

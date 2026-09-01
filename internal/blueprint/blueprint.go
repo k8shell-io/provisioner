@@ -255,6 +255,9 @@ func (bm *BlueprintManager) validateAllBlueprints() []error {
 		for _, e := range validateClaimSpecs(bp) {
 			allErrors = append(allErrors, fmt.Errorf("blueprint '%s': %w", name, e))
 		}
+		for _, e := range validateStorageTypes(bp) {
+			allErrors = append(allErrors, fmt.Errorf("blueprint '%s': %w", name, e))
+		}
 		for _, e := range validateStorageSizeLimits(bp) {
 			allErrors = append(allErrors, fmt.Errorf("blueprint '%s': %w", name, e))
 		}
@@ -356,6 +359,52 @@ func validateResourceQuantities(bp *models.Blueprint) []error {
 		if _, err := resource.ParseQuantity(q.value); err != nil {
 			errs = append(errs, newFieldError(q.name, "%s: %q is not a valid Kubernetes quantity: %v", q.name, q.value, err))
 		}
+	}
+	return errs
+}
+
+// validStorageTypes is the set of storage backend types the workspace Helm
+// chart knows how to render (see internal/helm/charts/k8shell-workspace/
+// templates/storages.yaml and workspace.yaml). It mirrors the "oneof" on
+// models.Storage.Type.
+var validStorageTypes = map[string]bool{
+	"local":    true,
+	"shared":   true,
+	"emptyDir": true,
+	"memory":   true,
+}
+
+// validateStorageTypes checks that every storage entry's type (workspace and
+// podman) is one the workspace Helm chart supports. models.Storage.Type
+// carries an "omitempty,oneof=..." validate tag, but go-playground/validator
+// does not dive into map values without a "dive" tag on
+// models.Blueprint.Storages / Podman.Storages — which the shared model lacks —
+// so an unrecognized type (e.g. "nfs") would otherwise pass validation and
+// reach Helm, where storages.yaml silently renders it as a PVC. An empty type
+// is allowed and defaults to "local".
+func validateStorageTypes(bp *models.Blueprint) []error {
+	type namedStorage struct {
+		name    string // display name, e.g. "home" or "podman.home"
+		path    string // field path, e.g. "storages[home]" or "podman.storages[home]"
+		storage models.Storage
+	}
+
+	var all []namedStorage
+	for name, s := range bp.Storages {
+		all = append(all, namedStorage{name: name, path: fmt.Sprintf("storages[%s]", name), storage: s})
+	}
+	for name, s := range bp.Podman.Storages {
+		all = append(all, namedStorage{name: "podman." + name, path: fmt.Sprintf("podman.storages[%s]", name), storage: s})
+	}
+
+	var errs []error
+	for _, ns := range all {
+		t := ns.storage.Type
+		if t == "" || validStorageTypes[t] {
+			continue
+		}
+		errs = append(errs, newFieldError(ns.path+".type",
+			"storage %q: type %q is not valid (expected one of: local, shared, emptyDir, memory)", ns.name, t))
 	}
 	return errs
 }

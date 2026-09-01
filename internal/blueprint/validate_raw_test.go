@@ -434,6 +434,72 @@ storages:
 	}
 }
 
+// TestValidateRawBlueprintStorageType checks that an unrecognized storage
+// type is rejected (models.Storage.Type's "oneof" tag is never enforced
+// because validator does not dive into the Storages map), while a valid type
+// and an omitted type both pass.
+func TestValidateRawBlueprintStorageType(t *testing.T) {
+	bm := newTestManager(t, nil)
+
+	base := `
+name: my-blueprint
+description: A test blueprint
+image: myimage:latest
+k8shelld:
+  image: k8shelld-image:latest
+resources:
+  cpu: 500m
+  memory: 512Mi
+podman:
+  resources:
+    cpu: 500m
+    memory: 512Mi
+storages:
+  home:
+    enabled: true
+    path: /home/x
+`
+
+	tests := []struct {
+		name      string
+		typeLine  string
+		wantField string // "" means no storage-type issue expected
+	}{
+		{"invalid type", "    type: nfs\n", "storages[home].type"},
+		{"valid type", "    type: memory\n", ""},
+		{"omitted type", "", ""},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			issues, _, err := bm.ValidateRawBlueprint([]byte(base + tc.typeLine))
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			assertAllFieldsSet(t, issues)
+
+			var got *ValidationIssue
+			for i := range issues {
+				if issues[i].Field == "storages[home].type" {
+					got = &issues[i]
+				}
+			}
+			if tc.wantField == "" {
+				if got != nil {
+					t.Fatalf("expected no storage-type issue, got %+v", *got)
+				}
+				return
+			}
+			if got == nil {
+				t.Fatalf("expected an issue with field %q, got %+v", tc.wantField, issues)
+			}
+			if !strings.Contains(got.Message, "not valid") {
+				t.Errorf("Message = %q, want it to mention the type is not valid", got.Message)
+			}
+		})
+	}
+}
+
 // TestValidateRawBlueprintFieldPathFormat pins down the exact field-path
 // format the frontend relies on to attach an error to the right form field:
 // dot-separated, fully qualified from the blueprint root, lowerCamelCase
