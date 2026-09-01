@@ -279,6 +279,38 @@ func (p *ProvisionerService) ListBlueprints(_ context.Context,
 	}, nil
 }
 
+// GetBlueprintsQuerySchema returns the query.v1.Descriptor advertising which
+// blueprint fields are queryable/sortable via QueryBlueprints.
+func (p *ProvisionerService) GetBlueprintsQuerySchema(_ context.Context,
+	_ *provisionerv1.GetBlueprintsQuerySchemaRequest) (*queryv1.Descriptor, error) {
+	return blueprint.BlueprintsQueryDescriptor, nil
+}
+
+// QueryBlueprints retrieves blueprint summaries matching a generic
+// query.v1.Payload, as advertised by GetBlueprintsQuerySchema. Like
+// ListBlueprints, it is transparent to whether a matched blueprint is
+// file-based or stored in the database.
+func (p *ProvisionerService) QueryBlueprints(_ context.Context,
+	req *provisionerv1.QueryBlueprintsRequest,
+) (*provisionerv1.QueryBlueprintsResponse, error) {
+	blueprints, err := p.server.bpManager.QueryBlueprints(req.GetQuery())
+	if err != nil {
+		if errors.Is(err, models.ErrInvalidParameters) {
+			return nil, status.Errorf(codes.InvalidArgument, "invalid query: %v", err)
+		}
+		return nil, status.Errorf(codes.Internal, "failed to query blueprints: %v", err)
+	}
+
+	var protoBlueprints []*commonv1.BlueprintSummary
+	for _, b := range blueprints {
+		protoBlueprints = append(protoBlueprints, gapi.BlueprintSummaryToProto(b))
+	}
+
+	return &provisionerv1.QueryBlueprintsResponse{
+		Blueprints: protoBlueprints,
+	}, nil
+}
+
 // GetBlueprint returns the full raw (unevaluated) spec of a single
 // blueprint, both merged with its inherited Template and as defined directly
 // on the blueprint itself, so callers can tell which fields are inherited
