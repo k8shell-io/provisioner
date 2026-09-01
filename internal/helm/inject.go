@@ -46,8 +46,24 @@ const (
 	LabelInjectTarget = "k8shell.io/inject-target"
 	LabelManagedBy    = "k8shell.io/managed-by"
 
+	// LabelNetworkPolicy records which predefined network policy class a
+	// workspace pod belongs to. Other workspaces' NetworkPolicies select on it
+	// (e.g. the "user" class allows ingress from pods labelled
+	// k8shell.io/network-policy=system), so it is kept in sync with the
+	// NetworkPolicy objects when a workspace's network class is changed.
+	LabelNetworkPolicy = "k8shell.io/network-policy"
+
 	// AnnotationUserStr holds the base64-encoded canonical user string on a workspace pod.
 	AnnotationUserStr = "k8shell.io/userstr"
+
+	// AnnotationEgressRules holds the JSON-encoded egress shortcuts
+	// (allowEgressToCIDRs + allowEgressToPods) in force on a workspace pod, so
+	// the workspace-list API can return them without reading the Helm release or
+	// reverse-engineering the live NetworkPolicy. The chart writes it at
+	// provisioning and UpdateWorkspaceResources rewrites it when it replaces a
+	// workspace's egress rules. The payload shape is:
+	//   {"allowEgressToCIDRs":["1.2.3.0/24"],"allowEgressToPods":[{"app":"db"}]}
+	AnnotationEgressRules = "k8shell.io/egress-rules"
 
 	// LabelStopRequested is stamped on a workspace pod immediately before
 	// Workspace.StopPod deletes it, so the pod still carries the label during

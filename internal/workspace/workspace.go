@@ -12,6 +12,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"slices"
@@ -610,6 +611,17 @@ func NewWorkspaceFromHelmRelease(ctx context.Context, name string, helmClient *h
 	canonicalId, _ := values["__canonicalid__"].(string)
 	jobId, _ := values["__jobid__"].(string)
 
+	// Recover the canonical userstr from the stored values so the workspace can
+	// re-render its Helm chart (Values/Template) without a fresh provisioning
+	// request. Older releases may not carry it; callers that only need the
+	// blueprint keep working with a nil userStr.
+	var canonicalUserStr *userstr.CanonicalUserStr
+	if b64, _ := values["__userstr__"].(string); b64 != "" {
+		if parsed, perr := parseCanonicalUserStrFromBase64(b64); perr == nil {
+			canonicalUserStr = parsed
+		}
+	}
+
 	ws := &Workspace{
 		Name:        name,
 		JobId:       jobId,
@@ -618,6 +630,7 @@ func NewWorkspaceFromHelmRelease(ctx context.Context, name string, helmClient *h
 		identify:    identityClient,
 		blueprint:   blueprint,
 		user:        user,
+		userStr:     canonicalUserStr,
 		config:      config,
 		canonicalId: canonicalId,
 	}
@@ -754,7 +767,11 @@ func (w *Workspace) Values() (map[string]interface{}, error) {
 		userstrB64 = canonicalUserStrToBase64(w.userStr)
 	}
 
-	values["__canonicalid__"] = w.userStr.CanonicalId()
+	canonicalId := w.canonicalId
+	if w.userStr != nil {
+		canonicalId = w.userStr.CanonicalId()
+	}
+	values["__canonicalid__"] = canonicalId
 	values["__user__"] = userValues
 	values["__username__"] = w.user.Username
 	values["__blueprint__"] = w.blueprint.Name
@@ -1009,18 +1026,45 @@ func workspaceDetailsCore(pod *corev1.Pod) *models.WorkspaceDetails {
 
 	var cpu, memory string
 	var port int
-	for _, c := range pod.Spec.Containers {
-		if strings.HasSuffix(c.Name, "k8shell-main") {
-			cpu = c.Resources.Limits.Cpu().String()
-			memory = c.Resources.Limits.Memory().String()
-			for _, p := range c.Ports {
-				if p.ContainerPort > 0 {
-					port = int(p.ContainerPort)
-					break
-				}
+	for i := range pod.Spec.Containers {
+		c := &pod.Spec.Containers[i]
+		if !strings.HasSuffix(c.Name, "k8shell-main") {
+			continue
+		}
+
+		// Start from the desired limits in the pod spec, then prefer the
+		// kubelet-reported actual limits from the container status when
+		// present: after an in-place resize (pods/resize subresource) the
+		// status carries the resources really applied to the running
+		// container, which may lag or differ from the spec. Both fields are
+		// already on the pod object, so this needs no extra API call.
+		if q, ok := c.Resources.Limits[corev1.ResourceCPU]; ok {
+			cpu = q.String()
+		}
+		if q, ok := c.Resources.Limits[corev1.ResourceMemory]; ok {
+			memory = q.String()
+		}
+		for j := range pod.Status.ContainerStatuses {
+			cs := &pod.Status.ContainerStatuses[j]
+			if cs.Name != c.Name || cs.Resources == nil {
+				continue
+			}
+			if q, ok := cs.Resources.Limits[corev1.ResourceCPU]; ok {
+				cpu = q.String()
+			}
+			if q, ok := cs.Resources.Limits[corev1.ResourceMemory]; ok {
+				memory = q.String()
 			}
 			break
 		}
+
+		for _, p := range c.Ports {
+			if p.ContainerPort > 0 {
+				port = int(p.ContainerPort)
+				break
+			}
+		}
+		break
 	}
 
 	if port == 0 {
@@ -1050,6 +1094,22 @@ func workspaceDetailsCore(pod *corev1.Pod) *models.WorkspaceDetails {
 		workloadName = pod.Labels[helm.LabelWorkloadName]
 	}
 
+	// The egress shortcuts are stamped on the pod as a JSON annotation by the
+	// chart at provisioning and rewritten by UpdateWorkspaceResources, so they
+	// can be reported without reading the Helm release or the live NetworkPolicy.
+	var egressCIDRs []string
+	var egressPods []map[string]string
+	if raw := pod.Annotations[helm.AnnotationEgressRules]; raw != "" {
+		var er struct {
+			AllowEgressToCIDRs []string            `json:"allowEgressToCIDRs"`
+			AllowEgressToPods  []map[string]string `json:"allowEgressToPods"`
+		}
+		if err := json.Unmarshal([]byte(raw), &er); err == nil {
+			egressCIDRs = er.AllowEgressToCIDRs
+			egressPods = er.AllowEgressToPods
+		}
+	}
+
 	return &models.WorkspaceDetails{
 		Name:         pod.Name,
 		Username:     pod.Labels[helm.LabelUsername],
@@ -1069,6 +1129,10 @@ func workspaceDetailsCore(pod *corev1.Pod) *models.WorkspaceDetails {
 		Memory:       memory,
 		Hostname:     podHostname(pod),
 		Namespace:    pod.Namespace,
+
+		NetworkPolicyClass: pod.Labels[helm.LabelNetworkPolicy],
+		AllowEgressToCIDRs: egressCIDRs,
+		AllowEgressToPods:  egressPods,
 
 		WorkspaceType: workspaceType,
 		WorkloadKind:  workloadKind,
