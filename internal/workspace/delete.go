@@ -40,6 +40,9 @@ func DeleteWorkspacePod(ctx context.Context, helmClient *helm.Client, identityCl
 	if err != nil {
 		return err
 	}
+	// Carry the canonical-id from the pod so Uninstall can sweep leftover
+	// namespaced resources (e.g. NetworkPolicies re-applied out-of-band) by label.
+	w.canonicalId = pod.Labels[helm.LabelCanonicalId]
 
 	lockCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()

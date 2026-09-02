@@ -14,6 +14,9 @@ metadata:
     k8shell.io/identity: {{ .Values.__identity__ | quote }}
     {{- end }}
     k8shell.io/userstr: {{ .Values.__userstr__ | quote }}
+    {{- if and .Values.network (or .Values.network.allowEgressToCIDRs .Values.network.allowEgressToPods) }}
+    k8shell.io/egress-rules: {{ dict "allowEgressToCIDRs" (.Values.network.allowEgressToCIDRs | default list) "allowEgressToPods" (.Values.network.allowEgressToPods | default list) | toJson | quote }}
+    {{- end }}
   labels:
     {{- include "workspace.workspaceLabels" . | nindent 4 }} 
 spec:

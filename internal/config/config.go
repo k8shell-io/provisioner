@@ -15,6 +15,7 @@ import (
 	"github.com/k8shell-io/common/pkg/api/client/k8shelld"
 	"github.com/k8shell-io/common/pkg/authz"
 	"github.com/k8shell-io/common/pkg/config"
+	"github.com/k8shell-io/common/pkg/db"
 	"github.com/k8shell-io/common/pkg/gapi"
 	natsc "github.com/k8shell-io/common/pkg/nats"
 	"github.com/k8shell-io/common/pkg/validator"
@@ -36,6 +37,12 @@ type Config struct {
 	JWTVerifier         authz.JWTVerifierConfig `yaml:"jwtVerifier" validate:"required"`
 	Blueprints          BlueprintsFileConfig    `yaml:"blueprints"`
 	BaseDir             string                  `yaml:"baseDir"`
+
+	// DB configures the database connection used to persist org-scoped
+	// blueprint definitions, layered on top of the file-based blueprints
+	// loaded from Blueprints.Directory. Disabled (the default) means org
+	// blueprints are unavailable and only file-based blueprints are served.
+	DB db.DBConfig `yaml:"db"`
 }
 
 // ProvisionerNatsConfig represents the NATS configuration for the provisioner

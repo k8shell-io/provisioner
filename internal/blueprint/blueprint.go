@@ -43,8 +43,25 @@ type RawBlueprint struct {
 	Template         string
 	IsTemplate       bool
 	SourceFile       string
-	Node             *yaml.Node
-	InheritanceChain []string // ordered list of blueprint names from root ancestor to this blueprint
+	Node             *yaml.Node // fully merged (own + inherited) content
+	OwnNode          *yaml.Node // content defined directly on this blueprint, before merging with Template
+	InheritanceChain []string   // ordered list of blueprint names from root ancestor to this blueprint
+
+	// CreatedAt and UpdatedAt record when the blueprint was first registered
+	// and last changed. For a file-based blueprint both are set to the source
+	// file's last-modified time (a file carries no separate creation record);
+	// for an org blueprint loaded via OrgBlueprintStore they are the database
+	// row's timestamps.
+	CreatedAt time.Time
+	UpdatedAt time.Time
+
+	// Org is non-empty for a blueprint loaded from the database via
+	// OrgBlueprintStore (see orgstore.go), naming the organization it is
+	// scoped to. Empty for a file-based blueprint. An org blueprint is keyed
+	// in BlueprintManager.rawBlueprints under orgBlueprintKey(Org, Name)
+	// rather than its bare Name, so it can coexist with a file-based
+	// blueprint of the same name.
+	Org string
 }
 
 // BlueprintScope holds the runtime context passed to CEL template evaluation.
@@ -85,6 +102,11 @@ type LoadOptions struct {
 	Dir         string
 	Strategies  MergeStrategies
 	EnableWatch bool
+
+	// OrgStore, when set, supplies org-scoped blueprint definitions from the
+	// database that are merged with the file-based blueprints loaded from
+	// Dir. Nil disables org blueprint support entirely.
+	OrgStore OrgBlueprintStore
 }
 
 // BlueprintManager manages blueprints with lazy CEL evaluation.
@@ -95,6 +117,7 @@ type BlueprintManager struct {
 	strategies    MergeStrategies          // Custom strategies for merging lists in blueprints
 	processor     *config.Processor        // YAML processor for parsing and validating blueprints
 	watcher       *Watcher                 // the file watcher
+	orgStore      OrgBlueprintStore        // optional database-backed store of org-scoped blueprints
 	mu            sync.RWMutex             // Mutex for thread-safe access to rawBlueprints
 }
 
@@ -140,7 +163,8 @@ func NewBlueprintManager(opts LoadOptions) (*BlueprintManager, error) {
 			EnableEnvVarExpansion: false,
 			EnableFileTag:         true,
 		}),
-		mu: sync.RWMutex{},
+		orgStore: opts.OrgStore,
+		mu:       sync.RWMutex{},
 	}
 
 	if opts.EnableWatch {
@@ -184,6 +208,10 @@ func (bm *BlueprintManager) loadAndValidateBlueprints() (err error) {
 		return fmt.Errorf("failed to load blueprints: %w", err)
 	}
 
+	if err = bm.loadOrgBlueprints(); err != nil {
+		return fmt.Errorf("failed to load org blueprints: %w", err)
+	}
+
 	if err = bm.resolveInheritance(); err != nil {
 		return fmt.Errorf("failed to resolve inheritance: %w", err)
 	}
@@ -207,14 +235,15 @@ func (bm *BlueprintManager) validateAllBlueprints() []error {
 	var allErrors []error
 
 	bm.mu.RLock()
-	blueprintNames := make([]string, 0, len(bm.rawBlueprints))
-	for name := range bm.rawBlueprints {
-		blueprintNames = append(blueprintNames, name)
+	rawBlueprints := make([]*RawBlueprint, 0, len(bm.rawBlueprints))
+	for _, rawBp := range bm.rawBlueprints {
+		rawBlueprints = append(rawBlueprints, rawBp)
 	}
 	bm.mu.RUnlock()
 
-	for _, name := range blueprintNames {
-		bp, err := bm.GetBlueprint(name, validationScope)
+	for _, rawBp := range rawBlueprints {
+		name := rawBp.Name
+		bp, err := bm.evaluateRawBlueprint(rawBp, name, validationScope)
 		if err != nil {
 			allErrors = append(allErrors, fmt.Errorf("blueprint '%s': %w", name, err))
 			continue
@@ -226,10 +255,22 @@ func (bm *BlueprintManager) validateAllBlueprints() []error {
 		for _, e := range validateClaimSpecs(bp) {
 			allErrors = append(allErrors, fmt.Errorf("blueprint '%s': %w", name, e))
 		}
+		for _, e := range validateStorageTypes(bp) {
+			allErrors = append(allErrors, fmt.Errorf("blueprint '%s': %w", name, e))
+		}
 		for _, e := range validateStorageSizeLimits(bp) {
 			allErrors = append(allErrors, fmt.Errorf("blueprint '%s': %w", name, e))
 		}
+		for _, e := range validateResourceQuantities(bp) {
+			allErrors = append(allErrors, fmt.Errorf("blueprint '%s': %w", name, e))
+		}
+		for _, e := range validateEnvNames(bp) {
+			allErrors = append(allErrors, fmt.Errorf("blueprint '%s': %w", name, e))
+		}
 		for _, e := range validateSecurityContexts(bp) {
+			allErrors = append(allErrors, fmt.Errorf("blueprint '%s': %w", name, e))
+		}
+		for _, e := range validateDescriptionRequired(bp) {
 			allErrors = append(allErrors, fmt.Errorf("blueprint '%s': %w", name, e))
 		}
 	}
@@ -237,20 +278,152 @@ func (bm *BlueprintManager) validateAllBlueprints() []error {
 	return allErrors
 }
 
-// validateStorageSizeLimits checks that sizeLimit is only specified on emptyDir and memory
-// storage types, and that its value is a valid Kubernetes resource quantity.
-func validateStorageSizeLimits(bp *models.Blueprint) []error {
+// fieldError pairs a validation message with the dotted blueprint field path
+// it applies to (e.g. "resources.cpu", "storages[home].sizeLimit"), so callers
+// that need structured output (ValidateRawBlueprint) can report a field
+// without re-parsing the message text. Field is deliberately not part of the
+// error message itself, matching how go-playground/validator's FieldError
+// separates the two.
+type fieldError struct {
+	field   string
+	message string
+}
+
+func (e *fieldError) Error() string { return e.message }
+
+// Field returns the dotted blueprint field path the error applies to.
+func (e *fieldError) Field() string { return e.field }
+
+func newFieldError(field, format string, args ...interface{}) error {
+	return &fieldError{field: field, message: fmt.Sprintf(format, args...)}
+}
+
+// RequireDescription controls whether validateDescriptionRequired rejects a
+// blueprint with an empty or missing description. Disabled by default, so
+// blueprints without one are allowed for now; flip to true once every
+// blueprint in use has been given one. Description is never inherited from
+// a Template regardless of this switch — see the "description" exclusion in
+// mergeYAMLNodesWithTags (resolve.go).
+var RequireDescription = false
+
+// validateDescriptionRequired checks that bp.Description is set. Kept as a
+// provisioner-local check rather than a "required" tag on the shared
+// models.Blueprint.Description field so RequireDescription can toggle it at
+// runtime; a struct tag can't be.
+func validateDescriptionRequired(bp *models.Blueprint) []error {
+	if RequireDescription && bp.Description == "" {
+		return []error{newFieldError("description", "description is required")}
+	}
+	return nil
+}
+
+// envNameRE matches a POSIX-conformant environment variable name: a letter
+// or underscore, followed by any number of letters, digits, or underscores.
+var envNameRE = regexp.MustCompile(`^[a-zA-Z_][a-zA-Z0-9_]*$`)
+
+// validateEnvNames checks that every key in the blueprint's env map is a
+// valid environment variable name. models.Blueprint.Env carries no validate
+// tag on its keys, so a value like "TEST X" would otherwise pass.
+func validateEnvNames(bp *models.Blueprint) []error {
+	var errs []error
+	for name := range bp.Env {
+		if !envNameRE.MatchString(name) {
+			errs = append(errs, newFieldError(fmt.Sprintf("env[%s]", name), "env %q is not a valid environment variable name", name))
+		}
+	}
+	return errs
+}
+
+// validateResourceQuantities checks that every CPU/memory limit on the
+// blueprint is a valid Kubernetes resource quantity (e.g. "500m", "2",
+// "512Mi"). The "required" struct tag on models.Resources only rejects an
+// empty string, so a malformed value like "4ddsfsdf" would otherwise pass.
+func validateResourceQuantities(bp *models.Blueprint) []error {
+	type namedQuantity struct {
+		name  string
+		value string
+	}
+
+	quantities := []namedQuantity{
+		{"resources.cpu", bp.Resources.CPU},
+		{"resources.memory", bp.Resources.Memory},
+		{"podman.resources.cpu", bp.Podman.Resources.CPU},
+		{"podman.resources.memory", bp.Podman.Resources.Memory},
+	}
+
+	var errs []error
+	for _, q := range quantities {
+		if q.value == "" {
+			continue
+		}
+		if _, err := resource.ParseQuantity(q.value); err != nil {
+			errs = append(errs, newFieldError(q.name, "%s: %q is not a valid Kubernetes quantity: %v", q.name, q.value, err))
+		}
+	}
+	return errs
+}
+
+// validStorageTypes is the set of storage backend types the workspace Helm
+// chart knows how to render (see internal/helm/charts/k8shell-workspace/
+// templates/storages.yaml and workspace.yaml). It mirrors the "oneof" on
+// models.Storage.Type.
+var validStorageTypes = map[string]bool{
+	"local":    true,
+	"shared":   true,
+	"emptyDir": true,
+	"memory":   true,
+}
+
+// validateStorageTypes checks that every storage entry's type (workspace and
+// podman) is one the workspace Helm chart supports. models.Storage.Type
+// carries an "omitempty,oneof=..." validate tag, but go-playground/validator
+// does not dive into map values without a "dive" tag on
+// models.Blueprint.Storages / Podman.Storages — which the shared model lacks —
+// so an unrecognized type (e.g. "nfs") would otherwise pass validation and
+// reach Helm, where storages.yaml silently renders it as a PVC. An empty type
+// is allowed and defaults to "local".
+func validateStorageTypes(bp *models.Blueprint) []error {
 	type namedStorage struct {
-		name    string
+		name    string // display name, e.g. "home" or "podman.home"
+		path    string // field path, e.g. "storages[home]" or "podman.storages[home]"
 		storage models.Storage
 	}
 
 	var all []namedStorage
 	for name, s := range bp.Storages {
-		all = append(all, namedStorage{name, s})
+		all = append(all, namedStorage{name: name, path: fmt.Sprintf("storages[%s]", name), storage: s})
 	}
 	for name, s := range bp.Podman.Storages {
-		all = append(all, namedStorage{"podman." + name, s})
+		all = append(all, namedStorage{name: "podman." + name, path: fmt.Sprintf("podman.storages[%s]", name), storage: s})
+	}
+
+	var errs []error
+	for _, ns := range all {
+		t := ns.storage.Type
+		if t == "" || validStorageTypes[t] {
+			continue
+		}
+		errs = append(errs, newFieldError(ns.path+".type",
+			"storage %q: type %q is not valid (expected one of: local, shared, emptyDir, memory)", ns.name, t))
+	}
+	return errs
+}
+
+// validateStorageSizeLimits checks that sizeLimit is only specified on emptyDir and memory
+// storage types, and that its value is a valid Kubernetes resource quantity.
+func validateStorageSizeLimits(bp *models.Blueprint) []error {
+	type namedStorage struct {
+		name    string // display name, e.g. "home" or "podman.home"
+		path    string // field path, e.g. "storages[home]" or "podman.storages[home]"
+		storage models.Storage
+	}
+
+	var all []namedStorage
+	for name, s := range bp.Storages {
+		all = append(all, namedStorage{name: name, path: fmt.Sprintf("storages[%s]", name), storage: s})
+	}
+	for name, s := range bp.Podman.Storages {
+		all = append(all, namedStorage{name: "podman." + name, path: fmt.Sprintf("podman.storages[%s]", name), storage: s})
 	}
 
 	var errs []error
@@ -266,29 +439,97 @@ func validateStorageSizeLimits(bp *models.Blueprint) []error {
 		switch storageType {
 		case "emptyDir", "memory":
 			if _, err := resource.ParseQuantity(s.SizeLimit); err != nil {
-				errs = append(errs, fmt.Errorf("storage %q: sizeLimit %q is not a valid Kubernetes quantity: %w", ns.name, s.SizeLimit, err))
+				errs = append(errs, newFieldError(ns.path+".sizeLimit",
+					"storage %q: sizeLimit %q is not a valid Kubernetes quantity: %v", ns.name, s.SizeLimit, err))
 			}
 		default:
-			errs = append(errs, fmt.Errorf("storage %q: sizeLimit is only valid for emptyDir and memory types, got type %q", ns.name, storageType))
+			errs = append(errs, newFieldError(ns.path+".sizeLimit",
+				"storage %q: sizeLimit is only valid for emptyDir and memory types, got type %q", ns.name, storageType))
 		}
 	}
 	return errs
+}
+
+// validateStorageOwnerIDs checks that fsOwnerUid/fsOwnerGid on every storage
+// entry (workspace and podman) are valid integers, using docBytes — the
+// fully CEL-evaluated document, decoded generically — rather than the typed
+// models.Blueprint. Storage.FsOwnerUid/FsOwnerGid are *int fields, so a
+// non-numeric value (e.g. "abc") fails yaml.v3's struct decode with a
+// generic "cannot unmarshal" TypeError that carries no field path; worse,
+// yaml.v3 still leaves the pointer allocated and pointing at zero rather
+// than nil, making the bad input indistinguishable from a legitimately-set
+// "fsOwnerUid: 0" once decoded into bp. Checking the raw, still-intact value
+// here reports a properly field-pathed issue instead.
+func validateStorageOwnerIDs(docBytes []byte) []error {
+	var raw map[string]interface{}
+	if err := yaml.Unmarshal(docBytes, &raw); err != nil {
+		// Already reported by the main struct decode; nothing more to add.
+		return nil
+	}
+
+	var errs []error
+	errs = append(errs, checkStorageOwnerIDs("storages", raw["storages"])...)
+	if podman, ok := raw["podman"].(map[string]interface{}); ok {
+		errs = append(errs, checkStorageOwnerIDs("podman.storages", podman["storages"])...)
+	}
+	return errs
+}
+
+// checkStorageOwnerIDs validates fsOwnerUid/fsOwnerGid across every entry of
+// a raw storages map (already-decoded generic YAML, keyed by storage name).
+func checkStorageOwnerIDs(pathPrefix string, storages interface{}) []error {
+	m, ok := storages.(map[string]interface{})
+	if !ok {
+		return nil
+	}
+
+	var errs []error
+	for name, raw := range m {
+		storage, ok := raw.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		for _, key := range [...]string{"fsOwnerUid", "fsOwnerGid"} {
+			v, present := storage[key]
+			if !present || v == nil {
+				continue
+			}
+			if !isYAMLInteger(v) {
+				field := fmt.Sprintf("%s[%s].%s", pathPrefix, name, key)
+				errs = append(errs, newFieldError(field, "%s: %v is not a valid integer", field, v))
+			}
+		}
+	}
+	return errs
+}
+
+// isYAMLInteger reports whether v is one of the integer types yaml.v3
+// produces when decoding a scalar into interface{} (a non-numeric value
+// decodes to string instead, a fractional one to float64).
+func isYAMLInteger(v interface{}) bool {
+	switch v.(type) {
+	case int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64:
+		return true
+	default:
+		return false
+	}
 }
 
 // validateClaimSpecs decodes each storage claimSpec into corev1.PersistentVolumeClaimSpec
 // to catch structural errors early, before any Kubernetes API call is made.
 func validateClaimSpecs(bp *models.Blueprint) []error {
 	type namedStorage struct {
-		name    string
+		name    string // display name, e.g. "home" or "podman.home"
+		path    string // field path, e.g. "storages[home]" or "podman.storages[home]"
 		storage models.Storage
 	}
 
 	var all []namedStorage
 	for name, s := range bp.Storages {
-		all = append(all, namedStorage{name, s})
+		all = append(all, namedStorage{name: name, path: fmt.Sprintf("storages[%s]", name), storage: s})
 	}
 	for name, s := range bp.Podman.Storages {
-		all = append(all, namedStorage{"podman." + name, s})
+		all = append(all, namedStorage{name: "podman." + name, path: fmt.Sprintf("podman.storages[%s]", name), storage: s})
 	}
 
 	var errs []error
@@ -298,15 +539,125 @@ func validateClaimSpecs(bp *models.Blueprint) []error {
 		}
 		jsonRaw, err := json.Marshal(ns.storage.ClaimSpec)
 		if err != nil {
-			errs = append(errs, fmt.Errorf("storage %q: failed to marshal claimSpec: %w", ns.name, err))
+			errs = append(errs, newFieldError(ns.path+".claimSpec", "storage %q: failed to marshal claimSpec: %v", ns.name, err))
 			continue
 		}
+		// Strict decoding (DisallowUnknownFields) so a typo'd claimSpec
+		// field (e.g. "storageClassNamex") is reported instead of silently
+		// dropped, leaving spec's corresponding field at its zero value —
+		// the same failure mode fixed for securityContext below.
 		var spec corev1.PersistentVolumeClaimSpec
-		if err := json.Unmarshal(jsonRaw, &spec); err != nil {
-			errs = append(errs, fmt.Errorf("storage %q: invalid claimSpec: %w", ns.name, err))
+		dec := json.NewDecoder(bytes.NewReader(jsonRaw))
+		dec.DisallowUnknownFields()
+		if err := dec.Decode(&spec); err != nil {
+			errs = append(errs, newFieldError(ns.path+".claimSpec", "storage %q: invalid claimSpec: %v", ns.name, err))
+		}
+
+		errs = append(errs, validateClaimSpecResourceNames(ns.path, ns.storage.ClaimSpec)...)
+	}
+	return errs
+}
+
+// validPVCResourceNames is the only resource name Kubernetes accepts under a
+// PersistentVolumeClaimSpec's resources.requests/limits: "storage".
+// PersistentVolumeClaimSpec.Resources (VolumeResourceRequirements) types
+// Requests/Limits as plain map[ResourceName]resource.Quantity, so a typo'd
+// key like "storagex" decodes without error — DisallowUnknownFields only
+// rejects unrecognized struct fields, never arbitrary map keys — and would
+// otherwise only be caught once the Kubernetes API server rejects the PVC
+// at apply time.
+var validPVCResourceNames = map[string]bool{"storage": true}
+
+// validateClaimSpecResourceNames checks every key under claimSpec's
+// resources.requests/resources.limits against validPVCResourceNames.
+// claimSpec is the raw, undecoded map (models.Storage.ClaimSpec), inspected
+// directly since VolumeResourceRequirements' own struct decode can't catch
+// an invalid map key.
+func validateClaimSpecResourceNames(path string, claimSpec map[string]interface{}) []error {
+	resources, ok := claimSpec["resources"].(map[string]interface{})
+	if !ok {
+		return nil
+	}
+
+	var errs []error
+	for _, section := range [...]string{"requests", "limits"} {
+		entries, ok := resources[section].(map[string]interface{})
+		if !ok {
+			continue
+		}
+		for name := range entries {
+			if !validPVCResourceNames[name] {
+				field := fmt.Sprintf("%s.claimSpec.resources.%s", path, section)
+				errs = append(errs, newFieldError(field,
+					"%s: %q is not a valid resource name for a PersistentVolumeClaim (expected \"storage\")", field, name))
+			}
 		}
 	}
 	return errs
+}
+
+// validCapabilityNames is the set of Linux capability names Kubernetes'
+// SecurityContext.Capabilities accepts (without the kernel's "CAP_" prefix),
+// per capabilities(7). "ALL" is a wildcard token recognized by container
+// runtimes for drop (and, less commonly, add) rather than an actual
+// capability, and is accepted here for the same reason the required-caps
+// check below already treats "drop: [ALL]" specially.
+var validCapabilityNames = map[corev1.Capability]bool{
+	"ALL": true,
+
+	"AUDIT_CONTROL": true, "AUDIT_READ": true, "AUDIT_WRITE": true,
+	"BLOCK_SUSPEND": true, "BPF": true, "CHECKPOINT_RESTORE": true,
+	"CHOWN": true, "DAC_OVERRIDE": true, "DAC_READ_SEARCH": true,
+	"FOWNER": true, "FSETID": true,
+	"IPC_LOCK": true, "IPC_OWNER": true,
+	"KILL":  true,
+	"LEASE": true, "LINUX_IMMUTABLE": true,
+	"MAC_ADMIN": true, "MAC_OVERRIDE": true, "MKNOD": true,
+	"NET_ADMIN": true, "NET_BIND_SERVICE": true, "NET_BROADCAST": true, "NET_RAW": true,
+	"PERFMON": true,
+	"SETFCAP": true, "SETGID": true, "SETPCAP": true, "SETUID": true,
+	"SYS_ADMIN": true, "SYS_BOOT": true, "SYS_CHROOT": true, "SYS_MODULE": true,
+	"SYS_NICE": true, "SYS_PACCT": true, "SYS_PTRACE": true, "SYS_RAWIO": true,
+	"SYS_RESOURCE": true, "SYS_TIME": true, "SYS_TTY_CONFIG": true,
+	"SYSLOG":     true,
+	"WAKE_ALARM": true,
+}
+
+// validateCapabilityNames reports an issue for each entry in caps.Add/Drop
+// that isn't a real Linux capability name (or the "ALL" wildcard), catching
+// typos like "SYS_PTRACEx" that corev1.Capability's plain string type can't
+// reject on its own. fieldPrefix is the dotted path to caps itself (e.g.
+// "securityContext.capabilities").
+func validateCapabilityNames(fieldPrefix string, caps *corev1.Capabilities) []error {
+	if caps == nil {
+		return nil
+	}
+	var errs []error
+	for _, c := range caps.Add {
+		if !validCapabilityNames[c] {
+			errs = append(errs, newFieldError(fieldPrefix+".add", "%s.add: %q is not a valid Linux capability", fieldPrefix, c))
+		}
+	}
+	for _, c := range caps.Drop {
+		if !validCapabilityNames[c] {
+			errs = append(errs, newFieldError(fieldPrefix+".drop", "%s.drop: %q is not a valid Linux capability", fieldPrefix, c))
+		}
+	}
+	return errs
+}
+
+// decodeSecurityContextStrict decodes jsonRaw into a corev1.SecurityContext,
+// rejecting any field that doesn't exist on that type. A plain
+// json.Unmarshal silently ignores unknown fields (e.g. a typo'd
+// "capabilitiesx" instead of "capabilities"), leaving spec zeroed out
+// instead of reporting an error — which then hides every downstream check
+// below that depends on spec.Capabilities, since it stays nil.
+func decodeSecurityContextStrict(jsonRaw []byte) (corev1.SecurityContext, error) {
+	var spec corev1.SecurityContext
+	dec := json.NewDecoder(bytes.NewReader(jsonRaw))
+	dec.DisallowUnknownFields()
+	err := dec.Decode(&spec)
+	return spec, err
 }
 
 // validateSecurityContexts decodes Blueprint.SecurityContext and Podman.SecurityContext
@@ -318,30 +669,32 @@ func validateSecurityContexts(bp *models.Blueprint) []error {
 	if len(bp.SecurityContext) > 0 {
 		jsonRaw, err := json.Marshal(bp.SecurityContext)
 		if err != nil {
-			errs = append(errs, fmt.Errorf("securityContext: failed to marshal: %w", err))
+			errs = append(errs, newFieldError("securityContext", "securityContext: failed to marshal: %v", err))
 		} else {
-			var spec corev1.SecurityContext
-			if err := json.Unmarshal(jsonRaw, &spec); err != nil {
-				errs = append(errs, fmt.Errorf("securityContext: invalid: %w", err))
+			spec, err := decodeSecurityContextStrict(jsonRaw)
+			if err != nil {
+				errs = append(errs, newFieldError("securityContext", "securityContext: invalid: %v", err))
 			} else {
 				if spec.RunAsUser != nil && *spec.RunAsUser != 0 {
-					errs = append(errs, fmt.Errorf("securityContext: runAsUser must be 0, got %d", *spec.RunAsUser))
+					errs = append(errs, newFieldError("securityContext.runAsUser", "securityContext: runAsUser must be 0, got %d", *spec.RunAsUser))
 				}
 				if spec.RunAsGroup != nil && *spec.RunAsGroup != 0 {
-					errs = append(errs, fmt.Errorf("securityContext: runAsGroup must be 0, got %d", *spec.RunAsGroup))
+					errs = append(errs, newFieldError("securityContext.runAsGroup", "securityContext: runAsGroup must be 0, got %d", *spec.RunAsGroup))
 				}
 
 				if spec.RunAsNonRoot != nil && *spec.RunAsNonRoot {
-					errs = append(errs, fmt.Errorf("securityContext: runAsNonRoot cannot be true"))
+					errs = append(errs, newFieldError("securityContext.runAsNonRoot", "securityContext: runAsNonRoot cannot be true"))
 				}
 				if spec.ReadOnlyRootFilesystem != nil && *spec.ReadOnlyRootFilesystem {
-					errs = append(errs, fmt.Errorf("securityContext: readOnlyRootFilesystem cannot be true"))
+					errs = append(errs, newFieldError("securityContext.readOnlyRootFilesystem", "securityContext: readOnlyRootFilesystem cannot be true"))
 				}
 				if spec.AllowPrivilegeEscalation != nil && !*spec.AllowPrivilegeEscalation {
-					errs = append(errs, fmt.Errorf("securityContext: allowPrivilegeEscalation cannot be false"))
+					errs = append(errs, newFieldError("securityContext.allowPrivilegeEscalation", "securityContext: allowPrivilegeEscalation cannot be false"))
 				}
 
 				if spec.Capabilities != nil {
+					errs = append(errs, validateCapabilityNames("securityContext.capabilities", spec.Capabilities)...)
+
 					droppedAll := false
 					for _, cap := range spec.Capabilities.Drop {
 						if cap == "ALL" {
@@ -358,16 +711,16 @@ func validateSecurityContexts(bp *models.Blueprint) []error {
 
 						for _, reqCap := range requiredCaps {
 							if !addedCaps[reqCap] {
-								errs = append(errs,
-									fmt.Errorf("securityContext: %s capability is required by k8shelld but dropped with ALL", reqCap))
+								errs = append(errs, newFieldError("securityContext.capabilities",
+									"securityContext: %s capability is required by k8shelld but dropped with ALL", reqCap))
 							}
 						}
 					} else {
 						for _, cap := range spec.Capabilities.Drop {
 							for _, reqCap := range requiredCaps {
 								if cap == reqCap {
-									errs = append(errs,
-										fmt.Errorf("securityContext: cannot drop %s capability", cap))
+									errs = append(errs, newFieldError("securityContext.capabilities",
+										"securityContext: cannot drop %s capability", cap))
 								}
 							}
 						}
@@ -380,12 +733,11 @@ func validateSecurityContexts(bp *models.Blueprint) []error {
 	if len(bp.Podman.SecurityContext) > 0 {
 		jsonRaw, err := json.Marshal(bp.Podman.SecurityContext)
 		if err != nil {
-			errs = append(errs, fmt.Errorf("podman.securityContext: failed to marshal: %w", err))
+			errs = append(errs, newFieldError("podman.securityContext", "podman.securityContext: failed to marshal: %v", err))
+		} else if spec, err := decodeSecurityContextStrict(jsonRaw); err != nil {
+			errs = append(errs, newFieldError("podman.securityContext", "podman.securityContext: invalid: %v", err))
 		} else {
-			var spec corev1.SecurityContext
-			if err := json.Unmarshal(jsonRaw, &spec); err != nil {
-				errs = append(errs, fmt.Errorf("podman.securityContext: invalid: %w", err))
-			}
+			errs = append(errs, validateCapabilityNames("podman.securityContext.capabilities", spec.Capabilities)...)
 		}
 	}
 
@@ -420,14 +772,32 @@ func (bm *BlueprintManager) GetBlueprint(name string, scope *BlueprintScope) (*m
 		return nil, fmt.Errorf("scope cannot be nil")
 	}
 
-	bm.mu.RLock()
-	rawBp, exists := bm.rawBlueprints[name]
-	bm.mu.RUnlock()
-
-	if !exists {
-		return nil, fmt.Errorf("blueprint %s not found: %w", name, ErrBlueprintNotFound)
+	var org string
+	if scope.User != nil {
+		org = scope.User.Organization
 	}
 
+	rawBp, ok, err := bm.lookupOrgFromStore(org, name)
+	if err != nil {
+		return nil, err
+	}
+	if !ok {
+		bm.mu.RLock()
+		fileBp, exists := bm.rawBlueprints[name]
+		bm.mu.RUnlock()
+		if !exists || fileBp.Org != "" {
+			return nil, fmt.Errorf("blueprint %s not found: %w", name, ErrBlueprintNotFound)
+		}
+		rawBp = fileBp
+	}
+
+	return bm.evaluateRawBlueprint(rawBp, name, scope)
+}
+
+// evaluateRawBlueprint evaluates rawBp's CEL template against scope and
+// decodes the result into a models.Blueprint. name is used only for error
+// messages and the "blueprint" CEL variable.
+func (bm *BlueprintManager) evaluateRawBlueprint(rawBp *RawBlueprint, name string, scope *BlueprintScope) (*models.Blueprint, error) {
 	scope.Metadata.Name = NormalizeDNSLabel(rawBp.Name)
 	var tmpl yamlcel.CELTemplate
 	if err := rawBp.Node.Decode(&tmpl); err != nil {
@@ -474,25 +844,72 @@ func (bm *BlueprintManager) GetBlueprintChain(name string) []string {
 	return rawBp.InheritanceChain
 }
 
-// GetBlueprintsSummary returns a summary of all available blueprints without evaluating CEL expressions.
-func (bm *BlueprintManager) GetBlueprintsSummary() []*models.BlueprintSummary {
+// GetBlueprintTemplate returns the name of the immediate parent Template for
+// the given blueprint name, or "" if it does not inherit from one. Returns
+// ErrBlueprintNotFound if name is not a registered blueprint.
+func (bm *BlueprintManager) GetBlueprintTemplate(name string) (string, error) {
 	bm.mu.RLock()
 	defer bm.mu.RUnlock()
+	rawBp, exists := bm.rawBlueprints[name]
+	if !exists {
+		return "", fmt.Errorf("blueprint %s not found: %w", name, ErrBlueprintNotFound)
+	}
+	return rawBp.Template, nil
+}
 
+// GetBlueprintsSummary returns a summary of every registered blueprint
+// without evaluating CEL expressions: the file-based, global blueprints from
+// the in-memory cache plus every org-scoped database blueprint read fresh
+// from the backing store, so a row created or deleted out of band shows up
+// immediately. Org names the organization an org-scoped blueprint belongs to
+// (empty for a global one), IsGlobal is its inverse, and Template names the
+// immediate parent template, if any.
+func (bm *BlueprintManager) GetBlueprintsSummary() ([]*models.BlueprintSummary, error) {
+	bm.mu.RLock()
 	summaries := make([]*models.BlueprintSummary, 0, len(bm.rawBlueprints))
-	for name, bp := range bm.rawBlueprints {
+	for _, bp := range bm.rawBlueprints {
+		if bp.Org != "" {
+			continue // org blueprints are served from the store, below
+		}
 		summaries = append(summaries, &models.BlueprintSummary{
-			Name:        name,
+			Name:        bp.Name,
 			Description: bp.Description,
 			IsTemplate:  bp.IsTemplate,
+			IsGlobal:    true,
+			Template:    bp.Template,
+			CreatedAt:   bp.CreatedAt,
+			UpdatedAt:   bp.UpdatedAt,
 		})
 	}
-	return summaries
+	bm.mu.RUnlock()
+
+	if bm.orgStore == nil {
+		return summaries, nil
+	}
+
+	orgBlueprints, err := bm.orgStore.ListAllBlueprints()
+	if err != nil {
+		return nil, fmt.Errorf("list org blueprints from store: %w", err)
+	}
+	for _, ob := range orgBlueprints {
+		_, _, template, _, _ := ParseBlueprintMeta(ob.YAML)
+		summaries = append(summaries, &models.BlueprintSummary{
+			Name:        ob.Name,
+			Description: ob.Description,
+			IsTemplate:  ob.IsTemplate,
+			Org:         ob.Org,
+			Template:    template,
+			CreatedAt:   ob.CreatedAt,
+			UpdatedAt:   ob.UpdatedAt,
+		})
+	}
+	return summaries, nil
 }
 
 // GetRawBlueprint returns the raw (unevaluated) YAML content of the named
-// blueprint. CEL expressions are returned with a "!cel:" prefix so callers
-// can display the template source without triggering evaluation.
+// blueprint, fully merged with any inherited Template content. CEL
+// expressions are returned with a "!cel:" prefix so callers can display the
+// template source without triggering evaluation.
 func (bm *BlueprintManager) GetRawBlueprint(name string) (interface{}, error) {
 	bm.mu.RLock()
 	defer bm.mu.RUnlock()
@@ -502,7 +919,62 @@ func (bm *BlueprintManager) GetRawBlueprint(name string) (interface{}, error) {
 		return nil, fmt.Errorf("blueprint %s not found: %w", name, ErrBlueprintNotFound)
 	}
 
-	clonedNode := bm.cloneAndProcessCELNodes(rawBp.Node)
+	return bm.decodeRawNode(rawBp.Node)
+}
+
+// GetRawBlueprintOwn returns the raw (unevaluated) YAML content defined
+// directly on the named blueprint, excluding any content inherited from its
+// Template. A field present in GetRawBlueprint's output but absent here is
+// inherited rather than set on this blueprint. CEL expressions are returned
+// with a "!cel:" prefix, as in GetRawBlueprint.
+func (bm *BlueprintManager) GetRawBlueprintOwn(name string) (interface{}, error) {
+	bm.mu.RLock()
+	defer bm.mu.RUnlock()
+
+	rawBp, exists := bm.rawBlueprints[name]
+	if !exists {
+		return nil, fmt.Errorf("blueprint %s not found: %w", name, ErrBlueprintNotFound)
+	}
+
+	return bm.decodeRawNode(rawBp.OwnNode)
+}
+
+// GetRawBlueprintScoped resolves name the same way GetRawBlueprint does, but
+// when org is set it serves the org-scoped blueprint straight from the
+// backing store (so a row changed or deleted out of band is reflected
+// immediately), falling back to the file-based/global blueprint when org is
+// empty or has no such row. It returns the fully merged content, the content
+// defined directly on the blueprint (own), and the name of the immediate
+// parent template, if any. CEL expressions are returned with a "!cel:"
+// prefix, as in GetRawBlueprint.
+func (bm *BlueprintManager) GetRawBlueprintScoped(org, name string) (merged, own interface{}, template string, err error) {
+	rawBp, ok, err := bm.lookupOrgFromStore(org, name)
+	if err != nil {
+		return nil, nil, "", err
+	}
+	if !ok {
+		bm.mu.RLock()
+		fileBp, exists := bm.rawBlueprints[name]
+		bm.mu.RUnlock()
+		if !exists || fileBp.Org != "" {
+			return nil, nil, "", fmt.Errorf("blueprint %s not found: %w", name, ErrBlueprintNotFound)
+		}
+		rawBp = fileBp
+	}
+
+	if merged, err = bm.decodeRawNode(rawBp.Node); err != nil {
+		return nil, nil, "", err
+	}
+	if own, err = bm.decodeRawNode(rawBp.OwnNode); err != nil {
+		return nil, nil, "", err
+	}
+	return merged, own, rawBp.Template, nil
+}
+
+// decodeRawNode clones node (preserving CEL expressions as "!cel:"-prefixed
+// strings) and decodes it into a plain interface{} tree.
+func (bm *BlueprintManager) decodeRawNode(node *yaml.Node) (interface{}, error) {
+	clonedNode := bm.cloneAndProcessCELNodes(node)
 
 	var temp interface{}
 	if err := clonedNode.Decode(&temp); err != nil {
@@ -512,16 +984,33 @@ func (bm *BlueprintManager) GetRawBlueprint(name string) (interface{}, error) {
 	return temp, nil
 }
 
-// ListBlueprintNames returns all available blueprint names.
+// ListBlueprintNames returns all available file-based, global blueprint
+// names. Org-scoped database blueprints are excluded (see GetBlueprintsSummary).
 func (bm *BlueprintManager) ListBlueprintNames() []string {
 	bm.mu.RLock()
 	defer bm.mu.RUnlock()
 
 	names := make([]string, 0, len(bm.rawBlueprints))
-	for name := range bm.rawBlueprints {
+	for name, bp := range bm.rawBlueprints {
+		if bp.Org != "" {
+			continue
+		}
 		names = append(names, name)
 	}
 	return names
+}
+
+// HasGlobalBlueprint reports whether a file-based, global blueprint (template
+// or not) named name is currently registered. Org-scoped database blueprints
+// are not considered. Used to stop an org blueprint from being created under
+// a name that a global blueprint already owns, which it would otherwise
+// silently shadow for that org.
+func (bm *BlueprintManager) HasGlobalBlueprint(name string) bool {
+	bm.mu.RLock()
+	defer bm.mu.RUnlock()
+
+	bp, ok := bm.rawBlueprints[name]
+	return ok && bp.Org == ""
 }
 
 // GetDefaultUserBlueprint returns the name of the first non-template blueprint
@@ -610,7 +1099,23 @@ func (bm *BlueprintManager) loadRawBlueprints(dir string) error {
 			return fmt.Errorf("failed to process !include in '%s': %w", path, err)
 		}
 
-		return bm.extractRawBlueprints(root, path)
+		if err := bm.extractRawBlueprints(root, path); err != nil {
+			return err
+		}
+
+		// Stamp every blueprint that came from this file with the file's
+		// last-modified time. A file carries no separate creation record, so
+		// CreatedAt and UpdatedAt are deliberately the same value.
+		if info, ierr := d.Info(); ierr == nil {
+			mt := info.ModTime()
+			for _, bp := range bm.rawBlueprints {
+				if bp.SourceFile == path && bp.CreatedAt.IsZero() {
+					bp.CreatedAt = mt
+					bp.UpdatedAt = mt
+				}
+			}
+		}
+		return nil
 	})
 }
 

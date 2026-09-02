@@ -24,6 +24,7 @@ import (
 	natsc "github.com/k8shell-io/common/pkg/nats"
 	"github.com/k8shell-io/provisioner/internal/blueprint"
 	"github.com/k8shell-io/provisioner/internal/config"
+	"github.com/k8shell-io/provisioner/internal/db"
 	"github.com/k8shell-io/provisioner/internal/helm"
 	"github.com/rs/zerolog"
 	"google.golang.org/grpc"
@@ -34,6 +35,8 @@ import (
 // JWT verifier, and the gRPC server handle.
 type Server struct {
 	config          *config.Config
+	appVersion      string
+	commit          string
 	log             *zerolog.Logger
 	nats            *natsc.NATSClient
 	Identity        *identity.IdentityClient
@@ -43,6 +46,7 @@ type Server struct {
 	bpManager       *blueprint.BlueprintManager
 	helm            *helm.Client
 	provisionJobsKV *natsc.JetStreamKV
+	DB              *db.DB
 }
 
 // ProvisionerService implements the gRPC service for workspace provisioning
@@ -66,7 +70,9 @@ func NewProvisionerService(server *Server) *ProvisionerService {
 // resources are present before returning.
 func NewServer(configFile string, appVersion string, commit string) (*Server, error) {
 	server := &Server{
-		log: log.NewLogger("server"),
+		log:        log.NewLogger("server"),
+		appVersion: appVersion,
+		commit:     commit,
 	}
 
 	server.log.Info().Str("version", appVersion).Str("commit", commit).Msg("Starting provisioner")
@@ -78,6 +84,14 @@ func NewServer(configFile string, appVersion string, commit string) (*Server, er
 		return nil, fmt.Errorf("failed to load configuration: %w", err)
 	}
 
+	if server.config.DB.Enabled {
+		server.log.Info().Msg("Connecting to database for org-scoped blueprint storage")
+		server.DB, err = db.NewDB(server.config.DB)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create database connection: %w", err)
+		}
+	}
+
 	var blueprintDir string
 	if filepath.IsAbs(server.config.Blueprints.Directory) {
 		blueprintDir = server.config.Blueprints.Directory
@@ -86,9 +100,14 @@ func NewServer(configFile string, appVersion string, commit string) (*Server, er
 	}
 
 	server.log.Info().Msgf("Loading blueprints from directory: %s", blueprintDir)
+	var orgStore blueprint.OrgBlueprintStore
+	if server.DB != nil {
+		orgStore = server.DB
+	}
 	server.bpManager, err = blueprint.NewBlueprintManager(blueprint.LoadOptions{
 		Dir:         blueprintDir,
 		EnableWatch: true,
+		OrgStore:    orgStore,
 		Strategies: blueprint.MergeStrategies{
 			// claimSpec.accessModes: child replaces parent entirely — appending access modes makes no sense.
 			// Using the full path avoids colliding with any other "accessModes" key elsewhere in the tree.

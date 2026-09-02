@@ -11,6 +11,7 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	k8serrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -43,11 +44,33 @@ const (
 	LabelStorageType  = "k8shell.io/storage-type"
 	LabelStorageName  = "k8shell.io/storage-name"
 	LabelSubdomain    = "k8shell.io/subdomain"
+
+	// LabelHostname holds the workspace's in-cluster DNS name in the form
+	// "<hostname>.<subdomain>" (peers in the same namespace reach the workspace
+	// at this name). It is only stamped when both hostname and subdomain are set.
+	LabelHostname = "k8shell.io/hostname"
+
 	LabelInjectTarget = "k8shell.io/inject-target"
 	LabelManagedBy    = "k8shell.io/managed-by"
 
+	// LabelNetworkPolicy records which predefined network policy class a
+	// workspace pod belongs to. Other workspaces' NetworkPolicies select on it
+	// (e.g. the "user" class allows ingress from pods labelled
+	// k8shell.io/network-policy=system), so it is kept in sync with the
+	// NetworkPolicy objects when a workspace's network class is changed.
+	LabelNetworkPolicy = "k8shell.io/network-policy"
+
 	// AnnotationUserStr holds the base64-encoded canonical user string on a workspace pod.
 	AnnotationUserStr = "k8shell.io/userstr"
+
+	// AnnotationEgressRules holds the JSON-encoded egress shortcuts
+	// (allowEgressToCIDRs + allowEgressToPods) in force on a workspace pod, so
+	// the workspace-list API can return them without reading the Helm release or
+	// reverse-engineering the live NetworkPolicy. The chart writes it at
+	// provisioning and UpdateWorkspaceResources rewrites it when it replaces a
+	// workspace's egress rules. The payload shape is:
+	//   {"allowEgressToCIDRs":["1.2.3.0/24"],"allowEgressToPods":[{"app":"db"}]}
+	AnnotationEgressRules = "k8shell.io/egress-rules"
 
 	// LabelStopRequested is stamped on a workspace pod immediately before
 	// Workspace.StopPod deletes it, so the pod still carries the label during
@@ -466,6 +489,19 @@ func (c *Client) DeleteNamespacedWorkspaceResources(ctx context.Context, namespa
 		return fmt.Errorf("failed to delete network policies for canonical-id %s: %w", canonicalId, err)
 	}
 
+	// Delete CiliumNetworkPolicy resources (CRD — use dynamic client). The chart
+	// renders these for the "system" network policy class, and the out-of-band
+	// UpdateWorkspace path re-creates them without Helm ownership, so a plain
+	// helm uninstall never removes them.
+	if err := c.dynamicClient.Resource(ciliumNetworkPolicyGVR).Namespace(namespace).DeleteCollection(
+		ctx,
+		metav1.DeleteOptions{},
+		metav1.ListOptions{LabelSelector: selector},
+	); err != nil && !k8serrors.IsNotFound(err) && !meta.IsNoMatchError(err) {
+		c.log.Warn().Err(err).Str("namespace", namespace).Str("canonical-id", canonicalId).
+			Msg("failed to delete CiliumNetworkPolicy resources (Cilium may not be installed)")
+	}
+
 	// Delete cert-manager Certificate resources (CRD — use dynamic client).
 	if err := c.dynamicClient.Resource(certGVR).Namespace(namespace).DeleteCollection(
 		ctx,
@@ -595,6 +631,10 @@ func (c *Client) applyGenericResource(ctx context.Context, namespace, key, doc s
 
 // certGVR is the GroupVersionResource for cert-manager Certificate objects.
 var certGVR = schema.GroupVersionResource{Group: "cert-manager.io", Version: "v1", Resource: "certificates"}
+
+// ciliumNetworkPolicyGVR is the GroupVersionResource for CiliumNetworkPolicy
+// objects, rendered by the chart for the "system" network policy class.
+var ciliumNetworkPolicyGVR = schema.GroupVersionResource{Group: "cilium.io", Version: "v2", Resource: "ciliumnetworkpolicies"}
 
 // applyCertificate applies a cert-manager Certificate resource to the given namespace
 // using server-side apply via the dynamic client.

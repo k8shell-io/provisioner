@@ -42,10 +42,13 @@ func (bm *BlueprintManager) resolveRawTemplate(bpName string, visited map[string
 		return nil, fmt.Errorf("blueprint '%s' not found: %w", bpName, ErrBlueprintNotFound)
 	}
 
+	ownNode := bp.Node
+
 	if bp.Template == "" {
 		if len(bp.InheritanceChain) == 0 {
 			bp.InheritanceChain = []string{bpName}
 		}
+		bp.OwnNode = ownNode
 		return bp, nil
 	}
 
@@ -63,12 +66,22 @@ func (bm *BlueprintManager) resolveRawTemplate(bpName string, visited map[string
 		return nil, fmt.Errorf("failed to merge templates for '%s': %w", bpName, err)
 	}
 
+	// Description is deliberately never inherited from the template — see
+	// the matching "description" exclusion in mergeYAMLNodesWithTags below,
+	// which keeps mergedNode consistent with this. Every blueprint (template
+	// or not) must describe itself; models.Blueprint.Description now carries
+	// "validate:required" for exactly this reason.
 	return &RawBlueprint{
 		Name:             bp.Name,
 		Description:      bp.Description,
 		Template:         bp.Template,
 		IsTemplate:       bp.IsTemplate,
+		SourceFile:       bp.SourceFile,
+		Org:              bp.Org,
+		CreatedAt:        bp.CreatedAt,
+		UpdatedAt:        bp.UpdatedAt,
 		Node:             mergedNode,
+		OwnNode:          ownNode,
 		InheritanceChain: append(parent.InheritanceChain, bpName),
 	}, nil
 }
@@ -137,7 +150,13 @@ func (bm *BlueprintManager) mergeYAMLNodesWithTags(parent, child *yaml.Node, pat
 			key := keyNode.Value
 
 			if !processedKeys[key] {
-				if key != "isTemplate" {
+				// isTemplate: a child of a template is not itself a
+				// template unless it says so explicitly.
+				// description: deliberately never inherited — every
+				// blueprint, template or not, must describe itself (see
+				// resolveRawTemplate's matching exclusion, and
+				// models.Blueprint.Description's "validate:required" tag).
+				if key != "isTemplate" && key != "description" {
 					result.Content = append(result.Content, keyNode, valueNode)
 				}
 			}
@@ -203,36 +222,36 @@ func pathMatch(pattern, path string) (bool, error) {
 // then falls back to the bare key name.
 func (bm *BlueprintManager) mergeSequenceNodes(parentSeq, childSeq *yaml.Node, key, path string) (*yaml.Node, error) {
 	strategy := bm.findStrategy(key, path)
-	if strategy != nil {
-		var parentList, childList []interface{}
-
-		if err := parentSeq.Decode(&parentList); err != nil {
-			return nil, fmt.Errorf("failed to decode parent sequence for key %s: %w", key, err)
-		}
-
-		if err := childSeq.Decode(&childList); err != nil {
-			return nil, fmt.Errorf("failed to decode child sequence for key %s: %w", key, err)
-		}
-
-		mergedList := strategy(parentList, childList)
-
-		var resultNode yaml.Node
-		if err := resultNode.Encode(mergedList); err != nil {
-			return nil, fmt.Errorf("failed to encode merged sequence for key %s: %w", key, err)
-		}
-
-		return &resultNode, nil
+	if strategy == nil {
+		// Default strategy: the child's list replaces the parent's entirely,
+		// the same as every field that isn't itself a list. Concatenating
+		// instead would make a resolved/merged view (see GetBlueprint's
+		// "blueprint" field, ValidateBlueprint's "resolved_blueprint") unsafe
+		// to feed back in as a new "own" submission while `template:` is
+		// still set: the parent's items would be appended again on top of
+		// what's already merged in, compounding on every round-trip. A
+		// child that wants to keep an inherited item alongside its own must
+		// repeat it explicitly, matching how "claimSpec.accessModes" and
+		// "apps.*.start" already behave below.
+		return childSeq, nil
 	}
 
-	// Default strategy: append child items to parent items
-	result := &yaml.Node{
-		Kind:    yaml.SequenceNode,
-		Tag:     "!!seq",
-		Content: make([]*yaml.Node, 0),
+	var parentList, childList []interface{}
+
+	if err := parentSeq.Decode(&parentList); err != nil {
+		return nil, fmt.Errorf("failed to decode parent sequence for key %s: %w", key, err)
 	}
 
-	result.Content = append(result.Content, parentSeq.Content...)
-	result.Content = append(result.Content, childSeq.Content...)
+	if err := childSeq.Decode(&childList); err != nil {
+		return nil, fmt.Errorf("failed to decode child sequence for key %s: %w", key, err)
+	}
 
-	return result, nil
+	mergedList := strategy(parentList, childList)
+
+	var resultNode yaml.Node
+	if err := resultNode.Encode(mergedList); err != nil {
+		return nil, fmt.Errorf("failed to encode merged sequence for key %s: %w", key, err)
+	}
+
+	return &resultNode, nil
 }

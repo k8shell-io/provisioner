@@ -13,9 +13,12 @@ import (
 	"github.com/k8shell-io/common/pkg/gapi"
 	"github.com/k8shell-io/common/pkg/models"
 	"github.com/k8shell-io/common/pkg/userstr"
+	"github.com/k8shell-io/common/pkg/utils"
+	"github.com/k8shell-io/provisioner/internal/blueprint"
 	ws "github.com/k8shell-io/provisioner/internal/workspace"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	"gopkg.in/yaml.v3"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
@@ -254,20 +257,127 @@ func (p *ProvisionerService) ListInjectWorkloads(ctx context.Context,
 	return &provisionerv1.ListInjectWorkloadsResponse{Workloads: protoWorkloads}, nil
 }
 
-// GetBlueprints returns the summaries of every blueprint registered in the
-// provisioner, regardless of user.
-func (p *ProvisionerService) GetBlueprints(_ context.Context,
-	_ *provisionerv1.GetBlueprintsRequest,
-) (*provisionerv1.GetBlueprintsResponse, error) {
+// ListBlueprints returns a summary of every blueprint the provisioner knows
+// about: the file-based, global blueprints and every org-scoped database
+// blueprint.
+func (p *ProvisionerService) ListBlueprints(_ context.Context,
+	_ *provisionerv1.ListBlueprintsRequest,
+) (*provisionerv1.ListBlueprintsResponse, error) {
 
-	blueprints := p.server.bpManager.GetBlueprintsSummary()
+	blueprints, err := p.server.bpManager.GetBlueprintsSummary()
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "Failed to list blueprints: %v", err)
+	}
 
 	var protoBlueprints []*commonv1.BlueprintSummary
 	for _, b := range blueprints {
 		protoBlueprints = append(protoBlueprints, gapi.BlueprintSummaryToProto(b))
 	}
 
-	return &provisionerv1.GetBlueprintsResponse{
+	return &provisionerv1.ListBlueprintsResponse{
 		Blueprints: protoBlueprints,
+	}, nil
+}
+
+// GetBlueprintsQuerySchema returns the query.v1.Descriptor advertising which
+// blueprint fields are queryable/sortable via QueryBlueprints.
+func (p *ProvisionerService) GetBlueprintsQuerySchema(_ context.Context,
+	_ *provisionerv1.GetBlueprintsQuerySchemaRequest) (*queryv1.Descriptor, error) {
+	return blueprint.BlueprintsQueryDescriptor, nil
+}
+
+// QueryBlueprints retrieves blueprint summaries matching a generic
+// query.v1.Payload, as advertised by GetBlueprintsQuerySchema. Like
+// ListBlueprints, it is transparent to whether a matched blueprint is
+// file-based or stored in the database.
+func (p *ProvisionerService) QueryBlueprints(_ context.Context,
+	req *provisionerv1.QueryBlueprintsRequest,
+) (*provisionerv1.QueryBlueprintsResponse, error) {
+	blueprints, err := p.server.bpManager.QueryBlueprints(req.GetQuery())
+	if err != nil {
+		if errors.Is(err, models.ErrInvalidParameters) {
+			return nil, status.Errorf(codes.InvalidArgument, "invalid query: %v", err)
+		}
+		return nil, status.Errorf(codes.Internal, "failed to query blueprints: %v", err)
+	}
+
+	var protoBlueprints []*commonv1.BlueprintSummary
+	for _, b := range blueprints {
+		protoBlueprints = append(protoBlueprints, gapi.BlueprintSummaryToProto(b))
+	}
+
+	return &provisionerv1.QueryBlueprintsResponse{
+		Blueprints: protoBlueprints,
+	}, nil
+}
+
+// GetBlueprint returns the full raw (unevaluated) spec of a single
+// blueprint, both merged with its inherited Template and as defined directly
+// on the blueprint itself, so callers can tell which fields are inherited
+// rather than set on this blueprint. When req.Org is set, an org-scoped
+// database blueprint of that name takes precedence over a file-based one.
+func (p *ProvisionerService) GetBlueprint(_ context.Context,
+	req *provisionerv1.GetBlueprintRequest,
+) (*provisionerv1.GetBlueprintResponse, error) {
+
+	raw, own, template, err := p.server.bpManager.GetRawBlueprintScoped(req.GetOrg(), req.GetName())
+	if err != nil {
+		if errors.Is(err, blueprint.ErrBlueprintNotFound) {
+			return nil, status.Errorf(codes.NotFound, "Blueprint %s not found", req.GetName())
+		}
+		return nil, status.Errorf(codes.Internal, "Failed to get blueprint: %v", err)
+	}
+
+	b, err := yaml.Marshal(raw)
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "Failed to marshal blueprint: %v", err)
+	}
+
+	ownB, err := yaml.Marshal(own)
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "Failed to marshal blueprint: %v", err)
+	}
+
+	return &provisionerv1.GetBlueprintResponse{
+		Blueprint:    b,
+		OwnBlueprint: ownB,
+		Template:     template,
+	}, nil
+}
+
+// ValidateBlueprint validates a standalone blueprint YAML document without
+// registering it in the provisioner, returning every validation problem found.
+func (p *ProvisionerService) ValidateBlueprint(_ context.Context,
+	req *provisionerv1.ValidateBlueprintRequest,
+) (*provisionerv1.ValidateBlueprintResponse, error) {
+
+	issues, resolved, err := p.server.bpManager.ValidateRawBlueprint(req.Yaml)
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "Failed to validate blueprint: %v", err)
+	}
+
+	protoErrors := make([]*provisionerv1.BlueprintValidationError, 0, len(issues))
+	for _, issue := range issues {
+		protoErrors = append(protoErrors, &provisionerv1.BlueprintValidationError{
+			Line:    utils.SafeIntToInt32(issue.Line),
+			Column:  utils.SafeIntToInt32(issue.Column),
+			Field:   issue.Field,
+			Message: issue.Message,
+		})
+	}
+
+	// ValidateRawBlueprint only populates resolved for a valid submission.
+	var resolvedYaml []byte
+	if resolved != nil {
+		resolvedYaml, err = yaml.Marshal(resolved)
+		if err != nil {
+			return nil, status.Errorf(codes.Internal, "Failed to marshal resolved blueprint: %v", err)
+		}
+	}
+
+	return &provisionerv1.ValidateBlueprintResponse{
+		Valid:             len(protoErrors) == 0,
+		Errors:            protoErrors,
+		ResolvedBlueprint: resolvedYaml,
 	}, nil
 }
