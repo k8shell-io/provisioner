@@ -281,6 +281,19 @@ func (w *Workspace) reapplyNetworkPolicies(ctx context.Context, opts UpdateOptio
 	if class == "system" && len(ciliumPols) == 0 {
 		ciliumPols = append(ciliumPols, w.systemCiliumNetworkPolicy(ns, canonicalID))
 	}
+
+	// These objects are applied with the raw client, not through Helm, so Helm
+	// does not add its ownership metadata. Stamp it ourselves — alongside the
+	// class-independent name the chart now renders — so a later `helm upgrade`
+	// re-adopts them instead of failing with an ownership conflict, and a
+	// `helm uninstall` removes them instead of orphaning them.
+	for _, np := range netPols {
+		stampHelmOwnership(np, w.Name, ns)
+	}
+	for _, u := range ciliumPols {
+		stampHelmOwnership(u, w.Name, ns)
+	}
+
 	selector := helm.LabelCanonicalId + "=" + canonicalID
 
 	npc := w.client.KubeClient().NetworkingV1().NetworkPolicies(ns)
@@ -375,6 +388,35 @@ func (w *Workspace) reapplyNetworkPolicies(ctx context.Context, opts UpdateOptio
 	return class, nil
 }
 
+// Helm's well-known ownership metadata. Helm stamps these on every object it
+// installs; objects applied out-of-band must carry them too or the next
+// `helm upgrade` rejects the release with an "invalid ownership metadata" error.
+const (
+	helmManagedByLabel        = "app.kubernetes.io/managed-by"
+	helmManagedByValue        = "Helm"
+	helmReleaseNameAnnotation = "meta.helm.sh/release-name"
+	helmReleaseNsAnnotation   = "meta.helm.sh/release-namespace"
+)
+
+// stampHelmOwnership adds Helm's managed-by label and release annotations to obj
+// so Helm treats a raw-client-applied object as part of the named release.
+func stampHelmOwnership(obj metav1.Object, releaseName, namespace string) {
+	labels := obj.GetLabels()
+	if labels == nil {
+		labels = map[string]string{}
+	}
+	labels[helmManagedByLabel] = helmManagedByValue
+	obj.SetLabels(labels)
+
+	annotations := obj.GetAnnotations()
+	if annotations == nil {
+		annotations = map[string]string{}
+	}
+	annotations[helmReleaseNameAnnotation] = releaseName
+	annotations[helmReleaseNsAnnotation] = namespace
+	obj.SetAnnotations(annotations)
+}
+
 // systemCiliumNetworkPolicy builds the CiliumNetworkPolicy the k8shell-workspace
 // chart renders for the "system" class (see templates/np-system.yaml): the
 // workspace endpoint is allowed egress to the "world" and "cluster" entities.
@@ -387,7 +429,7 @@ func (w *Workspace) systemCiliumNetworkPolicy(namespace, canonicalID string) *un
 		"apiVersion": "cilium.io/v2",
 		"kind":       "CiliumNetworkPolicy",
 		"metadata": map[string]interface{}{
-			"name":      "cilium-np-" + w.Name + "-system",
+			"name":      "cilium-np-" + w.Name,
 			"namespace": namespace,
 			"labels": map[string]interface{}{
 				helm.LabelCanonicalId: canonicalID,

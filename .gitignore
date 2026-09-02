@@ -1,5 +1,4 @@
 __debug*
-docs/*
 docker/provisioner/files/
 .proto_deps
 vendor/

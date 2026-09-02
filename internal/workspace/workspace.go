@@ -938,7 +938,35 @@ func (w *Workspace) Uninstall(ctx context.Context, timeout time.Duration, wait b
 	if err := w.client.Uninstall(w.Name, int(timeout.Seconds()), wait); err != nil {
 		return fmt.Errorf("failed to uninstall workspace: %w", err)
 	}
+
+	// helm uninstall only removes the objects recorded in the release manifest.
+	// The out-of-band UpdateWorkspace path (reapplyNetworkPolicies) can leave
+	// NetworkPolicy / CiliumNetworkPolicy objects Helm never tracked — e.g. when
+	// the applied class differed from the provisioned one. Sweep everything
+	// carrying this workspace's canonical-id label so nothing outlives the
+	// release. The release is already gone, so a sweep failure is logged, not
+	// fatal.
+	if canonicalID := w.canonicalIdForCleanup(); canonicalID != "" {
+		if err := w.client.DeleteNamespacedWorkspaceResources(ctx, w.client.TargetNamespace(), canonicalID); err != nil {
+			w.log.Error().Err(err).Msgf("Failed to sweep leftover resources for workspace %s (canonical-id %s)", w.Name, canonicalID)
+		}
+	}
 	return nil
+}
+
+// canonicalIdForCleanup returns the workspace's canonical id for label-based
+// resource cleanup, falling back to the userstr and finally the Helm release
+// name — which, for standalone workspaces, is the canonical id.
+func (w *Workspace) canonicalIdForCleanup() string {
+	if w.canonicalId != "" {
+		return w.canonicalId
+	}
+	if w.userStr != nil {
+		if id := w.userStr.CanonicalId(); id != "" {
+			return id
+		}
+	}
+	return w.Name
 }
 
 // StopPod deletes only the workspace pod, leaving the Helm release and all
