@@ -17,6 +17,7 @@ k8shell.io/network-policy: "{{ .Values.network.networkPolicyClass }}"
 {{- end }}
 {{- if and .Values.subdomain .Values.hostname }}
 k8shell.io/subdomain: "{{ .Values.subdomain }}"
+k8shell.io/hostname: "{{ .Values.hostname }}.{{ .Values.subdomain }}"
 {{- end }}
 {{- if .Values.__jobid__ }}
 k8shell.io/job-id: "{{ .Values.__jobid__ }}"

@@ -44,6 +44,12 @@ const (
 	LabelStorageType  = "k8shell.io/storage-type"
 	LabelStorageName  = "k8shell.io/storage-name"
 	LabelSubdomain    = "k8shell.io/subdomain"
+
+	// LabelHostname holds the workspace's in-cluster DNS name in the form
+	// "<hostname>.<subdomain>" (peers in the same namespace reach the workspace
+	// at this name). It is only stamped when both hostname and subdomain are set.
+	LabelHostname = "k8shell.io/hostname"
+
 	LabelInjectTarget = "k8shell.io/inject-target"
 	LabelManagedBy    = "k8shell.io/managed-by"
 

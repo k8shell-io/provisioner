@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/k8shell-io/provisioner/internal/helm"
 	"gopkg.in/yaml.v3"
 	corev1 "k8s.io/api/core/v1"
 )
@@ -121,10 +122,17 @@ func formatLastFailMessage(reason, msg string) string {
 	return msg
 }
 
-// podHostname returns the Pod hostname if hostname+subdomain are set, otherwise "".
+// podHostname returns the workspace's in-cluster DNS name. It prefers the
+// k8shell.io/hostname label ("<hostname>.<subdomain>") stamped by the chart, and
+// falls back to deriving "<hostname>.<subdomain>.<namespace>" from the pod spec
+// for workspaces provisioned before that label existed. Returns "" if neither
+// hostname nor subdomain is set.
 func podHostname(pod *corev1.Pod) string {
 	if pod == nil {
 		return ""
+	}
+	if h := strings.TrimSpace(pod.Labels[helm.LabelHostname]); h != "" {
+		return h
 	}
 	hn := strings.TrimSpace(pod.Spec.Hostname)
 	sd := strings.TrimSpace(pod.Spec.Subdomain)

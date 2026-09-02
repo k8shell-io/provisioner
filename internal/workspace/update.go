@@ -60,7 +60,8 @@ type UpdateOptions struct {
 	// NetworkPolicies are re-rendered from the chart and re-applied.
 	ChangeNetwork bool
 	// NetworkPolicyClass is the desired class. Empty keeps the workspace's
-	// current class (from its blueprint values) and only re-applies egress.
+	// current class (read from the live pod's k8shell.io/network-policy label)
+	// and only re-applies egress, without touching the class label.
 	NetworkPolicyClass string
 	// ReplaceEgress gates AllowEgressToCIDRs / AllowEgressToPods. When true they
 	// replace the workspace's egress shortcuts wholesale (empty lists clear
@@ -99,12 +100,17 @@ func (w *Workspace) UpdateResourcesAndNetwork(ctx context.Context, opts UpdateOp
 	}
 
 	if opts.ChangeNetwork {
-		class, err := w.reapplyNetworkPolicies(ctx, opts)
+		class, classChanged, err := w.reapplyNetworkPolicies(ctx, opts)
 		if err != nil {
 			return nil, err
 		}
 		res.NetworkChanged = true
-		res.AppliedNetworkPolicyClass = class
+		// Only report a class when one was explicitly applied. An egress-only
+		// update keeps the workspace's current class untouched, so the proto's
+		// applied_network_policy_class stays empty (see its doc comment).
+		if classChanged {
+			res.AppliedNetworkPolicyClass = class
+		}
 	}
 
 	return res, nil
@@ -199,22 +205,44 @@ func (w *Workspace) resizeMainContainer(ctx context.Context, cpu, memory string)
 // reapplyNetworkPolicies re-renders the workspace Helm chart with an overridden
 // network block and applies the resulting NetworkPolicy (and, on Cilium
 // clusters, CiliumNetworkPolicy) objects directly, replacing whatever the
-// original release installed. The workspace pod's k8shell.io/network-policy
-// label is updated to match. It returns the network policy class now in effect.
-func (w *Workspace) reapplyNetworkPolicies(ctx context.Context, opts UpdateOptions) (string, error) {
+// original release installed. When opts.NetworkPolicyClass is set the workspace
+// pod's k8shell.io/network-policy label is updated to match; when it is empty
+// the current class is kept (read from that label) and the label is left alone.
+// It returns the network policy class the policies were rendered with and
+// whether that class was explicitly changed by this call.
+func (w *Workspace) reapplyNetworkPolicies(ctx context.Context, opts UpdateOptions) (string, bool, error) {
 	if w.blueprint == nil {
-		return "", fmt.Errorf("blueprint is nil for workspace %s", w.Name)
+		return "", false, fmt.Errorf("blueprint is nil for workspace %s", w.Name)
 	}
 
+	ns := w.client.TargetNamespace()
+
 	class := opts.NetworkPolicyClass
+	classChanged := class != ""
 	if class == "" {
-		class = w.blueprint.Network.NetworkPolicyClass
-	}
-	if class == "" {
-		class = "workspace"
+		// Egress-only update: keep whatever class is in effect now. The pod's
+		// k8shell.io/network-policy label is the source of truth — a prior
+		// out-of-band update may have moved it off the blueprint's class — so
+		// only fall back to the blueprint (then the chart default) when the
+		// label is missing.
+		pod, err := w.client.KubeClient().CoreV1().Pods(ns).Get(ctx, w.Name, metav1.GetOptions{})
+		switch {
+		case err == nil:
+			class = pod.Labels[helm.LabelNetworkPolicy]
+		case k8serrors.IsNotFound(err):
+			return "", false, fmt.Errorf("%w: %s", models.ErrWorkspaceNotFound, w.Name)
+		default:
+			return "", false, fmt.Errorf("failed to get workspace pod %s: %w", w.Name, err)
+		}
+		if class == "" {
+			class = w.blueprint.Network.NetworkPolicyClass
+		}
+		if class == "" {
+			class = "workspace"
+		}
 	}
 	if !npClasses[class] {
-		return "", fmt.Errorf("%w: unknown network policy class %q", models.ErrInvalidParameters, class)
+		return "", false, fmt.Errorf("%w: unknown network policy class %q", models.ErrInvalidParameters, class)
 	}
 
 	canonicalID := w.canonicalId
@@ -222,7 +250,7 @@ func (w *Workspace) reapplyNetworkPolicies(ctx context.Context, opts UpdateOptio
 		canonicalID = w.userStr.CanonicalId()
 	}
 	if canonicalID == "" {
-		return "", fmt.Errorf("cannot determine canonical id for workspace %s", w.Name)
+		return "", false, fmt.Errorf("cannot determine canonical id for workspace %s", w.Name)
 	}
 
 	// Override the in-memory blueprint network block, then re-render the chart.
@@ -235,10 +263,8 @@ func (w *Workspace) reapplyNetworkPolicies(ctx context.Context, opts UpdateOptio
 
 	manifest, err := w.Template(ctx)
 	if err != nil {
-		return "", fmt.Errorf("failed to render workspace chart for %s: %w", w.Name, err)
+		return "", false, fmt.Errorf("failed to render workspace chart for %s: %w", w.Name, err)
 	}
-
-	ns := w.client.TargetNamespace()
 
 	var netPols []*networkingv1.NetworkPolicy
 	var ciliumPols []*unstructured.Unstructured
@@ -257,21 +283,21 @@ func (w *Workspace) reapplyNetworkPolicies(ctx context.Context, opts UpdateOptio
 		case "NetworkPolicy":
 			np := &networkingv1.NetworkPolicy{}
 			if err := sigsyaml.Unmarshal([]byte(doc), np); err != nil {
-				return "", fmt.Errorf("failed to decode rendered NetworkPolicy for %s: %w", w.Name, err)
+				return "", false, fmt.Errorf("failed to decode rendered NetworkPolicy for %s: %w", w.Name, err)
 			}
 			np.Namespace = ns
 			netPols = append(netPols, np)
 		case "CiliumNetworkPolicy":
 			u := &unstructured.Unstructured{}
 			if err := sigsyaml.Unmarshal([]byte(doc), u); err != nil {
-				return "", fmt.Errorf("failed to decode rendered CiliumNetworkPolicy for %s: %w", w.Name, err)
+				return "", false, fmt.Errorf("failed to decode rendered CiliumNetworkPolicy for %s: %w", w.Name, err)
 			}
 			u.SetNamespace(ns)
 			ciliumPols = append(ciliumPols, u)
 		}
 	}
 	if len(netPols) == 0 {
-		return "", fmt.Errorf("chart rendered no NetworkPolicy for class %q", class)
+		return "", false, fmt.Errorf("chart rendered no NetworkPolicy for class %q", class)
 	}
 
 	// The chart only renders its CiliumNetworkPolicy when Helm can see the
@@ -299,7 +325,7 @@ func (w *Workspace) reapplyNetworkPolicies(ctx context.Context, opts UpdateOptio
 	npc := w.client.KubeClient().NetworkingV1().NetworkPolicies(ns)
 	if err := npc.DeleteCollection(ctx, metav1.DeleteOptions{},
 		metav1.ListOptions{LabelSelector: selector}); err != nil && !k8serrors.IsNotFound(err) {
-		return "", fmt.Errorf("failed to delete existing network policies for %s: %w", w.Name, err)
+		return "", false, fmt.Errorf("failed to delete existing network policies for %s: %w", w.Name, err)
 	}
 
 	cnpc := w.client.DynamicClient().Resource(ciliumNetworkPolicyGVR).Namespace(ns)
@@ -312,15 +338,15 @@ func (w *Workspace) reapplyNetworkPolicies(ctx context.Context, opts UpdateOptio
 	for _, np := range netPols {
 		if _, err := npc.Create(ctx, np, metav1.CreateOptions{}); err != nil {
 			if !k8serrors.IsAlreadyExists(err) {
-				return "", fmt.Errorf("failed to create network policy %s: %w", np.Name, err)
+				return "", false, fmt.Errorf("failed to create network policy %s: %w", np.Name, err)
 			}
 			existing, gerr := npc.Get(ctx, np.Name, metav1.GetOptions{})
 			if gerr != nil {
-				return "", fmt.Errorf("failed to get existing network policy %s: %w", np.Name, gerr)
+				return "", false, fmt.Errorf("failed to get existing network policy %s: %w", np.Name, gerr)
 			}
 			np.ResourceVersion = existing.ResourceVersion
 			if _, uerr := npc.Update(ctx, np, metav1.UpdateOptions{}); uerr != nil {
-				return "", fmt.Errorf("failed to update network policy %s: %w", np.Name, uerr)
+				return "", false, fmt.Errorf("failed to update network policy %s: %w", np.Name, uerr)
 			}
 		}
 	}
@@ -334,23 +360,27 @@ func (w *Workspace) reapplyNetworkPolicies(ctx context.Context, opts UpdateOptio
 			w.log.Debug().Msg("skipping CiliumNetworkPolicy (cilium.io/v2 CRD not installed)")
 		case k8serrors.IsAlreadyExists(err):
 			if derr := cnpc.Delete(ctx, u.GetName(), metav1.DeleteOptions{}); derr != nil && !k8serrors.IsNotFound(derr) {
-				return "", fmt.Errorf("failed to replace CiliumNetworkPolicy %s: %w", u.GetName(), derr)
+				return "", false, fmt.Errorf("failed to replace CiliumNetworkPolicy %s: %w", u.GetName(), derr)
 			}
 			if _, cerr := cnpc.Create(ctx, u, metav1.CreateOptions{}); cerr != nil {
-				return "", fmt.Errorf("failed to recreate CiliumNetworkPolicy %s: %w", u.GetName(), cerr)
+				return "", false, fmt.Errorf("failed to recreate CiliumNetworkPolicy %s: %w", u.GetName(), cerr)
 			}
 		default:
-			return "", fmt.Errorf("failed to create CiliumNetworkPolicy %s: %w", u.GetName(), err)
+			return "", false, fmt.Errorf("failed to create CiliumNetworkPolicy %s: %w", u.GetName(), err)
 		}
 	}
 
-	// Keep the pod's k8shell.io/network-policy label in sync with the class,
-	// and — when the egress shortcuts were replaced — the k8shell.io/egress-rules
-	// annotation the workspace-list API reports. A class-only change leaves the
-	// blueprint's egress in effect, so its annotation stays correct and is left
-	// untouched. Both go in one merge patch.
-	patchMeta := map[string]interface{}{
-		"labels": map[string]string{helm.LabelNetworkPolicy: class},
+	// Sync the pod metadata the workspace-list API reports off the pod. The
+	// k8shell.io/network-policy label is only touched when the caller actually
+	// asked for a class change — an egress-only update must leave the current
+	// class (and its label) alone rather than stamping a resolved fallback that
+	// was never persisted. The k8shell.io/egress-rules annotation is rewritten
+	// only when the egress shortcuts were replaced; a class-only change leaves
+	// the blueprint's egress (and its annotation) in effect. Whatever needs
+	// changing goes in one merge patch.
+	patchMeta := map[string]interface{}{}
+	if classChanged {
+		patchMeta["labels"] = map[string]string{helm.LabelNetworkPolicy: class}
 	}
 	if opts.ReplaceEgress {
 		var annVal interface{} // nil clears the annotation via merge patch
@@ -368,24 +398,27 @@ func (w *Workspace) reapplyNetworkPolicies(ctx context.Context, opts UpdateOptio
 				"allowEgressToPods":  pods,
 			})
 			if merr != nil {
-				return "", fmt.Errorf("failed to encode egress rules annotation for %s: %w", w.Name, merr)
+				return "", false, fmt.Errorf("failed to encode egress rules annotation for %s: %w", w.Name, merr)
 			}
 			annVal = string(raw)
 		}
 		patchMeta["annotations"] = map[string]interface{}{helm.AnnotationEgressRules: annVal}
 	}
-	podPatch, err := json.Marshal(map[string]interface{}{"metadata": patchMeta})
-	if err != nil {
-		return "", fmt.Errorf("failed to build network metadata patch for %s: %w", w.Name, err)
-	}
-	if _, err := w.client.KubeClient().CoreV1().Pods(ns).Patch(ctx, w.Name, types.MergePatchType,
-		podPatch, metav1.PatchOptions{}); err != nil && !k8serrors.IsNotFound(err) {
-		w.log.Warn().Err(err).Msgf("failed to update network label/annotations on workspace pod %s", w.Name)
+	if len(patchMeta) > 0 {
+		podPatch, err := json.Marshal(map[string]interface{}{"metadata": patchMeta})
+		if err != nil {
+			return "", false, fmt.Errorf("failed to build network metadata patch for %s: %w", w.Name, err)
+		}
+		if _, err := w.client.KubeClient().CoreV1().Pods(ns).Patch(ctx, w.Name, types.MergePatchType,
+			podPatch, metav1.PatchOptions{}); err != nil && !k8serrors.IsNotFound(err) {
+			w.log.Warn().Err(err).Msgf("failed to update network label/annotations on workspace pod %s", w.Name)
+		}
 	}
 
-	w.log.Info().Str("workspace", w.Name).Str("class", class).Int("networkPolicies", len(netPols)).
-		Int("ciliumNetworkPolicies", len(ciliumPols)).Msg("re-applied workspace network policies")
-	return class, nil
+	w.log.Info().Str("workspace", w.Name).Str("class", class).Bool("classChanged", classChanged).
+		Int("networkPolicies", len(netPols)).Int("ciliumNetworkPolicies", len(ciliumPols)).
+		Msg("re-applied workspace network policies")
+	return class, classChanged, nil
 }
 
 // Helm's well-known ownership metadata. Helm stamps these on every object it

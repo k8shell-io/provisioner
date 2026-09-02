@@ -112,8 +112,15 @@ func (p *ProvisionerService) UpdateWorkspaceResources(ctx context.Context,
 		changes = append(changes, fmt.Sprintf("resources cpu=%s memory=%s", result.AppliedCPU, result.AppliedMemory))
 	}
 	if result.NetworkChanged {
+		// AppliedNetworkPolicyClass is empty for an egress-only update, which
+		// leaves the class untouched — mirror that in the response and message
+		// rather than reporting a class the caller never asked to change.
 		resp.AppliedNetworkPolicyClass = result.AppliedNetworkPolicyClass
-		changes = append(changes, fmt.Sprintf("network policy class=%s", result.AppliedNetworkPolicyClass))
+		if result.AppliedNetworkPolicyClass != "" {
+			changes = append(changes, fmt.Sprintf("network policy class=%s", result.AppliedNetworkPolicyClass))
+		} else {
+			changes = append(changes, "network egress rules")
+		}
 	}
 	resp.Message = fmt.Sprintf("Workspace %s updated (%s); reverts on the next re-provision",
 		name, strings.Join(changes, ", "))
