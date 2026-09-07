@@ -6,6 +6,7 @@ package workspace
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -186,6 +187,15 @@ func (w *Workspace) resizeMainContainer(ctx context.Context, cpu, memory string)
 
 	updated, err := pods.Patch(ctx, w.Name, types.StrategicMergePatchType, patch, metav1.PatchOptions{}, "resize")
 	if err != nil {
+		// A rejected resize patch (requests that would exceed the new limits, an
+		// out-of-range quantity, an immutable field) is the caller's mistake, not
+		// an internal fault. Surface it as ErrInvalidParameters so the gRPC layer
+		// maps it to InvalidArgument instead of Internal, and pass through the
+		// Kubernetes validation message, which already names the offending field.
+		if k8serrors.IsInvalid(err) || k8serrors.IsBadRequest(err) {
+			return "", "", fmt.Errorf("%w: cannot resize workspace %s: %s",
+				models.ErrInvalidParameters, w.Name, k8sValidationMessage(err))
+		}
 		return "", "", fmt.Errorf("failed to resize workspace pod %s: %w", w.Name, err)
 	}
 
@@ -200,6 +210,34 @@ func (w *Workspace) resizeMainContainer(ctx context.Context, cpu, memory string)
 	w.log.Info().Str("workspace", w.Name).Str("cpu", appliedCPU).Str("memory", appliedMemory).
 		Msg("resized workspace main container")
 	return appliedCPU, appliedMemory, nil
+}
+
+// k8sValidationMessage extracts the human-readable core of a Kubernetes
+// validation error. The API server returns messages shaped like
+// `Pod "x" is invalid: spec.containers[0].resources.requests: Invalid value:
+// "128Mi": must be less than or equal to memory limit of 64Mi`. It prefers the
+// structured status causes (joining each field path to its message), then the
+// text after "is invalid: ", then the raw error.
+func k8sValidationMessage(err error) string {
+	var apiStatus k8serrors.APIStatus
+	if errors.As(err, &apiStatus) {
+		if d := apiStatus.Status().Details; d != nil && len(d.Causes) > 0 {
+			parts := make([]string, 0, len(d.Causes))
+			for _, c := range d.Causes {
+				if c.Field != "" {
+					parts = append(parts, c.Field+": "+c.Message)
+				} else {
+					parts = append(parts, c.Message)
+				}
+			}
+			return strings.Join(parts, "; ")
+		}
+	}
+	msg := err.Error()
+	if i := strings.Index(msg, " is invalid: "); i != -1 {
+		return strings.TrimSpace(msg[i+len(" is invalid: "):])
+	}
+	return msg
 }
 
 // reapplyNetworkPolicies re-renders the workspace Helm chart with an overridden
