@@ -729,6 +729,27 @@ func (w *Workspace) Selector() string {
 	return fmt.Sprintf("app.kubernetes.io/instance=%s", w.Name)
 }
 
+// attachInitScriptFiles adds a "__file" key to every entry of the "initScripts"
+// value, holding the on-disk file name the provisioner materializes for that
+// script. It keeps the provisioner<->k8shelld naming contract
+// (models.InitScriptFileName) out of the Helm chart. The blueprint mounted at
+// models.BlueprintFilePath stays authoritative for behavior; the file name is
+// only a delivery and correlation key.
+func attachInitScriptFiles(values map[string]interface{}) {
+	scripts, ok := values["initScripts"].([]interface{})
+	if !ok {
+		return
+	}
+	for i, entry := range scripts {
+		m, ok := entry.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		name, _ := m["name"].(string)
+		m["__file"] = models.InitScriptFileName(i, name)
+	}
+}
+
 // Values builds the complete Helm values map for the workspace by merging the
 // blueprint fields with user data, registry config, cert-manager settings, and
 // provisioner-internal keys (prefixed with "__"). The resulting map is passed
@@ -751,6 +772,8 @@ func (w *Workspace) Values() (map[string]interface{}, error) {
 			}
 		}
 	}
+
+	attachInitScriptFiles(values)
 
 	userValues, err := toMap(w.user)
 	if err != nil {

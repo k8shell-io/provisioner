@@ -252,9 +252,9 @@ spec:
       items:
       - key: README
         path: README
-        {{- range $index, $script := .Values.initScripts }}
-      - key: __init_{{ printf "%02d" (add $index 1) }}_{{ $script.name }}
-        path: __init_{{ printf "%02d" (add $index 1) }}_{{ $script.name }}
+        {{- range $script := .Values.initScripts }}
+      - key: {{ $script.__file }}
+        path: {{ $script.__file }}
         {{- end }}
   - name: pat-secret
     secret:
