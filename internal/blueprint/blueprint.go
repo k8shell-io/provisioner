@@ -267,6 +267,9 @@ func (bm *BlueprintManager) validateAllBlueprints() []error {
 		for _, e := range validateEnvNames(bp) {
 			allErrors = append(allErrors, fmt.Errorf("blueprint '%s': %w", name, e))
 		}
+		for _, e := range validateIgnoreOrphans(bp) {
+			allErrors = append(allErrors, fmt.Errorf("blueprint '%s': %w", name, e))
+		}
 		for _, e := range validateSecurityContexts(bp) {
 			allErrors = append(allErrors, fmt.Errorf("blueprint '%s': %w", name, e))
 		}
@@ -329,6 +332,22 @@ func validateEnvNames(bp *models.Blueprint) []error {
 	for name := range bp.Env {
 		if !envNameRE.MatchString(name) {
 			errs = append(errs, newFieldError(fmt.Sprintf("env[%s]", name), "env %q is not a valid environment variable name", name))
+		}
+	}
+	return errs
+}
+
+// validateIgnoreOrphans checks that every entry in k8shelld.ignoreOrphans is a
+// valid RE2 regular expression. The entries are used as orphan-exclusion
+// patterns by k8shelld; models.K8shelld carries no validate tag on the slice,
+// so a malformed pattern like ".*[JetBrains" would otherwise pass.
+func validateIgnoreOrphans(bp *models.Blueprint) []error {
+	var errs []error
+	for i, pattern := range bp.K8shelld.IgnoreOrphans {
+		if _, err := regexp.Compile(pattern); err != nil {
+			errs = append(errs, newFieldError(
+				fmt.Sprintf("k8shelld.ignoreOrphans[%d]", i),
+				"k8shelld.ignoreOrphans[%d] %q is not a valid regular expression: %v", i, pattern, err))
 		}
 	}
 	return errs

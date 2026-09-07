@@ -315,6 +315,75 @@ env:
 	assertAllFieldsSet(t, issues)
 }
 
+// TestValidateRawBlueprintInvalidIgnoreOrphans reproduces a malformed
+// k8shelld.ignoreOrphans entry passing validation because models.K8shelld
+// carries no validate tag on the slice.
+func TestValidateRawBlueprintInvalidIgnoreOrphans(t *testing.T) {
+	bm := newTestManager(t, nil)
+
+	yaml := []byte(`
+name: my-blueprint
+description: A test blueprint
+image: myimage:latest
+k8shelld:
+  image: k8shelld-image:latest
+  ignoreOrphans:
+    - .*JetBrains.*
+    - .*postgresql(
+resources:
+  cpu: 500m
+  memory: 512Mi
+podman:
+  resources:
+    cpu: 500m
+    memory: 512Mi
+`)
+
+	issues, _, err := bm.ValidateRawBlueprint(yaml)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(issues) != 1 {
+		t.Fatalf("expected 1 issue for the malformed ignoreOrphans pattern, got %+v", issues)
+	}
+	if issues[0].Field != "k8shelld.ignoreOrphans[1]" {
+		t.Fatalf("expected field k8shelld.ignoreOrphans[1], got %q", issues[0].Field)
+	}
+	assertAllFieldsSet(t, issues)
+}
+
+// TestValidateRawBlueprintValidIgnoreOrphans checks that well-formed
+// regular expressions in k8shelld.ignoreOrphans pass validation.
+func TestValidateRawBlueprintValidIgnoreOrphans(t *testing.T) {
+	bm := newTestManager(t, nil)
+
+	yaml := []byte(`
+name: my-blueprint
+description: A test blueprint
+image: myimage:latest
+k8shelld:
+  image: k8shelld-image:latest
+  ignoreOrphans:
+    - .*JetBrains.*
+    - .*postgresql.*
+resources:
+  cpu: 500m
+  memory: 512Mi
+podman:
+  resources:
+    cpu: 500m
+    memory: 512Mi
+`)
+
+	issues, _, err := bm.ValidateRawBlueprint(yaml)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(issues) != 0 {
+		t.Fatalf("expected no issues for valid ignoreOrphans patterns, got %+v", issues)
+	}
+}
+
 // TestValidateRawBlueprintReportsFieldForEveryIssue reproduces the exact
 // combination reported: a network.allowEgressToCIDRs entry that fails go-
 // playground's "cidr" validation (which always sets Field) alongside an

@@ -333,6 +333,9 @@ func (bm *BlueprintManager) validateRawBlueprint(org string, data []byte) ([]Val
 	for _, e := range validateEnvNames(&bp) {
 		issues = append(issues, errorToIssue(e))
 	}
+	for _, e := range validateIgnoreOrphans(&bp) {
+		issues = append(issues, errorToIssue(e))
+	}
 	for _, e := range validateSecurityContexts(&bp) {
 		issues = append(issues, errorToIssue(e))
 	}
