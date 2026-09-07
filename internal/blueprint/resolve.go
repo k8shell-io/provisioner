@@ -52,7 +52,18 @@ func (bm *BlueprintManager) resolveRawTemplate(bpName string, visited map[string
 		return bp, nil
 	}
 
-	parent, err := bm.resolveRawTemplate(bp.Template, visited)
+	// An org blueprint's `template:` resolves within its own org first, then
+	// falls back to a global/file template of that name (see
+	// resolveTemplateParent). File-based blueprints (Org == "") only ever see
+	// the global name.
+	parentKey := bp.Template
+	if bp.Org != "" {
+		if _, ok := bm.rawBlueprints[orgBlueprintKey(bp.Org, bp.Template)]; ok {
+			parentKey = orgBlueprintKey(bp.Org, bp.Template)
+		}
+	}
+
+	parent, err := bm.resolveRawTemplate(parentKey, visited)
 	if err != nil {
 		if errors.Is(err, ErrBlueprintNotFound) {
 			return nil, fmt.Errorf("cannot find template '%s' for '%s'", bp.Template, bpName)

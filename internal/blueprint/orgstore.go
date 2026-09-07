@@ -69,6 +69,23 @@ func orgBlueprintKey(org, name string) string {
 	return org + "/" + name
 }
 
+// resolveTemplateParent returns the already-resolved parent a blueprint in
+// org inherits via `template: name`. An org-scoped template of that name in
+// the same org shadows a global/file template of the same name; an org
+// blueprint can therefore extend its own org's templates or global ones, but
+// never another org's. Passing org == "" skips straight to the global
+// lookup. Callers must hold at least bm.mu.RLock (or run single-threaded
+// during a reload pass).
+func (bm *BlueprintManager) resolveTemplateParent(org, name string) (*RawBlueprint, bool) {
+	if org != "" {
+		if p, ok := bm.rawBlueprints[orgBlueprintKey(org, name)]; ok {
+			return p, true
+		}
+	}
+	p, ok := bm.rawBlueprints[name]
+	return p, ok
+}
+
 // buildOrgRawBlueprint turns one database row into a fully resolved
 // RawBlueprint: its YAML is parsed, CEL expressions are normalised back to
 // `!cel` tags, and — when it names a `template:` — merged with that
@@ -112,7 +129,7 @@ func (bm *BlueprintManager) buildOrgRawBlueprint(ob *models.OrgBlueprint) (*RawB
 	}
 
 	bm.mu.RLock()
-	parent, ok := bm.rawBlueprints[template]
+	parent, ok := bm.resolveTemplateParent(ob.Org, template)
 	bm.mu.RUnlock()
 	if !ok {
 		return nil, fmt.Errorf("cannot find template %q for org blueprint %q", template, ob.Name)

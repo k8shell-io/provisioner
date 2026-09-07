@@ -144,6 +144,87 @@ func TestOrgBlueprintInheritsFileTemplate(t *testing.T) {
 	}
 }
 
+func TestOrgBlueprintInheritsOrgScopedTemplate(t *testing.T) {
+	store := &fakeOrgStore{}
+	// base is a global file template; the org template db-common extends it,
+	// and the org blueprint custom extends db-common — the same two-level
+	// chain the tul-fm org uses in practice.
+	bm := newTestManagerWithOrgStore(t, map[string]string{
+		"base.yaml": "name: base\nisTemplate: true\ndescription: base template\nimage: base-image:latest\n" + requiredBlueprintFields,
+	}, store)
+
+	store.set([]*models.OrgBlueprint{
+		{Org: "acme", Name: "db-common", IsTemplate: true,
+			YAML: []byte("name: db-common\nisTemplate: true\ntemplate: base\ndescription: org template\nimage: acme-db:latest\n")},
+		{Org: "acme", Name: "custom",
+			YAML: []byte("name: custom\ntemplate: db-common\ndescription: test org blueprint\n")},
+	})
+	if err := bm.ReloadOrgBlueprints(); err != nil {
+		t.Fatalf("reload failed: %v", err)
+	}
+
+	bp, err := bm.GetBlueprint("custom", scopeForOrg("acme"))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if bp.Image != "acme-db:latest" {
+		t.Fatalf("expected image inherited from org template, got %q", bp.Image)
+	}
+	// A field only base sets must still flow through the whole chain.
+	if bp.K8shelld.Image != "k8shelld-image:latest" {
+		t.Fatalf("expected k8shelld.image inherited from base through db-common, got %+v", bp.K8shelld)
+	}
+}
+
+func TestOrgBlueprintCannotInheritAnotherOrgsTemplate(t *testing.T) {
+	store := &fakeOrgStore{}
+	bm := newTestManagerWithOrgStore(t, nil, store)
+
+	store.set([]*models.OrgBlueprint{
+		{Org: "acme", Name: "db-common", IsTemplate: true,
+			YAML: []byte("name: db-common\nisTemplate: true\ndescription: org template\nimage: acme-db:latest\n" + requiredBlueprintFields)},
+		{Org: "other", Name: "custom",
+			YAML: []byte("name: custom\ntemplate: db-common\ndescription: test org blueprint\n")},
+	})
+	err := bm.ReloadOrgBlueprints()
+	if err == nil {
+		t.Fatalf("expected reload to fail: org 'other' must not see org 'acme' template")
+	}
+}
+
+func TestValidateRawBlueprintForOrgResolvesOrgScopedTemplate(t *testing.T) {
+	store := &fakeOrgStore{}
+	bm := newTestManagerWithOrgStore(t, nil, store)
+
+	store.set([]*models.OrgBlueprint{
+		{Org: "acme", Name: "db-common", IsTemplate: true,
+			YAML: []byte("name: db-common\nisTemplate: true\ndescription: org template\nimage: acme-db:latest\n" + requiredBlueprintFields)},
+	})
+	if err := bm.ReloadOrgBlueprints(); err != nil {
+		t.Fatalf("reload failed: %v", err)
+	}
+
+	doc := []byte("name: custom\ntemplate: db-common\ndescription: test org blueprint\n")
+
+	// Global-scoped validation cannot see the org template.
+	issues, _, err := bm.ValidateRawBlueprint(doc)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(issues) == 0 {
+		t.Fatalf("expected a 'template not found' issue for global-scoped validation")
+	}
+
+	// Org-scoped validation resolves it.
+	issues, _, err = bm.ValidateRawBlueprintForOrg("acme", doc)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(issues) > 0 {
+		t.Fatalf("expected no issues for org-scoped validation, got %+v", issues)
+	}
+}
+
 func TestGetBlueprintsSummaryIncludesOrgBlueprints(t *testing.T) {
 	store := &fakeOrgStore{}
 	bm := newTestManagerWithOrgStore(t, map[string]string{

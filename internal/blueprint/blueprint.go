@@ -892,11 +892,17 @@ func (bm *BlueprintManager) GetBlueprintsSummary() ([]*models.BlueprintSummary, 
 		return nil, fmt.Errorf("list org blueprints from store: %w", err)
 	}
 	for _, ob := range orgBlueprints {
-		_, _, template, _, _ := ParseBlueprintMeta(ob.YAML)
+		// Trust the stored YAML for isTemplate/template rather than the
+		// row's is_template column, which older rows may carry stale after
+		// an update that did not rewrite it.
+		_, _, template, isTemplate, err := ParseBlueprintMeta(ob.YAML)
+		if err != nil {
+			isTemplate = ob.IsTemplate
+		}
 		summaries = append(summaries, &models.BlueprintSummary{
 			Name:        ob.Name,
 			Description: ob.Description,
-			IsTemplate:  ob.IsTemplate,
+			IsTemplate:  isTemplate,
 			Org:         ob.Org,
 			Template:    template,
 			CreatedAt:   ob.CreatedAt,

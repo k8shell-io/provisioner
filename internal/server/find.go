@@ -347,11 +347,14 @@ func (p *ProvisionerService) GetBlueprint(_ context.Context,
 
 // ValidateBlueprint validates a standalone blueprint YAML document without
 // registering it in the provisioner, returning every validation problem found.
+// When req.Org is set, a `template:` reference resolves to an org-scoped
+// template of that name in that org before a global/file template of the same
+// name, matching how a stored org blueprint of that org resolves its parent.
 func (p *ProvisionerService) ValidateBlueprint(_ context.Context,
 	req *provisionerv1.ValidateBlueprintRequest,
 ) (*provisionerv1.ValidateBlueprintResponse, error) {
 
-	issues, resolved, err := p.server.bpManager.ValidateRawBlueprint(req.Yaml)
+	issues, resolved, err := p.server.bpManager.ValidateRawBlueprintForOrg(req.GetOrg(), req.Yaml)
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "Failed to validate blueprint: %v", err)
 	}

@@ -32,7 +32,7 @@ func (p *ProvisionerService) CreateBlueprint(_ context.Context,
 		return nil, status.Error(codes.Unavailable, "database is not configured")
 	}
 
-	if err := p.validateOrgBlueprintYaml(req.GetYaml()); err != nil {
+	if err := p.validateOrgBlueprintYaml(req.GetOrg(), req.GetYaml()); err != nil {
 		return nil, err
 	}
 
@@ -74,10 +74,10 @@ func (p *ProvisionerService) CreateBlueprint(_ context.Context,
 
 // UpdateBlueprint replaces the YAML content of an existing org-scoped
 // blueprint, identified by org plus the name read from the submitted YAML
-// document. The description is refreshed from the document too. The YAML is
-// validated exactly as ValidateBlueprint does before it is persisted, and
-// the blueprint manager's merged view is refreshed so the change is
-// immediately visible.
+// document. The description and is_template flag are refreshed from the
+// document too. The YAML is validated exactly as ValidateBlueprint does
+// before it is persisted, and the blueprint manager's merged view is
+// refreshed so the change is immediately visible.
 func (p *ProvisionerService) UpdateBlueprint(_ context.Context,
 	req *provisionerv1.UpdateBlueprintRequest) (*provisionerv1.OrgBlueprint, error) {
 	if req.GetOrg() == "" {
@@ -90,7 +90,7 @@ func (p *ProvisionerService) UpdateBlueprint(_ context.Context,
 		return nil, status.Error(codes.Unavailable, "database is not configured")
 	}
 
-	if err := p.validateOrgBlueprintYaml(req.GetYaml()); err != nil {
+	if err := p.validateOrgBlueprintYaml(req.GetOrg(), req.GetYaml()); err != nil {
 		return nil, err
 	}
 
@@ -99,7 +99,7 @@ func (p *ProvisionerService) UpdateBlueprint(_ context.Context,
 		return nil, status.Errorf(codes.InvalidArgument, "invalid blueprint yaml: %v", err)
 	}
 
-	name, description, _, _, err := blueprint.ParseBlueprintMeta(yamlDoc)
+	name, description, _, isTemplate, err := blueprint.ParseBlueprintMeta(yamlDoc)
 	if err != nil {
 		return nil, status.Errorf(codes.InvalidArgument, "invalid blueprint yaml: %v", err)
 	}
@@ -107,7 +107,7 @@ func (p *ProvisionerService) UpdateBlueprint(_ context.Context,
 		return nil, status.Error(codes.InvalidArgument, "blueprint yaml must set a name")
 	}
 
-	bp, err := p.server.DB.UpdateBlueprint(req.GetOrg(), name, &description, yamlDoc)
+	bp, err := p.server.DB.UpdateBlueprint(req.GetOrg(), name, &description, yamlDoc, isTemplate)
 	if err != nil {
 		if errors.Is(err, dbpkg.ErrBlueprintNotFound) {
 			return nil, status.Errorf(codes.NotFound, "blueprint '%s' not found for org '%s'", name, req.GetOrg())
@@ -152,9 +152,10 @@ func (p *ProvisionerService) DeleteBlueprint(_ context.Context,
 
 // validateOrgBlueprintYaml validates a submitted org blueprint document the
 // same way ValidateBlueprint does, returning an InvalidArgument status
-// naming the first problem found when invalid.
-func (p *ProvisionerService) validateOrgBlueprintYaml(yaml []byte) error {
-	issues, _, err := p.server.bpManager.ValidateRawBlueprint(yaml)
+// naming the first problem found when invalid. org scopes `template:`
+// resolution so an org-scoped template shadows a global one of the same name.
+func (p *ProvisionerService) validateOrgBlueprintYaml(org string, yaml []byte) error {
+	issues, _, err := p.server.bpManager.ValidateRawBlueprintForOrg(org, yaml)
 	if err != nil {
 		return status.Errorf(codes.Internal, "failed to validate blueprint: %v", err)
 	}

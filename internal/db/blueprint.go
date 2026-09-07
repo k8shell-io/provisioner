@@ -50,18 +50,19 @@ func (d *DB) CreateBlueprint(org, name, description string, yaml []byte, isTempl
 	return bp, nil
 }
 
-// UpdateBlueprint replaces an existing org blueprint's yaml content, and
-// optionally its description. name and org together identify the blueprint
-// and are immutable; pass a nil description to leave it unchanged. Returns
-// ErrBlueprintNotFound when no blueprint with that (org, name) exists.
-func (d *DB) UpdateBlueprint(org, name string, description *string, yaml []byte) (*models.OrgBlueprint, error) {
+// UpdateBlueprint replaces an existing org blueprint's yaml content, its
+// is_template flag, and optionally its description. name and org together
+// identify the blueprint and are immutable; pass a nil description to leave
+// it unchanged. Returns ErrBlueprintNotFound when no blueprint with that
+// (org, name) exists.
+func (d *DB) UpdateBlueprint(org, name string, description *string, yaml []byte, isTemplate bool) (*models.OrgBlueprint, error) {
 	bp := &models.OrgBlueprint{Org: org, Name: name}
 	err := d.Pool.QueryRow(context.Background(),
 		`UPDATE provisioner.org_blueprints
-		 SET description = COALESCE($3, description), yaml = $4, updated_at = NOW()
+		 SET description = COALESCE($3, description), yaml = $4, is_template = $5, updated_at = NOW()
 		 WHERE org=$1 AND name=$2
 		 RETURNING COALESCE(description, ''), yaml, is_template, created_at, updated_at`,
-		org, name, description, yaml,
+		org, name, description, yaml, isTemplate,
 	).Scan(&bp.Description, &bp.YAML, &bp.IsTemplate, &bp.CreatedAt, &bp.UpdatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, fmt.Errorf("%w: org %q name %q", ErrBlueprintNotFound, org, name)

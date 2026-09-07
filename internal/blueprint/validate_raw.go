@@ -227,6 +227,19 @@ func structValidationMessage(fe govalidator.FieldError) string {
 // return value is empty): a caller should fix the reported issues first
 // rather than being handed a preview built from an invalid document.
 func (bm *BlueprintManager) ValidateRawBlueprint(data []byte) ([]ValidationIssue, interface{}, error) {
+	return bm.validateRawBlueprint("", data)
+}
+
+// ValidateRawBlueprintForOrg behaves like ValidateRawBlueprint but resolves a
+// `template:` reference the way a stored org blueprint of org would: an
+// org-scoped template of that name in org shadows a global template of the
+// same name (see resolveTemplateParent). Pass org == "" for the plain,
+// global-only behaviour.
+func (bm *BlueprintManager) ValidateRawBlueprintForOrg(org string, data []byte) ([]ValidationIssue, interface{}, error) {
+	return bm.validateRawBlueprint(org, data)
+}
+
+func (bm *BlueprintManager) validateRawBlueprint(org string, data []byte) ([]ValidationIssue, interface{}, error) {
 	var doc yaml.Node
 	if err := yaml.Unmarshal(data, &doc); err != nil {
 		return []ValidationIssue{yamlErrorToIssue(err)}, nil, nil
@@ -246,7 +259,7 @@ func (bm *BlueprintManager) ValidateRawBlueprint(data []byte) ([]ValidationIssue
 	mergedNode := node
 	if templateName, ok := bpData["template"].(string); ok && templateName != "" {
 		bm.mu.RLock()
-		parent, exists := bm.rawBlueprints[templateName]
+		parent, exists := bm.resolveTemplateParent(org, templateName)
 		bm.mu.RUnlock()
 		if !exists {
 			return []ValidationIssue{{
