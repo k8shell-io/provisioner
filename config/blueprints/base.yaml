@@ -1,6 +1,7 @@
 blueprints:
   - name: base
     isTemplate: true
+    description: Base template providing k8shelld defaults, network policy, and security context shared by every workspace blueprint.
 
     splash: |
       Welcome to k8shell - cloud-native workspaces on Kubernetes!

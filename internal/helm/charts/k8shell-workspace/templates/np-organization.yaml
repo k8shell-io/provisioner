@@ -2,14 +2,21 @@
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
-  name: np-{{ .Release.Name }}-organization
-  namespace: {{ .Release.Namespace }} 
+  name: np-{{ .Release.Name }}
+  namespace: {{ .Release.Namespace }}
   labels:
-    {{- include "workspace.labels" . | nindent 4 }}  
+    {{- include "workspace.labels" . | nindent 4 }}
 spec:
+  # Scope the policy to this workspace's own pod. The from/to selectors below
+  # still open traffic to the whole organization, but a bare org-wide
+  # podSelector would make this single NetworkPolicy select every workspace in
+  # the namespace and — because NetworkPolicies are additive — grant them all
+  # org-wide ingress/egress, dissolving the isolation of unrelated workspaces
+  # (and outliving this workspace if it leaks).
   podSelector:
     matchLabels:
-      k8shell.io/organization: {{ .Values.__organization__ }}
+      k8shell.io/organization: "{{ .Values.__organization__ }}"
+      k8shell.io/canonical-id: "{{ .Values.__canonicalid__ }}"
   policyTypes:
     - Ingress
     - Egress

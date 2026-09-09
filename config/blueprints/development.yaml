@@ -70,7 +70,7 @@ blueprints:
           zfs-csi.k8shell.io/squash-gid: !cel "user.gid"
 
     initScripts:
-      - name: workspace 
+      - name: workspace
         script: |
           ln -s /opt/shared $HOME/shared
 
@@ -156,6 +156,11 @@ blueprints:
     #     script: |
     #       # set up the workspace for development
     #       mkdir -p $HOME/workspace
+    #   - name: db-setup
+    #     # run on every workspace start, not just the first (default: false)
+    #     always: true
+    #     script: |
+    #       /usr/local/bin/psutils init
 
     enableApps: true
     apps:

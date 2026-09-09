@@ -130,6 +130,12 @@ func (c *Client) KubeClient() kubernetes.Interface {
 	return c.kubeClient
 }
 
+// DynamicClient returns the underlying dynamic Kubernetes client, used for
+// custom resources such as CiliumNetworkPolicy that have no typed client.
+func (c *Client) DynamicClient() dynamic.Interface {
+	return c.dynamicClient
+}
+
 // TargetNamespace returns the target namespace for Helm operations
 func (c *Client) TargetNamespace() string {
 	return c.targetNamespace

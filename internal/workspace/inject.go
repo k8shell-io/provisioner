@@ -267,7 +267,12 @@ func sanitizeBlueprintForInjection(bp *models.Blueprint) (*models.Blueprint, err
 		copy.Podman.Storages[name] = s
 	}
 
-	copy.Network.NetworkPolicyClass = ""
+	// The whole network block is a standalone-workspace concept: the np-*
+	// templates build NetworkPolicies that select a pod the chart owns, which an
+	// injected workspace does not have, so none of it — class or egress
+	// shortcuts — is honored for injection. Clear it all so an injected
+	// workspace never advertises network settings it doesn't actually enforce.
+	copy.Network = models.Network{}
 
 	return &copy, nil
 }

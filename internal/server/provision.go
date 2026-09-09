@@ -551,6 +551,10 @@ func (p *ProvisionerService) prepareWorkspaceWithUserStr(ctx context.Context,
 	workspace.SetProvisionContext(provisionMode, workloadName, workloadNamespace, workloadKind)
 	workspace.SetPAT(patResp.GetToken())
 
+	if err := workspace.FetchUserEnvVars(ctx); err != nil {
+		return nil, status.Errorf(codes.Internal, "failed to fetch user environment variables: %v", err)
+	}
+
 	return workspace, nil
 }
 
