@@ -72,6 +72,20 @@ const (
 	//   {"allowEgressToCIDRs":["1.2.3.0/24"],"allowEgressToPods":[{"app":"db"}]}
 	AnnotationEgressRules = "k8shell.io/egress-rules"
 
+	// LabelWebProxy is stamped ("true") on a workspace pod that publishes a
+	// TCP port through the web proxy, so the proxy can discover routable
+	// workspaces by label selector.
+	LabelWebProxy = "k8shell.io/web-proxy"
+
+	// AnnotationWebProxyPort and AnnotationWebProxyRoles hold the web-proxy
+	// route in force on a workspace pod, so the web proxy and the
+	// workspace-list API can read it without the Helm release. The chart
+	// writes them at provisioning and UpdateWorkspaceResources rewrites them
+	// when it replaces the route. AnnotationWebProxyPort is the decimal port;
+	// AnnotationWebProxyRoles is a JSON string array, e.g. ["developer","qa"].
+	AnnotationWebProxyPort  = "k8shell.io/web-proxy-port"
+	AnnotationWebProxyRoles = "k8shell.io/web-proxy-roles"
+
 	// LabelStopRequested is stamped on a workspace pod immediately before
 	// Workspace.StopPod deletes it, so the pod still carries the label during
 	// its graceful-termination window. AnalyzePod uses its presence to report

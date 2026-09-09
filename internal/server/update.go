@@ -11,6 +11,7 @@ import (
 	"time"
 
 	provisionerv1 "github.com/k8shell-io/common/pkg/api/gen/go/provisioner/v1"
+	"github.com/k8shell-io/common/pkg/models"
 	"github.com/k8shell-io/provisioner/internal/helm"
 	ws "github.com/k8shell-io/provisioner/internal/workspace"
 	"google.golang.org/grpc/codes"
@@ -63,9 +64,25 @@ func (p *ProvisionerService) UpdateWorkspaceResources(ctx context.Context,
 		}
 	}
 
-	if !opts.ChangeResources && !opts.ChangeNetwork {
+	if n := req.Network; n != nil && n.ReplaceWebProxy {
+		if p := n.WebProxyPort; p != 0 {
+			if p < 1 || p > 65535 {
+				return nil, status.Errorf(codes.InvalidArgument, "web_proxy_port %d is out of range (1-65535)", p)
+			}
+			if p == models.WORKSPACE_PORT {
+				return nil, status.Errorf(codes.InvalidArgument,
+					"web_proxy_port %d is reserved for the workspace grpc API", p)
+			}
+		}
+		opts.ReplaceWebProxy = true
+		opts.WebProxyPort = int(n.WebProxyPort)
+		opts.WebProxyRoles = n.WebProxyRoles
+	}
+
+	if !opts.ChangeResources && !opts.ChangeNetwork && !opts.ReplaceWebProxy {
 		return nil, status.Errorf(codes.InvalidArgument,
-			"at least one of resources (cpu/memory) or network (network_policy_class/replace_egress) must be set")
+			"at least one of resources (cpu/memory), network (network_policy_class/replace_egress) "+
+				"or web proxy (replace_web_proxy) must be set")
 	}
 
 	if _, pod, findErr := ws.FindWorkspace(ctx, p.server.helm, name, p.server.config.InjectNamespaces); findErr == nil &&
@@ -120,6 +137,14 @@ func (p *ProvisionerService) UpdateWorkspaceResources(ctx context.Context,
 			changes = append(changes, fmt.Sprintf("network policy class=%s", result.AppliedNetworkPolicyClass))
 		} else {
 			changes = append(changes, "network egress rules")
+		}
+	}
+	if result.WebProxyChanged {
+		resp.AppliedWebProxyPort = int32(result.AppliedWebProxyPort)
+		if result.AppliedWebProxyPort != 0 {
+			changes = append(changes, fmt.Sprintf("web proxy port=%d", result.AppliedWebProxyPort))
+		} else {
+			changes = append(changes, "web proxy route cleared")
 		}
 	}
 	resp.Message = fmt.Sprintf("Workspace %s updated (%s); reverts on the next re-provision",

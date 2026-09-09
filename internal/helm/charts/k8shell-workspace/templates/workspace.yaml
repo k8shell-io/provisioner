@@ -17,6 +17,10 @@ metadata:
     {{- if and .Values.network (or .Values.network.allowEgressToCIDRs .Values.network.allowEgressToPods) }}
     k8shell.io/egress-rules: {{ dict "allowEgressToCIDRs" (.Values.network.allowEgressToCIDRs | default list) "allowEgressToPods" (.Values.network.allowEgressToPods | default list) | toJson | quote }}
     {{- end }}
+    {{- if and .Values.network .Values.network.webProxy }}
+    k8shell.io/web-proxy-port: {{ .Values.network.webProxy.port | quote }}
+    k8shell.io/web-proxy-roles: {{ .Values.network.webProxy.allowedRoles | default list | toJson | quote }}
+    {{- end }}
   labels:
     {{- include "workspace.workspaceLabels" . | nindent 4 }} 
 spec:

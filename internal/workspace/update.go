@@ -70,6 +70,15 @@ type UpdateOptions struct {
 	ReplaceEgress      bool
 	AllowEgressToCIDRs []string
 	AllowEgressToPods  []map[string]string
+
+	// ReplaceWebProxy gates WebProxyPort / WebProxyRoles. When true they replace
+	// the workspace's web-proxy route wholesale: a zero WebProxyPort clears the
+	// route (drops the pod's port/roles annotations and the discovery label).
+	// When false the blueprint's route is kept. This is a pure pod-metadata
+	// change — no NetworkPolicy is re-rendered.
+	ReplaceWebProxy bool
+	WebProxyPort    int
+	WebProxyRoles   []string
 }
 
 // UpdateResult reports the settings in effect after UpdateResourcesAndNetwork.
@@ -79,14 +88,16 @@ type UpdateResult struct {
 	AppliedMemory             string
 	NetworkChanged            bool
 	AppliedNetworkPolicyClass string
+	WebProxyChanged           bool
+	AppliedWebProxyPort       int
 }
 
 // UpdateResourcesAndNetwork applies opts to the workspace's live Kubernetes
 // objects. Resources are resized first (it needs a running pod); the network
-// policy is re-applied second. Either step is skipped when its Change* gate is
-// false. The Helm release is never modified, so the workspace reverts to its
-// blueprint's resources and network class the next time the release is
-// re-applied.
+// policy is re-applied second; the web-proxy route is re-applied last. Each
+// step is skipped when its Change* / Replace* gate is false. The Helm release
+// is never modified, so the workspace reverts to its blueprint's resources,
+// network class and web-proxy route the next time the release is re-applied.
 func (w *Workspace) UpdateResourcesAndNetwork(ctx context.Context, opts UpdateOptions) (*UpdateResult, error) {
 	res := &UpdateResult{}
 
@@ -114,7 +125,72 @@ func (w *Workspace) UpdateResourcesAndNetwork(ctx context.Context, opts UpdateOp
 		}
 	}
 
+	if opts.ReplaceWebProxy {
+		port, err := w.reapplyWebProxy(ctx, opts)
+		if err != nil {
+			return nil, err
+		}
+		res.WebProxyChanged = true
+		res.AppliedWebProxyPort = port
+	}
+
 	return res, nil
+}
+
+// reapplyWebProxy replaces the workspace's web-proxy route by patching the
+// live pod's metadata: the k8shell.io/web-proxy-port and
+// k8shell.io/web-proxy-roles annotations and the k8shell.io/web-proxy
+// discovery label. A zero opts.WebProxyPort clears all three. No NetworkPolicy
+// is touched — proxy traffic ingresses via the api-server, which every class
+// already permits. It returns the port in effect after the patch (0 when
+// cleared).
+func (w *Workspace) reapplyWebProxy(ctx context.Context, opts UpdateOptions) (int, error) {
+	ns := w.client.TargetNamespace()
+
+	annotations := map[string]interface{}{}
+	labels := map[string]interface{}{}
+	port := 0
+
+	if opts.WebProxyPort > 0 {
+		port = opts.WebProxyPort
+		roles := opts.WebProxyRoles
+		if roles == nil {
+			roles = []string{}
+		}
+		rolesJSON, err := json.Marshal(roles)
+		if err != nil {
+			return 0, fmt.Errorf("failed to encode web-proxy roles annotation for %s: %w", w.Name, err)
+		}
+		annotations[helm.AnnotationWebProxyPort] = fmt.Sprintf("%d", port)
+		annotations[helm.AnnotationWebProxyRoles] = string(rolesJSON)
+		labels[helm.LabelWebProxy] = "true"
+	} else {
+		// nil clears the key via merge patch.
+		annotations[helm.AnnotationWebProxyPort] = nil
+		annotations[helm.AnnotationWebProxyRoles] = nil
+		labels[helm.LabelWebProxy] = nil
+	}
+
+	podPatch, err := json.Marshal(map[string]interface{}{
+		"metadata": map[string]interface{}{
+			"annotations": annotations,
+			"labels":      labels,
+		},
+	})
+	if err != nil {
+		return 0, fmt.Errorf("failed to build web-proxy metadata patch for %s: %w", w.Name, err)
+	}
+	if _, err := w.client.KubeClient().CoreV1().Pods(ns).Patch(ctx, w.Name, types.MergePatchType,
+		podPatch, metav1.PatchOptions{}); err != nil {
+		if k8serrors.IsNotFound(err) {
+			return 0, fmt.Errorf("%w: %s", models.ErrWorkspaceNotFound, w.Name)
+		}
+		return 0, fmt.Errorf("failed to update web-proxy metadata on workspace pod %s: %w", w.Name, err)
+	}
+
+	w.log.Info().Str("workspace", w.Name).Int("port", port).Int("roles", len(opts.WebProxyRoles)).
+		Msg("re-applied workspace web-proxy route")
+	return port, nil
 }
 
 // resizeMainContainer changes the CPU and/or memory limits of the workspace's

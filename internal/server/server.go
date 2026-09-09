@@ -239,9 +239,9 @@ func (s *Server) GetBlueprintScope(blueprintName string, user *models.User,
 		return nil, fmt.Errorf("blueprint name is required to create scope")
 	}
 
-	var repoName = "noreponame"
-	var ownerName = "norepoowner"
-	var repoAddress = "noaddress"
+	var repoName = ""
+	var ownerName = ""
+	var repoAddress = ""
 	var repoRef = ""
 
 	if bpMetadata != nil {

@@ -264,6 +264,9 @@ func (bm *BlueprintManager) validateAllBlueprints() []error {
 		for _, e := range validateResourceQuantities(bp) {
 			allErrors = append(allErrors, fmt.Errorf("blueprint '%s': %w", name, e))
 		}
+		for _, e := range validateWebProxy(bp) {
+			allErrors = append(allErrors, fmt.Errorf("blueprint '%s': %w", name, e))
+		}
 		for _, e := range validateEnvNames(bp) {
 			allErrors = append(allErrors, fmt.Errorf("blueprint '%s': %w", name, e))
 		}
@@ -351,6 +354,22 @@ func validateIgnoreOrphans(bp *models.Blueprint) []error {
 		}
 	}
 	return errs
+}
+
+// validateWebProxy checks the network.webProxy block. The port range is
+// covered by the "min=1,max=65535" struct tag; this adds the one semantic
+// rule the tag can't express — the port must not collide with the workspace
+// grpc API port, which the pod always listens on.
+func validateWebProxy(bp *models.Blueprint) []error {
+	wp := bp.Network.WebProxy
+	if wp == nil {
+		return nil
+	}
+	if wp.Port == models.WORKSPACE_PORT {
+		return []error{newFieldError("network.webProxy.port",
+			"network.webProxy.port %d is reserved for the workspace grpc API", wp.Port)}
+	}
+	return nil
 }
 
 // validateResourceQuantities checks that every CPU/memory limit on the

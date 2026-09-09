@@ -384,6 +384,113 @@ podman:
 	}
 }
 
+// TestValidateRawBlueprintWebProxyReservedPort checks that a
+// network.webProxy.port colliding with the workspace grpc API port (2822) is
+// rejected by the validateWebProxy semantic check.
+func TestValidateRawBlueprintWebProxyReservedPort(t *testing.T) {
+	bm := newTestManager(t, nil)
+
+	yaml := []byte(`
+name: my-blueprint
+description: A test blueprint
+image: myimage:latest
+k8shelld:
+  image: k8shelld-image:latest
+resources:
+  cpu: 500m
+  memory: 512Mi
+podman:
+  resources:
+    cpu: 500m
+    memory: 512Mi
+network:
+  webProxy:
+    port: 2822
+    allowedRoles:
+      - developer
+`)
+
+	issues, _, err := bm.ValidateRawBlueprint(yaml)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(issues) != 1 {
+		t.Fatalf("expected 1 issue for the reserved web-proxy port, got %+v", issues)
+	}
+	if issues[0].Field != "network.webProxy.port" {
+		t.Fatalf("expected field network.webProxy.port, got %q", issues[0].Field)
+	}
+	assertAllFieldsSet(t, issues)
+}
+
+// TestValidateRawBlueprintValidWebProxy checks that a well-formed
+// network.webProxy block passes validation.
+func TestValidateRawBlueprintValidWebProxy(t *testing.T) {
+	bm := newTestManager(t, nil)
+
+	yaml := []byte(`
+name: my-blueprint
+description: A test blueprint
+image: myimage:latest
+k8shelld:
+  image: k8shelld-image:latest
+resources:
+  cpu: 500m
+  memory: 512Mi
+podman:
+  resources:
+    cpu: 500m
+    memory: 512Mi
+network:
+  webProxy:
+    port: 8080
+    allowedRoles:
+      - developer
+      - qa
+`)
+
+	issues, _, err := bm.ValidateRawBlueprint(yaml)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(issues) != 0 {
+		t.Fatalf("expected no issues for a valid webProxy block, got %+v", issues)
+	}
+}
+
+// TestValidateRawBlueprintWebProxyPortRange checks that the struct-tag range
+// (min=1,max=65535) on network.webProxy.port is enforced.
+func TestValidateRawBlueprintWebProxyPortRange(t *testing.T) {
+	bm := newTestManager(t, nil)
+
+	yaml := []byte(`
+name: my-blueprint
+description: A test blueprint
+image: myimage:latest
+k8shelld:
+  image: k8shelld-image:latest
+resources:
+  cpu: 500m
+  memory: 512Mi
+podman:
+  resources:
+    cpu: 500m
+    memory: 512Mi
+network:
+  webProxy:
+    port: 99999
+`)
+
+	issues, _, err := bm.ValidateRawBlueprint(yaml)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(issues) == 0 {
+		t.Fatalf("expected an issue for the out-of-range web-proxy port, got none")
+	}
+	assertAllFieldsSet(t, issues)
+}
+
 // TestValidateRawBlueprintReportsFieldForEveryIssue reproduces the exact
 // combination reported: a network.allowEgressToCIDRs entry that fails go-
 // playground's "cidr" validation (which always sets Field) alongside an

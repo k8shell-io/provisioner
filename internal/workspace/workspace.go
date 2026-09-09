@@ -16,6 +16,7 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -27,6 +28,7 @@ import (
 	log "github.com/k8shell-io/common/pkg/logger"
 	"github.com/k8shell-io/common/pkg/models"
 	"github.com/k8shell-io/common/pkg/userstr"
+	"github.com/k8shell-io/provisioner/internal/blueprint"
 	"github.com/k8shell-io/provisioner/internal/config"
 	"github.com/k8shell-io/provisioner/internal/helm"
 	"github.com/rs/zerolog"
@@ -46,7 +48,7 @@ const WORKSPACE_DEFAULT_PAGE_SIZE = 20
 // k8shelldTagOverride, when non-empty, replaces the tag of the k8shelld image
 // configured in the blueprint. Leave empty to use the blueprint's image as-is.
 // this is for debug purposes only when provisioner is running in an injected workspace
-const k8shelldTagOverride = "" //"pr-69-a8078e4"
+const k8shelldTagOverride = "pr-69-a81f75c" //"pr-69-a8078e4"
 
 // Workspace represents a workspace with Helm client
 type Workspace struct {
@@ -750,6 +752,26 @@ func attachInitScriptFiles(values map[string]interface{}) {
 	}
 }
 
+// applyDNSIdentityDefaults fills in the workspace's in-cluster DNS identity when
+// the blueprint leaves it unset: hostname falls back to the workspace name and
+// subdomain to the owning organization. With both keys present the chart stamps
+// the k8shell.io/hostname and k8shell.io/subdomain labels and a per-org headless
+// service is created, so the workspace is reachable at "<workspace>.<subdomain>"
+// within the namespace. Names are normalized to DNS labels; an empty
+// organization leaves subdomain unset (defaulting skipped, as before).
+func applyDNSIdentityDefaults(values map[string]interface{}, workspaceName, organization string) {
+	if s, _ := values["hostname"].(string); s == "" {
+		if hn := blueprint.NormalizeDNSLabel(workspaceName); hn != "" {
+			values["hostname"] = hn
+		}
+	}
+	if s, _ := values["subdomain"].(string); s == "" {
+		if sd := blueprint.NormalizeDNSLabel(organization); sd != "" {
+			values["subdomain"] = sd
+		}
+	}
+}
+
 // Values builds the complete Helm values map for the workspace by merging the
 // blueprint fields with user data, registry config, cert-manager settings, and
 // provisioner-internal keys (prefixed with "__"). The resulting map is passed
@@ -774,6 +796,7 @@ func (w *Workspace) Values() (map[string]interface{}, error) {
 	}
 
 	attachInitScriptFiles(values)
+	applyDNSIdentityDefaults(values, w.Name, w.user.Organization)
 
 	userValues, err := toMap(w.user)
 	if err != nil {
@@ -1161,6 +1184,22 @@ func workspaceDetailsCore(pod *corev1.Pod) *models.WorkspaceDetails {
 		}
 	}
 
+	// The web-proxy route is stamped on the pod by the chart at provisioning
+	// and rewritten by UpdateWorkspaceResources, so it can be reported without
+	// reading the Helm release. Absent for injected workspaces.
+	var webProxyPort int
+	var webProxyRoles []models.Role
+	if raw := pod.Annotations[helm.AnnotationWebProxyPort]; raw != "" {
+		if p, err := strconv.Atoi(raw); err == nil {
+			webProxyPort = p
+		}
+	}
+	if raw := pod.Annotations[helm.AnnotationWebProxyRoles]; raw != "" {
+		if err := json.Unmarshal([]byte(raw), &webProxyRoles); err != nil {
+			webProxyRoles = nil
+		}
+	}
+
 	return &models.WorkspaceDetails{
 		Name:         pod.Name,
 		Username:     pod.Labels[helm.LabelUsername],
@@ -1184,6 +1223,8 @@ func workspaceDetailsCore(pod *corev1.Pod) *models.WorkspaceDetails {
 		NetworkPolicyClass: pod.Labels[helm.LabelNetworkPolicy],
 		AllowEgressToCIDRs: egressCIDRs,
 		AllowEgressToPods:  egressPods,
+		WebProxyPort:       webProxyPort,
+		WebProxyRoles:      webProxyRoles,
 
 		WorkspaceType: workspaceType,
 		WorkloadKind:  workloadKind,

@@ -15,6 +15,9 @@ k8shell.io/organization: "{{ .Values.__organization__ }}"
 {{- if and .Values.network .Values.network.networkPolicyClass }}
 k8shell.io/network-policy: "{{ .Values.network.networkPolicyClass }}"
 {{- end }}
+{{- if and .Values.network .Values.network.webProxy }}
+k8shell.io/web-proxy: "true"
+{{- end }}
 {{- if and .Values.subdomain .Values.hostname }}
 k8shell.io/subdomain: "{{ .Values.subdomain }}"
 k8shell.io/hostname: "{{ .Values.hostname }}.{{ .Values.subdomain }}"
