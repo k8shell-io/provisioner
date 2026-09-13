@@ -12,6 +12,7 @@ import (
 
 	provisionerv1 "github.com/k8shell-io/common/pkg/api/gen/go/provisioner/v1"
 	"github.com/k8shell-io/common/pkg/models"
+	"github.com/k8shell-io/common/pkg/utils"
 	"github.com/k8shell-io/provisioner/internal/helm"
 	ws "github.com/k8shell-io/provisioner/internal/workspace"
 	"google.golang.org/grpc/codes"
@@ -140,7 +141,7 @@ func (p *ProvisionerService) UpdateWorkspaceResources(ctx context.Context,
 		}
 	}
 	if result.WebProxyChanged {
-		resp.AppliedWebProxyPort = int32(result.AppliedWebProxyPort)
+		resp.AppliedWebProxyPort = utils.SafeIntToInt32(result.AppliedWebProxyPort)
 		if result.AppliedWebProxyPort != 0 {
 			changes = append(changes, fmt.Sprintf("web proxy port=%d", result.AppliedWebProxyPort))
 		} else {
