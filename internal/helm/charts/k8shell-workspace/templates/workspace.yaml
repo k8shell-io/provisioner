@@ -14,6 +14,13 @@ metadata:
     k8shell.io/identity: {{ .Values.__identity__ | quote }}
     {{- end }}
     k8shell.io/userstr: {{ .Values.__userstr__ | quote }}
+    {{- if and .Values.network (or .Values.network.allowEgressToCIDRs .Values.network.allowEgressToPods) }}
+    k8shell.io/egress-rules: {{ dict "allowEgressToCIDRs" (.Values.network.allowEgressToCIDRs | default list) "allowEgressToPods" (.Values.network.allowEgressToPods | default list) | toJson | quote }}
+    {{- end }}
+    {{- if and .Values.network .Values.network.webProxy }}
+    k8shell.io/web-proxy-port: {{ .Values.network.webProxy.port | quote }}
+    k8shell.io/web-proxy-roles: {{ .Values.network.webProxy.allowedRoles | default list | toJson | quote }}
+    {{- end }}
   labels:
     {{- include "workspace.workspaceLabels" . | nindent 4 }} 
 spec:
@@ -32,6 +39,10 @@ spec:
     - name: init-base
       image: {{ include "workspace.k8shelldImage" . }}
       imagePullPolicy: {{ .Values.k8shelld.imagePullPolicy }}
+      # On non-zero exit with an empty /dev/termination-log, the kubelet copies the
+      # tail of the container log into state.terminated.message, which the
+      # provisioner surfaces as lastFailMessage.
+      terminationMessagePolicy: FallbackToLogsOnError
       securityContext:
         runAsUser: 0
         runAsGroup: 0
@@ -58,7 +69,11 @@ spec:
       image: {{ include "workspace.mainImage" . }}
       securityContext:
         {{- toYaml $securityContext | nindent 8 }}
-      command: ["/usr/local/bin/k8shelld"] 
+      command: ["/usr/local/bin/k8shelld"]
+      # On non-zero exit with an empty /dev/termination-log, the kubelet copies the
+      # tail of the container log into state.terminated.message, which the
+      # provisioner surfaces as lastFailMessage.
+      terminationMessagePolicy: FallbackToLogsOnError
       imagePullPolicy: {{ .Values.imagePullPolicy }}
       resizePolicy:
       - resourceName: cpu
@@ -173,6 +188,10 @@ spec:
       - service
       - --time=0
       - unix:///var/run/podman/podman.sock
+      # On non-zero exit with an empty /dev/termination-log, the kubelet copies the
+      # tail of the container log into state.terminated.message, which the
+      # provisioner surfaces as lastFailMessage.
+      terminationMessagePolicy: FallbackToLogsOnError
         
       # see https://docs.k8shell.io/concepts/overview/security#least-privileged-workspace-containers
       {{- if $podman.securityContext }}
@@ -237,9 +256,9 @@ spec:
       items:
       - key: README
         path: README
-        {{- range $index, $script := .Values.initScripts }}
-      - key: __init_{{ printf "%02d" (add $index 1) }}_{{ $script.name }}
-        path: __init_{{ printf "%02d" (add $index 1) }}_{{ $script.name }}
+        {{- range $script := .Values.initScripts }}
+      - key: {{ $script.__file }}
+        path: {{ $script.__file }}
         {{- end }}
   - name: pat-secret
     secret:

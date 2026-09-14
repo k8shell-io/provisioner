@@ -12,9 +12,11 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -26,6 +28,7 @@ import (
 	log "github.com/k8shell-io/common/pkg/logger"
 	"github.com/k8shell-io/common/pkg/models"
 	"github.com/k8shell-io/common/pkg/userstr"
+	"github.com/k8shell-io/provisioner/internal/blueprint"
 	"github.com/k8shell-io/provisioner/internal/config"
 	"github.com/k8shell-io/provisioner/internal/helm"
 	"github.com/rs/zerolog"
@@ -45,7 +48,7 @@ const WORKSPACE_DEFAULT_PAGE_SIZE = 20
 // k8shelldTagOverride, when non-empty, replaces the tag of the k8shelld image
 // configured in the blueprint. Leave empty to use the blueprint's image as-is.
 // this is for debug purposes only when provisioner is running in an injected workspace
-const k8shelldTagOverride = "" //"pr-66-3874e67"
+const k8shelldTagOverride = "pr-69-a81f75c" //"pr-69-a8078e4"
 
 // Workspace represents a workspace with Helm client
 type Workspace struct {
@@ -69,6 +72,7 @@ type Workspace struct {
 	workloadKind      string
 	pat               string
 	canonicalId       string
+	userEnvVars       map[string]string
 }
 
 // Values is a typed container for a Helm values map.
@@ -609,6 +613,17 @@ func NewWorkspaceFromHelmRelease(ctx context.Context, name string, helmClient *h
 	canonicalId, _ := values["__canonicalid__"].(string)
 	jobId, _ := values["__jobid__"].(string)
 
+	// Recover the canonical userstr from the stored values so the workspace can
+	// re-render its Helm chart (Values/Template) without a fresh provisioning
+	// request. Older releases may not carry it; callers that only need the
+	// blueprint keep working with a nil userStr.
+	var canonicalUserStr *userstr.CanonicalUserStr
+	if b64, _ := values["__userstr__"].(string); b64 != "" {
+		if parsed, perr := parseCanonicalUserStrFromBase64(b64); perr == nil {
+			canonicalUserStr = parsed
+		}
+	}
+
 	ws := &Workspace{
 		Name:        name,
 		JobId:       jobId,
@@ -617,6 +632,7 @@ func NewWorkspaceFromHelmRelease(ctx context.Context, name string, helmClient *h
 		identify:    identityClient,
 		blueprint:   blueprint,
 		user:        user,
+		userStr:     canonicalUserStr,
 		config:      config,
 		canonicalId: canonicalId,
 	}
@@ -715,6 +731,47 @@ func (w *Workspace) Selector() string {
 	return fmt.Sprintf("app.kubernetes.io/instance=%s", w.Name)
 }
 
+// attachInitScriptFiles adds a "__file" key to every entry of the "initScripts"
+// value, holding the on-disk file name the provisioner materializes for that
+// script. It keeps the provisioner<->k8shelld naming contract
+// (models.InitScriptFileName) out of the Helm chart. The blueprint mounted at
+// models.BlueprintFilePath stays authoritative for behavior; the file name is
+// only a delivery and correlation key.
+func attachInitScriptFiles(values map[string]interface{}) {
+	scripts, ok := values["initScripts"].([]interface{})
+	if !ok {
+		return
+	}
+	for i, entry := range scripts {
+		m, ok := entry.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		name, _ := m["name"].(string)
+		m["__file"] = models.InitScriptFileName(i, name)
+	}
+}
+
+// applyDNSIdentityDefaults fills in the workspace's in-cluster DNS identity when
+// the blueprint leaves it unset: hostname falls back to the workspace name and
+// subdomain to the owning organization. With both keys present the chart stamps
+// the k8shell.io/hostname and k8shell.io/subdomain labels and a per-org headless
+// service is created, so the workspace is reachable at "<workspace>.<subdomain>"
+// within the namespace. Names are normalized to DNS labels; an empty
+// organization leaves subdomain unset (defaulting skipped, as before).
+func applyDNSIdentityDefaults(values map[string]interface{}, workspaceName, organization string) {
+	if s, _ := values["hostname"].(string); s == "" {
+		if hn := blueprint.NormalizeDNSLabel(workspaceName); hn != "" {
+			values["hostname"] = hn
+		}
+	}
+	if s, _ := values["subdomain"].(string); s == "" {
+		if sd := blueprint.NormalizeDNSLabel(organization); sd != "" {
+			values["subdomain"] = sd
+		}
+	}
+}
+
 // Values builds the complete Helm values map for the workspace by merging the
 // blueprint fields with user data, registry config, cert-manager settings, and
 // provisioner-internal keys (prefixed with "__"). The resulting map is passed
@@ -738,6 +795,9 @@ func (w *Workspace) Values() (map[string]interface{}, error) {
 		}
 	}
 
+	attachInitScriptFiles(values)
+	applyDNSIdentityDefaults(values, w.Name, w.user.Organization)
+
 	userValues, err := toMap(w.user)
 	if err != nil {
 		return nil, fmt.Errorf("failed to convert user to map: %w", err)
@@ -753,7 +813,11 @@ func (w *Workspace) Values() (map[string]interface{}, error) {
 		userstrB64 = canonicalUserStrToBase64(w.userStr)
 	}
 
-	values["__canonicalid__"] = w.userStr.CanonicalId()
+	canonicalId := w.canonicalId
+	if w.userStr != nil {
+		canonicalId = w.userStr.CanonicalId()
+	}
+	values["__canonicalid__"] = canonicalId
 	values["__user__"] = userValues
 	values["__username__"] = w.user.Username
 	values["__blueprint__"] = w.blueprint.Name
@@ -812,6 +876,9 @@ func (w *Workspace) Values() (map[string]interface{}, error) {
 	envMap, _ := values["env"].(map[string]interface{})
 	if envMap == nil {
 		envMap = make(map[string]interface{})
+	}
+	for k, v := range w.userEnvVars {
+		envMap[k] = v
 	}
 	envMap["PROVISIONER_VERSION"] = w.client.AppVersion + "-" + w.client.Commit
 	values["__pat__"] = w.pat
@@ -917,7 +984,35 @@ func (w *Workspace) Uninstall(ctx context.Context, timeout time.Duration, wait b
 	if err := w.client.Uninstall(w.Name, int(timeout.Seconds()), wait); err != nil {
 		return fmt.Errorf("failed to uninstall workspace: %w", err)
 	}
+
+	// helm uninstall only removes the objects recorded in the release manifest.
+	// The out-of-band UpdateWorkspace path (reapplyNetworkPolicies) can leave
+	// NetworkPolicy / CiliumNetworkPolicy objects Helm never tracked — e.g. when
+	// the applied class differed from the provisioned one. Sweep everything
+	// carrying this workspace's canonical-id label so nothing outlives the
+	// release. The release is already gone, so a sweep failure is logged, not
+	// fatal.
+	if canonicalID := w.canonicalIdForCleanup(); canonicalID != "" {
+		if err := w.client.DeleteNamespacedWorkspaceResources(ctx, w.client.TargetNamespace(), canonicalID); err != nil {
+			w.log.Error().Err(err).Msgf("Failed to sweep leftover resources for workspace %s (canonical-id %s)", w.Name, canonicalID)
+		}
+	}
 	return nil
+}
+
+// canonicalIdForCleanup returns the workspace's canonical id for label-based
+// resource cleanup, falling back to the userstr and finally the Helm release
+// name — which, for standalone workspaces, is the canonical id.
+func (w *Workspace) canonicalIdForCleanup() string {
+	if w.canonicalId != "" {
+		return w.canonicalId
+	}
+	if w.userStr != nil {
+		if id := w.userStr.CanonicalId(); id != "" {
+			return id
+		}
+	}
+	return w.Name
 }
 
 // StopPod deletes only the workspace pod, leaving the Helm release and all
@@ -1005,18 +1100,45 @@ func workspaceDetailsCore(pod *corev1.Pod) *models.WorkspaceDetails {
 
 	var cpu, memory string
 	var port int
-	for _, c := range pod.Spec.Containers {
-		if strings.HasSuffix(c.Name, "k8shell-main") {
-			cpu = c.Resources.Limits.Cpu().String()
-			memory = c.Resources.Limits.Memory().String()
-			for _, p := range c.Ports {
-				if p.ContainerPort > 0 {
-					port = int(p.ContainerPort)
-					break
-				}
+	for i := range pod.Spec.Containers {
+		c := &pod.Spec.Containers[i]
+		if !strings.HasSuffix(c.Name, "k8shell-main") {
+			continue
+		}
+
+		// Start from the desired limits in the pod spec, then prefer the
+		// kubelet-reported actual limits from the container status when
+		// present: after an in-place resize (pods/resize subresource) the
+		// status carries the resources really applied to the running
+		// container, which may lag or differ from the spec. Both fields are
+		// already on the pod object, so this needs no extra API call.
+		if q, ok := c.Resources.Limits[corev1.ResourceCPU]; ok {
+			cpu = q.String()
+		}
+		if q, ok := c.Resources.Limits[corev1.ResourceMemory]; ok {
+			memory = q.String()
+		}
+		for j := range pod.Status.ContainerStatuses {
+			cs := &pod.Status.ContainerStatuses[j]
+			if cs.Name != c.Name || cs.Resources == nil {
+				continue
+			}
+			if q, ok := cs.Resources.Limits[corev1.ResourceCPU]; ok {
+				cpu = q.String()
+			}
+			if q, ok := cs.Resources.Limits[corev1.ResourceMemory]; ok {
+				memory = q.String()
 			}
 			break
 		}
+
+		for _, p := range c.Ports {
+			if p.ContainerPort > 0 {
+				port = int(p.ContainerPort)
+				break
+			}
+		}
+		break
 	}
 
 	if port == 0 {
@@ -1046,6 +1168,38 @@ func workspaceDetailsCore(pod *corev1.Pod) *models.WorkspaceDetails {
 		workloadName = pod.Labels[helm.LabelWorkloadName]
 	}
 
+	// The egress shortcuts are stamped on the pod as a JSON annotation by the
+	// chart at provisioning and rewritten by UpdateWorkspaceResources, so they
+	// can be reported without reading the Helm release or the live NetworkPolicy.
+	var egressCIDRs []string
+	var egressPods []map[string]string
+	if raw := pod.Annotations[helm.AnnotationEgressRules]; raw != "" {
+		var er struct {
+			AllowEgressToCIDRs []string            `json:"allowEgressToCIDRs"`
+			AllowEgressToPods  []map[string]string `json:"allowEgressToPods"`
+		}
+		if err := json.Unmarshal([]byte(raw), &er); err == nil {
+			egressCIDRs = er.AllowEgressToCIDRs
+			egressPods = er.AllowEgressToPods
+		}
+	}
+
+	// The web-proxy route is stamped on the pod by the chart at provisioning
+	// and rewritten by UpdateWorkspaceResources, so it can be reported without
+	// reading the Helm release. Absent for injected workspaces.
+	var webProxyPort int
+	var webProxyRoles []models.Role
+	if raw := pod.Annotations[helm.AnnotationWebProxyPort]; raw != "" {
+		if p, err := strconv.Atoi(raw); err == nil {
+			webProxyPort = p
+		}
+	}
+	if raw := pod.Annotations[helm.AnnotationWebProxyRoles]; raw != "" {
+		if err := json.Unmarshal([]byte(raw), &webProxyRoles); err != nil {
+			webProxyRoles = nil
+		}
+	}
+
 	return &models.WorkspaceDetails{
 		Name:         pod.Name,
 		Username:     pod.Labels[helm.LabelUsername],
@@ -1065,6 +1219,12 @@ func workspaceDetailsCore(pod *corev1.Pod) *models.WorkspaceDetails {
 		Memory:       memory,
 		Hostname:     podHostname(pod),
 		Namespace:    pod.Namespace,
+
+		NetworkPolicyClass: pod.Labels[helm.LabelNetworkPolicy],
+		AllowEgressToCIDRs: egressCIDRs,
+		AllowEgressToPods:  egressPods,
+		WebProxyPort:       webProxyPort,
+		WebProxyRoles:      webProxyRoles,
 
 		WorkspaceType: workspaceType,
 		WorkloadKind:  workloadKind,

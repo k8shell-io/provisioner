@@ -1,6 +1,7 @@
 blueprints:
   - name: docker
     template: base
+    description: Workspace with the Docker CLI, backed by the workspace's Podman socket.
     image: docker.io/docker:24-cli
 
     env:
@@ -12,8 +13,10 @@ blueprints:
 
   - name: ubuntu
     template: base
+    description: Plain Ubuntu workspace.
     image: docker.io/ubuntu:latest
 
   - name: alpine
     template: base
+    description: Plain Alpine Linux workspace.
     image: docker.io/alpine:latest

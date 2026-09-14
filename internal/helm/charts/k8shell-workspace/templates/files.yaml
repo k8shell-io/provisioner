@@ -10,7 +10,7 @@ data:
   README: |
     # k8shell system files
     # This directory contains the system files for the k8shell workspace.
-  {{- range $index, $script := .Values.initScripts }}
-  __init_{{ printf "%02d" (add $index 1) }}_{{ $script.name }}: |
+  {{- range $script := .Values.initScripts }}
+  {{ $script.__file }}: |
 {{ $script.script | indent 4 }}
   {{- end }}

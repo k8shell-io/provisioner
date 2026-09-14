@@ -106,3 +106,16 @@ blueprints:
   # Leave empty to return an error instead of falling back.
   # defaultCustomBlueprint: default
 
+# Database configuration for org-scoped blueprint definitions, stored
+# alongside (and taking precedence over) the file-based blueprints above for
+# users belonging to that org. Optional: when omitted or disabled, the
+# provisioner serves file-based blueprints only and the OrgBlueprint gRPC
+# RPCs return Unavailable.
+# db:
+#   enabled: true
+#   username: !file ${SECRET_FILES}/postgres_username
+#   password: !file ${SECRET_FILES}/postgres_password
+#   database: ${POSTGRES_DATABASE}
+#   hostname: ${POSTGRES_HOSTNAME}
+#   port: !!int ${POSTGRES_PORT}
+

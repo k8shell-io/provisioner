@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -54,6 +55,15 @@ var WorkspacesQueryDescriptor = query.NewDescriptor("workspaces").
 	Field("workload_kind", queryv1.FieldType_FIELD_TYPE_STRING,
 		queryv1.Operator_OPERATOR_EQ, queryv1.Operator_OPERATOR_NE, queryv1.Operator_OPERATOR_IN, queryv1.Operator_OPERATOR_EXISTS).
 	Field("workload_name", queryv1.FieldType_FIELD_TYPE_STRING,
+		queryv1.Operator_OPERATOR_EQ, queryv1.Operator_OPERATOR_NE, queryv1.Operator_OPERATOR_IN, queryv1.Operator_OPERATOR_EXISTS).
+	// network_policy_class is only set when the workspace was provisioned with
+	// (or later moved to) a network policy class, so it supports EXISTS.
+	Field("network_policy_class", queryv1.FieldType_FIELD_TYPE_STRING,
+		queryv1.Operator_OPERATOR_EQ, queryv1.Operator_OPERATOR_NE, queryv1.Operator_OPERATOR_IN, queryv1.Operator_OPERATOR_EXISTS).
+	// web_proxy_port is only set when the workspace publishes a TCP port
+	// through the web proxy, so it supports EXISTS. It is matched as an opaque
+	// decimal token (EQ/NE/IN), like network_policy_class, not numerically.
+	Field("web_proxy_port", queryv1.FieldType_FIELD_TYPE_STRING,
 		queryv1.Operator_OPERATOR_EQ, queryv1.Operator_OPERATOR_NE, queryv1.Operator_OPERATOR_IN, queryv1.Operator_OPERATOR_EXISTS).
 	// cpu/memory carry Kubernetes quantity strings (e.g. "500m", "8Gi") and
 	// are compared numerically (cores for cpu, bytes for memory — see
@@ -102,8 +112,14 @@ var workspaceFieldValues = map[string]func(w *models.WorkspaceDetails) (string, 
 	},
 	"workload_kind": func(w *models.WorkspaceDetails) (string, bool) { return w.WorkloadKind, w.WorkloadKind != "" },
 	"workload_name": func(w *models.WorkspaceDetails) (string, bool) { return w.WorkloadName, w.WorkloadName != "" },
-	"cpu":           func(w *models.WorkspaceDetails) (string, bool) { return w.CPU, w.CPU != "" },
-	"memory":        func(w *models.WorkspaceDetails) (string, bool) { return w.Memory, w.Memory != "" },
+	"network_policy_class": func(w *models.WorkspaceDetails) (string, bool) {
+		return w.NetworkPolicyClass, w.NetworkPolicyClass != ""
+	},
+	"web_proxy_port": func(w *models.WorkspaceDetails) (string, bool) {
+		return strconv.Itoa(w.WebProxyPort), w.WebProxyPort != 0
+	},
+	"cpu":    func(w *models.WorkspaceDetails) (string, bool) { return w.CPU, w.CPU != "" },
+	"memory": func(w *models.WorkspaceDetails) (string, bool) { return w.Memory, w.Memory != "" },
 	"created": func(w *models.WorkspaceDetails) (string, bool) {
 		if w.Created.IsZero() {
 			return "", false
