@@ -869,28 +869,42 @@ func (bm *BlueprintManager) evaluateRawBlueprint(rawBp *RawBlueprint, name strin
 	return &bp, nil
 }
 
-// GetBlueprintChain returns the inheritance chain for the given blueprint name.
+// GetBlueprintChain returns the inheritance chain for the given blueprint name,
+// scoped by org the same way GetBlueprint is: an org-scoped blueprint of that
+// org takes precedence over a global/file-based one of the same name.
 // The chain is an ordered slice from the root ancestor to the blueprint itself, e.g. ["base", "git-dev", "dev"].
 // Returns nil if the blueprint is not found.
-func (bm *BlueprintManager) GetBlueprintChain(name string) []string {
-	bm.mu.RLock()
-	defer bm.mu.RUnlock()
-	rawBp, exists := bm.rawBlueprints[name]
-	if !exists {
-		return nil
+func (bm *BlueprintManager) GetBlueprintChain(org, name string) []string {
+	rawBp, ok, err := bm.lookupOrgFromStore(org, name)
+	if err != nil || !ok {
+		bm.mu.RLock()
+		fileBp, exists := bm.rawBlueprints[name]
+		bm.mu.RUnlock()
+		if !exists {
+			return nil
+		}
+		rawBp = fileBp
 	}
 	return rawBp.InheritanceChain
 }
 
 // GetBlueprintTemplate returns the name of the immediate parent Template for
-// the given blueprint name, or "" if it does not inherit from one. Returns
-// ErrBlueprintNotFound if name is not a registered blueprint.
-func (bm *BlueprintManager) GetBlueprintTemplate(name string) (string, error) {
-	bm.mu.RLock()
-	defer bm.mu.RUnlock()
-	rawBp, exists := bm.rawBlueprints[name]
-	if !exists {
-		return "", fmt.Errorf("blueprint %s not found: %w", name, ErrBlueprintNotFound)
+// the given blueprint name, or "" if it does not inherit from one. org scopes
+// the lookup the same way GetBlueprint does. Returns ErrBlueprintNotFound if
+// name is not a registered blueprint.
+func (bm *BlueprintManager) GetBlueprintTemplate(org, name string) (string, error) {
+	rawBp, ok, err := bm.lookupOrgFromStore(org, name)
+	if err != nil {
+		return "", err
+	}
+	if !ok {
+		bm.mu.RLock()
+		fileBp, exists := bm.rawBlueprints[name]
+		bm.mu.RUnlock()
+		if !exists {
+			return "", fmt.Errorf("blueprint %s not found: %w", name, ErrBlueprintNotFound)
+		}
+		rawBp = fileBp
 	}
 	return rawBp.Template, nil
 }

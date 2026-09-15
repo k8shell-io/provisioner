@@ -12,8 +12,10 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// Compose creates a new blueprint by merging a custom blueprint YAML with an existing template
-func (bm *BlueprintManager) ComposeRaw(customBlueprint *models.CustomBlueprint) (*RawBlueprint, error) {
+// Compose creates a new blueprint by merging a custom blueprint YAML with an existing template.
+// org scopes the template lookup: an org-scoped template of that org shadows a
+// global/file-based template of the same name, mirroring GetBlueprint.
+func (bm *BlueprintManager) ComposeRaw(customBlueprint *models.CustomBlueprint, org string) (*RawBlueprint, error) {
 	if len(bm.rawBlueprints) == 0 {
 		return nil, fmt.Errorf("no blueprints available to compose")
 	}
@@ -51,12 +53,18 @@ func (bm *BlueprintManager) ComposeRaw(customBlueprint *models.CustomBlueprint) 
 		return nil, fmt.Errorf("custom blueprint must specify a 'template' field")
 	}
 
-	bm.mu.RLock()
-	template, exists := bm.rawBlueprints[templateName]
-	bm.mu.RUnlock()
-
-	if !exists {
-		return nil, fmt.Errorf("template blueprint '%s' not found", templateName)
+	template, ok, err := bm.lookupOrgFromStore(org, templateName)
+	if err != nil {
+		return nil, err
+	}
+	if !ok {
+		bm.mu.RLock()
+		fileTemplate, exists := bm.rawBlueprints[templateName]
+		bm.mu.RUnlock()
+		if !exists {
+			return nil, fmt.Errorf("template blueprint '%s' not found: %w", templateName, ErrBlueprintNotFound)
+		}
+		template = fileTemplate
 	}
 
 	blueprintName := templateName
@@ -84,8 +92,8 @@ func (bm *BlueprintManager) ComposeRaw(customBlueprint *models.CustomBlueprint) 
 // Compose merges a custom blueprint with its template and returns the result as
 // a plain Go value (map/slice/scalar) ready for JSON or YAML serialisation.
 // CEL expressions in the merged output are prefixed with "!cel:" for display.
-func (bm *BlueprintManager) Compose(customBlueprint *models.CustomBlueprint) (interface{}, error) {
-	rawBlueprint, err := bm.ComposeRaw(customBlueprint)
+func (bm *BlueprintManager) Compose(customBlueprint *models.CustomBlueprint, org string) (interface{}, error) {
+	rawBlueprint, err := bm.ComposeRaw(customBlueprint, org)
 	if err != nil {
 		bm.log.Error().Err(err).Msg("Failed to compose blueprint")
 		return nil, err
@@ -106,7 +114,11 @@ func (bm *BlueprintManager) Compose(customBlueprint *models.CustomBlueprint) (in
 // validates it. It is the end-to-end path for provisioning with a custom blueprint.
 func (bm *BlueprintManager) ComposeWithScope(customBlueprint *models.CustomBlueprint,
 	scope *BlueprintScope) (*models.Blueprint, error) {
-	rawBp, err := bm.ComposeRaw(customBlueprint)
+	var org string
+	if scope.User != nil {
+		org = scope.User.Organization
+	}
+	rawBp, err := bm.ComposeRaw(customBlueprint, org)
 	if err != nil {
 		bm.log.Error().Err(err).Msg("Failed to compose blueprint with scope")
 		return nil, err

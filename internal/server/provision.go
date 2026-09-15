@@ -484,6 +484,7 @@ func (p *ProvisionerService) prepareWorkspaceWithUserStr(ctx context.Context,
 		if err != nil {
 			return nil, status.Errorf(codes.InvalidArgument, "Failed to compose blueprint: %v", err)
 		}
+		resolvedBpName = parsedCustomBlueprint.Template
 
 		user = scope.User
 
@@ -546,7 +547,7 @@ func (p *ProvisionerService) prepareWorkspaceWithUserStr(ctx context.Context,
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "Failed to create workspace: %v", err)
 	}
-	workspace.SetBlueprintChain(p.server.bpManager.GetBlueprintChain(resolvedBpName))
+	workspace.SetBlueprintChain(p.server.bpManager.GetBlueprintChain(user.Organization, resolvedBpName))
 	workspace.SetAppliedObligations(obligations)
 	workspace.SetProvisionContext(provisionMode, workloadName, workloadNamespace, workloadKind)
 	workspace.SetPAT(patResp.GetToken())
