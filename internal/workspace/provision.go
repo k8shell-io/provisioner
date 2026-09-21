@@ -22,6 +22,16 @@ type ProvisionOptions struct {
 	Timeout     int
 	Messages    chan models.WorkspaceStreamEvent
 	LockTimeout int
+	// PATScopes is passed to MintPAT when this call actually commits to
+	// installing or restarting the workspace (see doInstallation/doStart).
+	// Minting happens there, under the workspace lock and only once the
+	// exists/status recheck has confirmed this call is doing the work,
+	// rather than upfront in the caller — minting upfront raced with
+	// concurrent duplicate requests: both could pass an unlocked
+	// "not running yet" check and rotate the token, but only one would
+	// actually win the lock and install, leaving the identity service's
+	// token out of sync with whatever got baked into the pod's Secret.
+	PATScopes []string
 }
 
 // ExistsRunning checks if the workspace already exists and is running
@@ -178,6 +188,10 @@ func (w *Workspace) unlock() error {
 
 // doInstallation performs the actual installation of the workspace
 func (w *Workspace) doInstallation(ctx context.Context, opts *ProvisionOptions) (*models.WorkspaceStatus, error) {
+	if _, err := w.MintPAT(ctx, opts.PATScopes); err != nil {
+		return nil, fmt.Errorf("failed to create PAT for workspace %s: %w", w.Name, err)
+	}
+
 	if err := w.ensureSharedStorages(ctx, w.client.TargetNamespace(), ""); err != nil {
 		return nil, fmt.Errorf("failed to ensure shared storages: %w", err)
 	}
@@ -236,6 +250,10 @@ func (w *Workspace) doInstallation(ctx context.Context, opts *ProvisionOptions) 
 // doStart re-creates the workspace pod by extracting the pod manifest from the
 // stored Helm release and creating the pod directly via the Kubernetes API.
 func (w *Workspace) doStart(ctx context.Context, opts *ProvisionOptions) (*models.WorkspaceStatus, error) {
+	if _, err := w.MintPAT(ctx, opts.PATScopes); err != nil {
+		return nil, fmt.Errorf("failed to create PAT for workspace %s: %w", w.Name, err)
+	}
+
 	// Refresh the PAT secret before the pod is created: the pod manifest
 	// extracted from the release always references the secret by name, so
 	// updating the secret's contents here (rather than the manifest) is

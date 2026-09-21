@@ -375,9 +375,9 @@ func (p *ProvisionerService) StopWorkspace(ctx context.Context,
 	}, nil
 }
 
-// StartWorkspaceStream resumes a previously stopped workspace: it mints a
-// fresh PAT (the previous one was deleted on stop) and recreates the pod from
-// the existing Helm release, streaming progress the same way
+// StartWorkspaceStream resumes a previously stopped workspace: it recreates
+// the pod from the existing Helm release, minting a fresh PAT along the way
+// (the previous one was deleted on stop), streaming progress the same way
 // ProvisionWorkspaceStream does. Calling it on an already-running workspace
 // is rejected with AlreadyExists, mirroring ProvisionWorkspaceStream.
 func (p *ProvisionerService) StartWorkspaceStream(
@@ -412,10 +412,12 @@ func (p *ProvisionerService) StartWorkspaceStream(
 			"Workspace %s already exists and is running", name))
 	}
 
-	if _, err := workspace.MintPAT(ctx, PAT_SCOPES); err != nil {
-		return p.sendHandshakeErr(msgStream, name, status.Errorf(codes.Internal,
-			"Failed to create PAT for workspace %s: %v", name, err))
-	}
+	// The PAT is minted inside workspace.Provision (see doInstallation/
+	// doStart), under the workspace lock, only once the authoritative
+	// recheck there confirms this call is the one actually starting the
+	// pod. See the comment on the equivalent check in
+	// ProvisionWorkspaceStream for why minting it here, before that lock,
+	// would race concurrent duplicate requests.
 
 	timeout := int(req.Timeout)
 	if timeout <= 0 {
@@ -451,8 +453,9 @@ func (p *ProvisionerService) StartWorkspaceStream(
 	return p.runWorkspaceStream(ctx, stream, workspace.Name, job, req.SendProgress, req.SendEvents,
 		func(messages chan models.WorkspaceStreamEvent) (*models.WorkspaceStatus, error) {
 			return workspace.Provision(ctx, &ws.ProvisionOptions{
-				Timeout:  timeout,
-				Messages: messages,
+				Timeout:   timeout,
+				Messages:  messages,
+				PATScopes: PAT_SCOPES,
 			})
 		})
 }
