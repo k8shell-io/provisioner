@@ -48,7 +48,7 @@ const WORKSPACE_DEFAULT_PAGE_SIZE = 20
 // k8shelldTagOverride, when non-empty, replaces the tag of the k8shelld image
 // configured in the blueprint. Leave empty to use the blueprint's image as-is.
 // this is for debug purposes only when provisioner is running in an injected workspace
-const k8shelldTagOverride = "pr-69-a81f75c" //"pr-69-a8078e4"
+const k8shelldTagOverride = ""
 
 // Workspace represents a workspace with Helm client
 type Workspace struct {
@@ -174,7 +174,7 @@ func FindWorkspace(ctx context.Context, helmClient *helm.Client, workspace strin
 	return ws.Workspaces[0], &ws.Pods[0], nil
 }
 
-func podMatchesWorkspaceFilters(p *corev1.Pod, opts GetWorkspacesOptions, injected bool) bool {
+func podMatchesWorkspaceFilters(p *corev1.Pod, opts GetWorkspacesOptions) bool {
 	if p == nil {
 		return false
 	}
@@ -385,7 +385,7 @@ func liveStandaloneWorkspaces(
 		if err != nil && !apierrors.IsNotFound(err) {
 			return nil, nil, fmt.Errorf("failed to get workspace pod %q: %w", opts.WorkspaceName, err)
 		}
-		if err == nil && podMatchesWorkspaceFilters(p, opts, false) {
+		if err == nil && podMatchesWorkspaceFilters(p, opts) {
 			if d := workspaceDetailsFromPod(p); d != nil {
 				out = append(out, d)
 				pods = append(pods, *p)
@@ -421,7 +421,7 @@ func liveStandaloneWorkspaces(
 
 	for i := range podList.Items {
 		p := &podList.Items[i]
-		if !podMatchesWorkspaceFilters(p, opts, false) {
+		if !podMatchesWorkspaceFilters(p, opts) {
 			continue
 		}
 		d := workspaceDetailsFromPod(p)
@@ -478,7 +478,7 @@ func stoppedWorkspaces(
 		if err != nil {
 			continue
 		}
-		if !podMatchesWorkspaceFilters(pod, opts, false) {
+		if !podMatchesWorkspaceFilters(pod, opts) {
 			continue
 		}
 		if opts.CanonicalId != "" && pod.Labels[helm.LabelCanonicalId] != opts.CanonicalId {
@@ -1023,7 +1023,7 @@ func (w *Workspace) canonicalIdForCleanup() string {
 func (w *Workspace) StopPod(ctx context.Context) error {
 	pods := w.client.KubeClient().CoreV1().Pods(w.client.TargetNamespace())
 
-	patch := []byte(fmt.Sprintf(`{"metadata":{"labels":{%q:"true"}}}`, helm.LabelStopRequested))
+	patch := fmt.Appendf(nil, `{"metadata":{"labels":{%q:"true"}}}`, helm.LabelStopRequested)
 	if _, err := pods.Patch(ctx, w.Name, types.MergePatchType, patch, metav1.PatchOptions{}); err != nil && !k8sErrors.IsNotFound(err) {
 		return fmt.Errorf("failed to label workspace pod %s as stopping: %w", w.Name, err)
 	}

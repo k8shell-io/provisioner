@@ -187,16 +187,16 @@ func (p *ProvisionerService) ProvisionWorkspaceStream(
 			p.log.Debug().Msgf("Workspace %s deletion detected, proceeding with provisioning", workspace.Name)
 		}
 
-		// Mint the PAT only now that the workspace is confirmed not already
-		// running — minting earlier (e.g. in prepareWorkspaceWithUserStr,
-		// before this check) would renew/rotate the token server-side even
-		// when this request turns out to be a no-op against a workspace
-		// that's already up, leaving the identity service's token out of
-		// sync with the one baked into the running pod's Secret.
-		if _, err := workspace.MintPAT(ctx, PAT_SCOPES); err != nil {
-			return p.sendHandshakeErr(msgStream, workspace.Name, status.Errorf(codes.Internal,
-				"failed to create PAT for workspace %s: %v", workspace.Name, err))
-		}
+		// The PAT is minted inside workspace.Provision (see doInstallation/
+		// doStart in internal/workspace/provision.go), not here. This check
+		// is only an unlocked, best-effort fast path for returning a nice
+		// AlreadyExists error; the authoritative check happens under the
+		// workspace lock inside Provision. Minting here, before that lock,
+		// would race concurrent duplicate requests: both could observe
+		// "not running yet" and rotate the token, but only one of them
+		// would actually win the lock and install, leaving the identity
+		// service's token out of sync with whatever got baked into the pod's
+		// Secret.
 	}
 
 	if p.server.provisionJobsKV != nil {
@@ -228,8 +228,9 @@ func (p *ProvisionerService) ProvisionWorkspaceStream(
 				})
 			}
 			return workspace.Provision(ctx, &ws.ProvisionOptions{
-				Timeout:  timeout,
-				Messages: messages,
+				Timeout:   timeout,
+				Messages:  messages,
+				PATScopes: PAT_SCOPES,
 			})
 		})
 }
