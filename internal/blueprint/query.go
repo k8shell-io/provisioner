@@ -11,9 +11,16 @@ import (
 	"time"
 
 	queryv1 "github.com/k8shell-io/common/pkg/api/gen/go/query/v1"
+	"github.com/k8shell-io/common/pkg/authz"
 	"github.com/k8shell-io/common/pkg/models"
 	"github.com/k8shell-io/common/pkg/query"
 )
+
+// obligationOrgWildcard is the org obligation value (see
+// common/pkg/authz/blueprint.go's blueprints:read contract) that grants
+// visibility into every organization's blueprints, rather than scoping to
+// one.
+const obligationOrgWildcard = "*"
 
 // BlueprintsQueryDescriptor advertises which blueprint fields are
 // queryable/sortable via QueryBlueprints, and which operators are valid on
@@ -78,17 +85,60 @@ func blueprintFieldType(name string) queryv1.FieldType {
 	return queryv1.FieldType_FIELD_TYPE_UNSPECIFIED
 }
 
+// blueprintObligationScope is the mandatory, authz-derived restriction the
+// blueprints:read obligations (see common/pkg/authz/blueprint.go) place on a
+// QueryBlueprints result, ANDed independent of the client's own Filters.
+// Only an "org" obligation is defined for blueprints:read: unrestricted
+// visits every organization's blueprints (org == "*"), a specific org value
+// scopes to that organization's blueprints plus the always-visible
+// file-based globals, and a missing obligation must never widen the listing
+// — so it scopes to globals only, same as an org value no blueprint has.
+type blueprintObligationScope struct {
+	unrestricted bool
+	org          string
+}
+
+// matches is the authoritative enforcement of the obligation — narrowing
+// elsewhere only optimizes what gets fetched, never what gets returned.
+// Global (file-based) blueprints are always visible regardless of scope,
+// matching ListBlueprints' existing "org blueprints plus the globals"
+// behavior.
+func (s blueprintObligationScope) matches(b *models.BlueprintSummary) bool {
+	if s.unrestricted || b.IsGlobal {
+		return true
+	}
+	return s.org != "" && strings.EqualFold(b.Org, s.org)
+}
+
+// resolveBlueprintObligationScope turns payload.Obligations — populated by
+// an upstream gateway after evaluating the blueprints:read policy, never
+// client-supplied — into the blueprintObligationScope QueryBlueprints must
+// enforce.
+func resolveBlueprintObligationScope(obligations map[string]string) blueprintObligationScope {
+	org, ok := authz.ParseOrgObligation(obligations)
+	if !ok {
+		return blueprintObligationScope{}
+	}
+	if org.Org == obligationOrgWildcard {
+		return blueprintObligationScope{unrestricted: true}
+	}
+	return blueprintObligationScope{org: org.Org}
+}
+
 // QueryBlueprints returns a summary of every blueprint matching payload, as
-// validated against BlueprintsQueryDescriptor. It draws from the same
-// backend-agnostic source as GetBlueprintsSummary — the in-memory file-based
-// blueprints plus every org-scoped database blueprint, read fresh from the
-// store — so a query is transparent to where a matched blueprint is actually
-// stored, and applies payload's filters/sort/page over that merged set in
-// memory.
+// validated against BlueprintsQueryDescriptor and, independent of payload's
+// own Filters, restricted to whatever payload.Obligations mandates (see
+// blueprintObligationScope). It draws from the same backend-agnostic source
+// as GetBlueprintsSummary — the in-memory file-based blueprints plus every
+// org-scoped database blueprint, read fresh from the store — so a query is
+// transparent to where a matched blueprint is actually stored, and applies
+// payload's filters/sort/page over that merged set in memory.
 func (bm *BlueprintManager) QueryBlueprints(payload *queryv1.Payload) ([]*models.BlueprintSummary, error) {
 	if err := query.Validate(BlueprintsQueryDescriptor, payload); err != nil {
 		return nil, fmt.Errorf("%w: %s", models.ErrInvalidParameters, err)
 	}
+
+	scope := resolveBlueprintObligationScope(payload.GetObligations())
 
 	summaries, err := bm.GetBlueprintsSummary()
 	if err != nil {
@@ -97,6 +147,9 @@ func (bm *BlueprintManager) QueryBlueprints(payload *queryv1.Payload) ([]*models
 
 	filtered := make([]*models.BlueprintSummary, 0, len(summaries))
 	for _, b := range summaries {
+		if !scope.matches(b) {
+			continue
+		}
 		matched, err := matchesBlueprintFilters(b, payload.GetFilters())
 		if err != nil {
 			return nil, fmt.Errorf("%w: %s", models.ErrInvalidParameters, err)
