@@ -161,6 +161,11 @@ func (p *ProvisionerService) ProvisionWorkspaceStream(
 			return p.sendHandshakeErr(msgStream, workspace.Name, err)
 		}
 		workloadTargetName = workloadName
+
+		if _, err := workspace.MintPAT(ctx, PAT_SCOPES); err != nil {
+			return p.sendHandshakeErr(msgStream, workspace.Name, status.Errorf(codes.Internal,
+				"failed to create PAT for workspace %s: %v", workspace.Name, err))
+		}
 	} else {
 		exists, st, err := workspace.ExistsAndRunning(ctx)
 		if err != nil {
@@ -182,6 +187,16 @@ func (p *ProvisionerService) ProvisionWorkspaceStream(
 			p.log.Debug().Msgf("Workspace %s deletion detected, proceeding with provisioning", workspace.Name)
 		}
 
+		// Mint the PAT only now that the workspace is confirmed not already
+		// running — minting earlier (e.g. in prepareWorkspaceWithUserStr,
+		// before this check) would renew/rotate the token server-side even
+		// when this request turns out to be a no-op against a workspace
+		// that's already up, leaving the identity service's token out of
+		// sync with the one baked into the running pod's Secret.
+		if _, err := workspace.MintPAT(ctx, PAT_SCOPES); err != nil {
+			return p.sendHandshakeErr(msgStream, workspace.Name, status.Errorf(codes.Internal,
+				"failed to create PAT for workspace %s: %v", workspace.Name, err))
+		}
 	}
 
 	if p.server.provisionJobsKV != nil {
@@ -525,16 +540,6 @@ func (p *ProvisionerService) prepareWorkspaceWithUserStr(ctx context.Context,
 		resolvedBpName = bpName
 	}
 
-	patResp, err := p.server.Identity.CreateAccessToken(ctx, &identityv1.CreateAccessTokenRequest{
-		Username: user.Username,
-		Name:     userStr.CanonicalId(),
-		Scopes:   PAT_SCOPES,
-		Renew:    true,
-	})
-	if err != nil {
-		return nil, status.Errorf(codes.Internal, "failed to create PAT for workspace: %v", err)
-	}
-
 	var obligations map[string]string
 	blueprintObj, obligations, err = p.enforceWorkspaceProvision(ctx, user, workspaceName, blueprintObj,
 		provisionMode, workloadName, workloadNamespace, workloadKind)
@@ -550,7 +555,6 @@ func (p *ProvisionerService) prepareWorkspaceWithUserStr(ctx context.Context,
 	workspace.SetBlueprintChain(p.server.bpManager.GetBlueprintChain(user.Organization, resolvedBpName))
 	workspace.SetAppliedObligations(obligations)
 	workspace.SetProvisionContext(provisionMode, workloadName, workloadNamespace, workloadKind)
-	workspace.SetPAT(patResp.GetToken())
 
 	if err := workspace.FetchUserEnvVars(ctx); err != nil {
 		return nil, status.Errorf(codes.Internal, "failed to fetch user environment variables: %v", err)
