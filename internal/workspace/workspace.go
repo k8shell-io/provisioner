@@ -36,8 +36,8 @@ import (
 	"helm.sh/helm/v3/pkg/release"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
-	k8sErrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	k8slabels "k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/types"
 	corev1client "k8s.io/client-go/kubernetes/typed/core/v1"
 )
@@ -97,6 +97,14 @@ type GetWorkspacesOptions struct {
 	// were injected into. InjectKind is optional; omitting it matches any kind.
 	InjectWorkload string
 	InjectKind     string
+	// UseCache serves the underlying Kubernetes/Helm listings from a
+	// short-lived, per-process cache (see helm.Client's ListDeployedReleasesCached
+	// and ListPodsCached) instead of issuing fresh calls, coalescing
+	// concurrent identical lookups. Only safe for read-only callers: leave
+	// false (the default) for anything that mutates a workspace based on
+	// this result (stop, delete, eject), so it observes a just-completed
+	// change rather than a stale cached one.
+	UseCache bool
 }
 
 // GetWorkspacesResult defines the result structure for GetWorkspaces function,
@@ -154,13 +162,17 @@ func parseCanonicalUserStrFromBase64(s string) (*userstr.CanonicalUserStr, error
 	return raw.Canonicalize()
 }
 
-// FindWorkspace finds a workspace by name and returns its status
-func FindWorkspace(ctx context.Context, helmClient *helm.Client, workspace string, injectionNamespaces []string) (*models.WorkspaceDetails,
-	*corev1.Pod, error) {
+// FindWorkspace finds a workspace by name and returns its status. useCache
+// serves the lookup from a short-lived cache (see GetWorkspacesOptions.UseCache)
+// and must only be true for read-only callers — pass false for any lookup
+// that precedes a mutation (stop, delete, eject) so it observes current state.
+func FindWorkspace(ctx context.Context, helmClient *helm.Client, workspace string, injectionNamespaces []string,
+	useCache bool) (*models.WorkspaceDetails, *corev1.Pod, error) {
 
 	ws, err := GetWorkspaces(ctx, helmClient, GetWorkspacesOptions{
 		WorkspaceName:    workspace,
 		InjectNamespaces: injectionNamespaces,
+		UseCache:         useCache,
 	})
 	if err != nil {
 		return nil, nil, err
@@ -174,7 +186,7 @@ func FindWorkspace(ctx context.Context, helmClient *helm.Client, workspace strin
 	return ws.Workspaces[0], &ws.Pods[0], nil
 }
 
-func podMatchesWorkspaceFilters(p *corev1.Pod, opts GetWorkspacesOptions, injected bool) bool {
+func podMatchesWorkspaceFilters(p *corev1.Pod, opts GetWorkspacesOptions) bool {
 	if p == nil {
 		return false
 	}
@@ -230,7 +242,7 @@ func GetWorkspaces(
 		wg.Add(2)
 		go func() {
 			defer wg.Done()
-			liveDetails, livePods, liveErr = liveStandaloneWorkspaces(ctx, v1, targetNamespace, opts)
+			liveDetails, livePods, liveErr = liveStandaloneWorkspaces(ctx, helmClient, v1, targetNamespace, opts)
 		}()
 		go func() {
 			defer wg.Done()
@@ -283,18 +295,32 @@ func GetWorkspaces(
 		}
 		injectedSelector := getSelector(injectedLabels)
 
-		injectedItems := make([]corev1.Pod, 0)
-		if opts.InjectNamespaces[0] == "*" {
-			injectedList, err := v1.Pods("").List(ctx, metav1.ListOptions{
+		// listInjectedPods lists namespace's injected pods (ns == "" means
+		// cluster-wide), honoring opts.UseCache the same way the standalone
+		// and stopped-release lookups above do.
+		listInjectedPods := func(listCtx context.Context, ns string) ([]corev1.Pod, error) {
+			if opts.UseCache {
+				return helmClient.ListPodsCached(listCtx, ns, injectedSelector)
+			}
+			injectedList, err := v1.Pods(ns).List(listCtx, metav1.ListOptions{
 				LabelSelector: injectedSelector,
 			})
+			if err != nil {
+				return nil, err
+			}
+			return injectedList.Items, nil
+		}
+
+		injectedItems := make([]corev1.Pod, 0)
+		if opts.InjectNamespaces[0] == "*" {
+			items, err := listInjectedPods(ctx, "")
 			if err != nil {
 				if strings.Contains(err.Error(), "unable to parse") {
 					return nil, fmt.Errorf("%w: %s", models.ErrInvalidParameters, injectedSelector)
 				}
 				return nil, fmt.Errorf("failed to list injected workspace pods cluster-wide: %w", err)
 			}
-			injectedItems = append(injectedItems, injectedList.Items...)
+			injectedItems = append(injectedItems, items...)
 		} else {
 			listCtx, cancelLists := context.WithCancel(ctx)
 			defer cancelLists()
@@ -309,9 +335,7 @@ func GetWorkspaces(
 				go func() {
 					defer wg.Done()
 
-					injectedList, err := v1.Pods(ns).List(listCtx, metav1.ListOptions{
-						LabelSelector: injectedSelector,
-					})
+					items, err := listInjectedPods(listCtx, ns)
 					if err != nil {
 						wrappedErr := fmt.Errorf("failed to list injected workspace pods in namespace %q: %w", ns, err)
 						if strings.Contains(err.Error(), "unable to parse") {
@@ -325,7 +349,7 @@ func GetWorkspaces(
 					}
 
 					select {
-					case resultsCh <- injectedList.Items:
+					case resultsCh <- items:
 					case <-listCtx.Done():
 					}
 				}()
@@ -371,8 +395,13 @@ func GetWorkspaces(
 
 // liveStandaloneWorkspaces lists standalone workspaces backed by a currently
 // running pod, either by exact name (opts.WorkspaceName) or by label selector.
+// The exact-name lookup always goes straight to the API server (a single Get
+// is already cheap, and it's the path most sensitive to freshness — e.g. a
+// client polling right after provisioning); only the bulk listing branch
+// honors opts.UseCache.
 func liveStandaloneWorkspaces(
 	ctx context.Context,
+	helmClient *helm.Client,
 	v1 corev1client.CoreV1Interface,
 	targetNamespace string,
 	opts GetWorkspacesOptions,
@@ -385,7 +414,7 @@ func liveStandaloneWorkspaces(
 		if err != nil && !apierrors.IsNotFound(err) {
 			return nil, nil, fmt.Errorf("failed to get workspace pod %q: %w", opts.WorkspaceName, err)
 		}
-		if err == nil && podMatchesWorkspaceFilters(p, opts, false) {
+		if err == nil && podMatchesWorkspaceFilters(p, opts) {
 			if d := workspaceDetailsFromPod(p); d != nil {
 				out = append(out, d)
 				pods = append(pods, *p)
@@ -409,9 +438,19 @@ func liveStandaloneWorkspaces(
 	}
 	selector := getSelector(labels)
 
-	podList, err := v1.Pods(targetNamespace).List(ctx, metav1.ListOptions{
-		LabelSelector: selector,
-	})
+	var (
+		podItems []corev1.Pod
+		err      error
+	)
+	if opts.UseCache {
+		podItems, err = helmClient.ListPodsCached(ctx, targetNamespace, selector)
+	} else {
+		var podList *corev1.PodList
+		podList, err = v1.Pods(targetNamespace).List(ctx, metav1.ListOptions{LabelSelector: selector})
+		if err == nil {
+			podItems = podList.Items
+		}
+	}
 	if err != nil {
 		if strings.Contains(err.Error(), "unable to parse") {
 			return nil, nil, fmt.Errorf("%w: %s", models.ErrInvalidParameters, selector)
@@ -419,9 +458,9 @@ func liveStandaloneWorkspaces(
 		return nil, nil, fmt.Errorf("failed to list workspace pods: %w", err)
 	}
 
-	for i := range podList.Items {
-		p := &podList.Items[i]
-		if !podMatchesWorkspaceFilters(p, opts, false) {
+	for i := range podItems {
+		p := &podItems[i]
+		if !podMatchesWorkspaceFilters(p, opts) {
 			continue
 		}
 		d := workspaceDetailsFromPod(p)
@@ -433,6 +472,34 @@ func liveStandaloneWorkspaces(
 	}
 
 	return out, pods, nil
+}
+
+// filteredCachedReleases returns the releases in helmClient's cached,
+// unfiltered per-namespace release listing that match selector. Selector is
+// applied here in memory rather than passed to Helm, since Helm's own List
+// action decodes every release in the namespace regardless of selector
+// anyway (see (*helm.Client).ListWithSelector) — reusing one cached
+// unfiltered listing per namespace is what actually avoids paying that
+// decode cost when concurrent requests differ only by, say, a workspace name.
+func filteredCachedReleases(helmClient *helm.Client, namespace, selector string) ([]*release.Release, error) {
+	all, err := helmClient.ListDeployedReleasesCached(namespace)
+	if err != nil {
+		return nil, err
+	}
+	if selector == "" {
+		return all, nil
+	}
+	sel, err := k8slabels.Parse(selector)
+	if err != nil {
+		return nil, fmt.Errorf("unable to parse selector %q: %w", selector, err)
+	}
+	filtered := make([]*release.Release, 0, len(all))
+	for _, rel := range all {
+		if sel.Matches(k8slabels.Set(rel.Labels)) {
+			filtered = append(filtered, rel)
+		}
+	}
+	return filtered, nil
 }
 
 // stoppedWorkspaces discovers standalone workspaces whose Helm release is
@@ -463,7 +530,15 @@ func stoppedWorkspaces(
 	}
 	selector := getSelector(labels)
 
-	releases, err := helmClient.ListWithSelector(targetNamespace, selector)
+	var (
+		releases []*release.Release
+		err      error
+	)
+	if opts.UseCache {
+		releases, err = filteredCachedReleases(helmClient, targetNamespace, selector)
+	} else {
+		releases, err = helmClient.ListWithSelector(targetNamespace, selector)
+	}
 	if err != nil {
 		if strings.Contains(err.Error(), "unable to parse") {
 			return nil, nil, fmt.Errorf("%w: %s", models.ErrInvalidParameters, selector)
@@ -478,7 +553,7 @@ func stoppedWorkspaces(
 		if err != nil {
 			continue
 		}
-		if !podMatchesWorkspaceFilters(pod, opts, false) {
+		if !podMatchesWorkspaceFilters(pod, opts) {
 			continue
 		}
 		if opts.CanonicalId != "" && pod.Labels[helm.LabelCanonicalId] != opts.CanonicalId {
@@ -1023,13 +1098,13 @@ func (w *Workspace) canonicalIdForCleanup() string {
 func (w *Workspace) StopPod(ctx context.Context) error {
 	pods := w.client.KubeClient().CoreV1().Pods(w.client.TargetNamespace())
 
-	patch := []byte(fmt.Sprintf(`{"metadata":{"labels":{%q:"true"}}}`, helm.LabelStopRequested))
-	if _, err := pods.Patch(ctx, w.Name, types.MergePatchType, patch, metav1.PatchOptions{}); err != nil && !k8sErrors.IsNotFound(err) {
+	patch := fmt.Appendf(nil, `{"metadata":{"labels":{%q:"true"}}}`, helm.LabelStopRequested)
+	if _, err := pods.Patch(ctx, w.Name, types.MergePatchType, patch, metav1.PatchOptions{}); err != nil && !apierrors.IsNotFound(err) {
 		return fmt.Errorf("failed to label workspace pod %s as stopping: %w", w.Name, err)
 	}
 
 	if err := pods.Delete(ctx, w.Name, metav1.DeleteOptions{}); err != nil {
-		if k8sErrors.IsNotFound(err) {
+		if apierrors.IsNotFound(err) {
 			return nil
 		}
 		return fmt.Errorf("failed to stop workspace pod %s: %w", w.Name, err)

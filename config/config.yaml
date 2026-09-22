@@ -12,6 +12,14 @@ injectNamespaces:
 
 clusterDomain: cluster.local
 
+# Rate limit for the in-cluster Kubernetes client used for all workspace
+# pod/release lookups and mutations. Defaults to 50 QPS / 100 burst when
+# omitted (client-go itself defaults to 5 QPS / 10 burst, which throttles
+# this process client-side under concurrent request load).
+# kubeClient:
+#   qps: 50
+#   burst: 100
+
 defaultRegistry:
   host: ${WORKSPACE_REGISTRY}
 

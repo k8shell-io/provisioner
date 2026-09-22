@@ -37,7 +37,7 @@ func (p *ProvisionerService) DeleteWorkspace(ctx context.Context,
 		return nil, status.Errorf(codes.InvalidArgument, "delay seconds cannot be greater than 60 seconds")
 	}
 
-	_, pod, findErr := ws.FindWorkspace(ctx, p.server.helm, name, p.server.config.InjectNamespaces)
+	_, pod, findErr := ws.FindWorkspace(ctx, p.server.helm, name, p.server.config.InjectNamespaces, false)
 	if findErr == nil && pod.Labels[helm.LabelInjected] == "true" {
 		owner, err := ws.FindOwnerWorkload(ctx, p.server.helm.KubeClient(), pod)
 		if err != nil {
@@ -296,7 +296,7 @@ func (p *ProvisionerService) StopWorkspace(ctx context.Context,
 		return nil, status.Errorf(codes.InvalidArgument, "delay seconds cannot be greater than 60 seconds")
 	}
 
-	if _, pod, findErr := ws.FindWorkspace(ctx, p.server.helm, name, p.server.config.InjectNamespaces); findErr == nil && pod.Labels[helm.LabelInjected] == "true" {
+	if _, pod, findErr := ws.FindWorkspace(ctx, p.server.helm, name, p.server.config.InjectNamespaces, false); findErr == nil && pod.Labels[helm.LabelInjected] == "true" {
 		return nil, status.Errorf(codes.FailedPrecondition, "workspace %s is injected into a deployment and cannot be stopped", name)
 	}
 
@@ -392,7 +392,7 @@ func (p *ProvisionerService) StartWorkspaceStream(
 		return p.sendHandshakeErr(msgStream, "n/a", status.Errorf(codes.InvalidArgument, "workspace name is required"))
 	}
 
-	if _, pod, findErr := ws.FindWorkspace(ctx, p.server.helm, name, p.server.config.InjectNamespaces); findErr == nil && pod.Labels[helm.LabelInjected] == "true" {
+	if _, pod, findErr := ws.FindWorkspace(ctx, p.server.helm, name, p.server.config.InjectNamespaces, false); findErr == nil && pod.Labels[helm.LabelInjected] == "true" {
 		return p.sendHandshakeErr(msgStream, name, status.Errorf(codes.FailedPrecondition,
 			"workspace %s is injected into a deployment and cannot be started", name))
 	}

@@ -53,6 +53,12 @@ type Client struct {
 	PrivateRegistry config.PrivateRegistry
 	AppVersion      string
 	Commit          string
+
+	// releaseCache and podCache back ListDeployedReleasesCached and
+	// ListPodsCached, used only by the read-only workspace lookup RPCs (see
+	// internal/server/find.go). Mutating flows must not read through them.
+	releaseCache *ttlCache[[]*release.Release]
+	podCache     *ttlCache[[]corev1.Pod]
 }
 
 // InstallOptions carries parameters shared by Install, Upgrade, and Template
@@ -70,7 +76,12 @@ type InstallOptions struct {
 
 // NewClient constructs a Client using in-cluster Kubernetes credentials, loads
 // the embedded workspace Helm chart into memory, and returns a ready-to-use client.
-func NewClient(targetNamespace string, registry config.DefaultRegistry, privateRegistry config.PrivateRegistry) (*Client, error) {
+// kubeClientQPS and kubeClientBurst override client-go's default rate limit
+// (5 QPS / 10 burst), which otherwise throttles this process client-side
+// under concurrent request load; a value <= 0 leaves client-go's default in
+// place.
+func NewClient(targetNamespace string, registry config.DefaultRegistry, privateRegistry config.PrivateRegistry,
+	kubeClientQPS float32, kubeClientBurst int) (*Client, error) {
 	settings := cli.New()
 
 	var config *rest.Config
@@ -79,6 +90,12 @@ func NewClient(targetNamespace string, registry config.DefaultRegistry, privateR
 	config, err = rest.InClusterConfig()
 	if err != nil {
 		return nil, fmt.Errorf("failed to get Kubernetes config: %w", err)
+	}
+	if kubeClientQPS > 0 {
+		config.QPS = kubeClientQPS
+	}
+	if kubeClientBurst > 0 {
+		config.Burst = kubeClientBurst
 	}
 
 	kubeClient, err := kubernetes.NewForConfig(config)
@@ -106,6 +123,8 @@ func NewClient(targetNamespace string, registry config.DefaultRegistry, privateR
 		targetNamespace: targetNamespace,
 		Registry:        registry,
 		PrivateRegistry: privateRegistry,
+		releaseCache:    newTTLCache[[]*release.Release](),
+		podCache:        newTTLCache[[]corev1.Pod](),
 	}, nil
 }
 
@@ -335,7 +354,13 @@ func (c *Client) List(namespace string) ([]*release.Release, error) {
 	return releases, nil
 }
 
-// ListWithSelector lists Helm releases using native Helm label selector (fastest)
+// ListWithSelector lists Helm releases in namespace, applying selector.
+// Despite taking a selector, this is not server-side filtered: Helm's List
+// action decodes every release secret in the namespace regardless of
+// selector, then filters in memory (see helm.sh/helm/v3/pkg/storage/driver
+// Secrets.List). Prefer ListDeployedReleasesCached when the caller can
+// tolerate a short-lived cache and apply its own filtering — that avoids
+// paying the decode cost on every call when only the selector differs.
 func (c *Client) ListWithSelector(namespace, selector string) ([]*release.Release, error) {
 	actionConfig, err := c.createActionConfig(namespace)
 	if err != nil {
@@ -357,6 +382,57 @@ func (c *Client) ListWithSelector(namespace, selector string) ([]*release.Releas
 		return nil, fmt.Errorf("failed to list releases in namespace %s with selector %s: %w", namespace, selector, err)
 	}
 	return releases, nil
+}
+
+// ListDeployedReleasesCached returns every deployed Helm release in
+// namespace, served from a short-lived cache shared across concurrent
+// callers (see ttlCache). Since Helm decodes every release in the namespace
+// regardless of selector anyway (see ListWithSelector), callers needing a
+// subset should filter this unfiltered result themselves — e.g. with
+// k8s.io/apimachinery/pkg/labels.Selector.Matches against each release's
+// Labels — rather than passing a selector, since that's what actually
+// benefits from the cache when concurrent requests differ only by, say, a
+// workspace name.
+//
+// Only for read-only lookups: the cache can be up to listCacheTTL stale, so
+// callers that must observe a just-completed mutation (stop, delete, eject)
+// must use List or ListWithSelector instead.
+func (c *Client) ListDeployedReleasesCached(namespace string) ([]*release.Release, error) {
+	return c.releaseCache.getOrFetch(namespace, func() ([]*release.Release, error) {
+		actionConfig, err := c.createActionConfig(namespace)
+		if err != nil {
+			return nil, err
+		}
+		list := action.NewList(actionConfig)
+		list.StateMask = action.ListDeployed
+		list.SortReverse = true
+		list.ByDate = true
+		releases, err := list.Run()
+		if err != nil {
+			return nil, fmt.Errorf("failed to list releases in namespace %s: %w", namespace, err)
+		}
+		return releases, nil
+	})
+}
+
+// ListPodsCached lists pods in namespace matching selector, served from a
+// short-lived cache shared across concurrent callers with an identical
+// (namespace, selector) pair (see ttlCache) — which read-only workspace
+// lookups very often share, since request-specific narrowing (e.g. a
+// workspace name) is usually applied by the caller after listing rather than
+// folded into the selector.
+//
+// Only for read-only lookups: the cache can be up to listCacheTTL stale, so
+// callers that must observe a just-completed mutation (stop, delete, eject)
+// must list pods directly via KubeClient() instead.
+func (c *Client) ListPodsCached(ctx context.Context, namespace, selector string) ([]corev1.Pod, error) {
+	return c.podCache.getOrFetch(namespace+"|"+selector, func() ([]corev1.Pod, error) {
+		list, err := c.kubeClient.CoreV1().Pods(namespace).List(ctx, metav1.ListOptions{LabelSelector: selector})
+		if err != nil {
+			return nil, err
+		}
+		return list.Items, nil
+	})
 }
 
 // ListAllNamespaces lists Helm releases across all namespaces
