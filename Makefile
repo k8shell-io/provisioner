@@ -4,8 +4,10 @@ REPORTS_DIR := reports
 # Auto-derived from the repo directory name. Override if needed: make SERVICE_NAME=myservice
 SERVICE_NAME ?= $(shell basename $(CURDIR))
 RUNTIME ?= alpine
+# Override with: make bump-common COMMON_VERSION=v0.62.0
+COMMON_VERSION ?= latest
 
-.PHONY: all init install-test-deps test-static test build test-binary test-self vendor image image-debug image-release reload dlv debug-setup coverage clean help
+.PHONY: all init bump-common install-test-deps install-gh test-static test build test-binary test-self vendor image image-debug image-release reload dlv debug-setup coverage clean help
 
 # Default target
 all: build
@@ -15,6 +17,13 @@ init:  ##@ Initialize Go module
 	@echo "Initializing Go module..."
 	go mod tidy
 	go mod download
+
+bump-common: ##@ Bump the k8shell-io/common dependency
+             ##@ Fetches COMMON_VERSION (default: latest) and tidies go.mod/go.sum
+             ##@ Override version with: make bump-common COMMON_VERSION=v0.62.0
+	@echo "Bumping github.com/k8shell-io/common to $(COMMON_VERSION)..."
+	go get github.com/k8shell-io/common@$(COMMON_VERSION)
+	go mod tidy
 
 install-test-deps: ##@ Install test dependencies
                    ##@ Installs golangci-lint and gosec for static analysis
@@ -27,12 +36,33 @@ install-test-deps: ##@ Install test dependencies
 	go install github.com/jstemmer/go-junit-report/v2@latest
 	@mkdir -p $(REPORTS_DIR)
 
+GH_HOST ?= github.com
+
+install-gh: ##@ Install the GitHub CLI (gh) and authenticate it
+           ##@ Adds GitHub's official apt repo and installs gh if missing, then logs it in
+           ##@ using the token from the git credential helper (`git credential fill`) for GH_HOST (default: github.com)
+	@if command -v gh >/dev/null 2>&1; then \
+		echo "gh already installed: $$(gh --version | head -1)"; \
+	else \
+		echo "Installing GitHub CLI..." && \
+		(type -p wget >/dev/null || (sudo apt-get update && sudo apt-get install -y wget)) && \
+		sudo mkdir -p -m 755 /etc/apt/keyrings && \
+		wget -nv -O- https://cli.github.com/packages/githubcli-archive-keyring.gpg | sudo tee /etc/apt/keyrings/githubcli-archive-keyring.gpg > /dev/null && \
+		sudo chmod go+r /etc/apt/keyrings/githubcli-archive-keyring.gpg && \
+		echo "deb [arch=$$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" | sudo tee /etc/apt/sources.list.d/github-cli.list > /dev/null && \
+		sudo apt-get update && \
+		sudo apt-get install -y gh; \
+	fi
+	@echo "Authenticating gh via git credential helper for $(GH_HOST)..."
+	@printf 'protocol=https\nhost=%s\n\n' "$(GH_HOST)" | git credential fill | sed -n 's/^password=//p' | gh auth login --hostname $(GH_HOST) --with-token
+	@gh auth status --hostname $(GH_HOST)
+
 test-static: ##@ Run static analysis
              ##@ Runs linting and security checks on Go code
              ##@ Used in CI/CD workflow to catch code quality and security issues
 test-static: install-test-deps
 	@echo "Running golangci-lint..."
-	golangci-lint run --timeout=5m ./...
+	golangci-lint run ./...
 	@echo "Running gosec security scan for HIGH severity issues only..."
 	gosec -exclude-generated -fmt=junit-xml -out=$(REPORTS_DIR)/gosec-junit.xml -severity high -quiet ./...
 	@if [ ! -s $(REPORTS_DIR)/gosec-junit.xml ]; then echo '<?xml version="1.0" encoding="UTF-8"?><testsuites></testsuites>' > $(REPORTS_DIR)/gosec-junit.xml; fi

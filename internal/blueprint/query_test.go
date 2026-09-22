@@ -57,10 +57,18 @@ func equalNames(t *testing.T, got []*models.BlueprintSummary, want []string) {
 	}
 }
 
+// unrestrictedObligations grants visibility into every organization's
+// blueprints (see blueprintObligationScope), so tests that exercise
+// filter/sort/page mechanics unrelated to obligation scoping can see gamma
+// (org "acme") alongside the file-based globals.
+func unrestrictedObligations() map[string]string {
+	return map[string]string{"org": obligationOrgWildcard}
+}
+
 func TestQueryBlueprints_DefaultSortIsByName(t *testing.T) {
 	bm := newQueryTestManager(t)
 
-	got, err := bm.QueryBlueprints(nil)
+	got, err := bm.QueryBlueprints(&queryv1.Payload{Obligations: unrestrictedObligations()})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -88,6 +96,7 @@ func TestQueryBlueprints_FilterByOrg(t *testing.T) {
 	bm := newQueryTestManager(t)
 
 	payload := &queryv1.Payload{
+		Obligations: unrestrictedObligations(),
 		Filters: &queryv1.Filters{
 			Conditions: []*queryv1.Condition{
 				{Field: "org", Op: queryv1.Operator_OPERATOR_NE, Values: []string{"acme"}},
@@ -101,6 +110,7 @@ func TestQueryBlueprints_FilterByOrg(t *testing.T) {
 	equalNames(t, got, []string{"alpha", "beta"})
 
 	payload = &queryv1.Payload{
+		Obligations: unrestrictedObligations(),
 		Filters: &queryv1.Filters{
 			Conditions: []*queryv1.Condition{
 				{Field: "org", Op: queryv1.Operator_OPERATOR_EQ, Values: []string{"acme"}},
@@ -131,6 +141,7 @@ func TestQueryBlueprints_FilterByGlobal(t *testing.T) {
 	equalNames(t, got, []string{"alpha", "beta"})
 
 	payload = &queryv1.Payload{
+		Obligations: unrestrictedObligations(),
 		Filters: &queryv1.Filters{
 			Conditions: []*queryv1.Condition{
 				{Field: "global", Op: queryv1.Operator_OPERATOR_EQ, Values: []string{"false"}},
@@ -144,6 +155,7 @@ func TestQueryBlueprints_FilterByGlobal(t *testing.T) {
 	equalNames(t, got, []string{"gamma"})
 
 	payload = &queryv1.Payload{
+		Obligations: unrestrictedObligations(),
 		Filters: &queryv1.Filters{
 			Conditions: []*queryv1.Condition{
 				{Field: "global", Op: queryv1.Operator_OPERATOR_NE, Values: []string{"true"}},
@@ -161,6 +173,7 @@ func TestQueryBlueprints_FilterByCreated(t *testing.T) {
 	bm := newQueryTestManager(t)
 
 	payload := &queryv1.Payload{
+		Obligations: unrestrictedObligations(),
 		Filters: &queryv1.Filters{
 			Conditions: []*queryv1.Condition{
 				{Field: "created", Op: queryv1.Operator_OPERATOR_LT, Values: []string{"2026-06-01"}},
@@ -178,14 +191,91 @@ func TestQueryBlueprints_SortDescAndPage(t *testing.T) {
 	bm := newQueryTestManager(t)
 
 	payload := &queryv1.Payload{
-		Sort: []*queryv1.Sort{{Field: "name", Dir: queryv1.SortDir_SORT_DIR_DESC}},
-		Page: &queryv1.Page{Limit: 1, Offset: 1},
+		Obligations: unrestrictedObligations(),
+		Sort:        []*queryv1.Sort{{Field: "name", Dir: queryv1.SortDir_SORT_DIR_DESC}},
+		Page:        &queryv1.Page{Limit: 1, Offset: 1},
 	}
 	got, err := bm.QueryBlueprints(payload)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	equalNames(t, got, []string{"beta"})
+}
+
+func TestQueryBlueprints_ObligationsMissingOrgScopesToGlobalsOnly(t *testing.T) {
+	bm := newQueryTestManager(t)
+
+	got, err := bm.QueryBlueprints(nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	equalNames(t, got, []string{"alpha", "beta"})
+}
+
+func TestQueryBlueprints_ObligationsScopeToOrgPlusGlobals(t *testing.T) {
+	bm := newQueryTestManager(t)
+
+	payload := &queryv1.Payload{Obligations: map[string]string{"org": "acme"}}
+	got, err := bm.QueryBlueprints(payload)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	equalNames(t, got, []string{"alpha", "beta", "gamma"})
+
+	payload = &queryv1.Payload{Obligations: map[string]string{"org": "other-org"}}
+	got, err = bm.QueryBlueprints(payload)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	equalNames(t, got, []string{"alpha", "beta"})
+}
+
+func TestQueryBlueprints_ObligationsWildcardOrgIsUnrestricted(t *testing.T) {
+	bm := newQueryTestManager(t)
+
+	payload := &queryv1.Payload{Obligations: unrestrictedObligations()}
+	got, err := bm.QueryBlueprints(payload)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	equalNames(t, got, []string{"alpha", "beta", "gamma"})
+}
+
+func TestQueryBlueprints_ObligationsCombineWithFiltersAsAnd(t *testing.T) {
+	bm := newQueryTestManager(t)
+
+	// The obligation scopes visibility to acme's blueprints plus globals;
+	// the client's own filter further narrows to org "acme" — gamma is the
+	// only blueprint satisfying both.
+	payload := &queryv1.Payload{
+		Obligations: map[string]string{"org": "acme"},
+		Filters: &queryv1.Filters{
+			Conditions: []*queryv1.Condition{
+				{Field: "org", Op: queryv1.Operator_OPERATOR_EQ, Values: []string{"acme"}},
+			},
+		},
+	}
+	got, err := bm.QueryBlueprints(payload)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	equalNames(t, got, []string{"gamma"})
+
+	// A filter for a different org can never match once the obligation
+	// scopes visibility to acme plus globals.
+	payload = &queryv1.Payload{
+		Obligations: map[string]string{"org": "acme"},
+		Filters: &queryv1.Filters{
+			Conditions: []*queryv1.Condition{
+				{Field: "org", Op: queryv1.Operator_OPERATOR_EQ, Values: []string{"other-org"}},
+			},
+		},
+	}
+	got, err = bm.QueryBlueprints(payload)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	equalNames(t, got, []string{})
 }
 
 func TestQueryBlueprints_UnknownFieldIsInvalid(t *testing.T) {

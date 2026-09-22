@@ -542,8 +542,9 @@ func (p *ProvisionerService) prepareWorkspaceWithUserStr(ctx context.Context,
 	}
 
 	var obligations map[string]string
+	source := authz.WorkspaceSourceFromBlueprintKind(identity.BlueprintKind())
 	blueprintObj, obligations, err = p.enforceWorkspaceProvision(ctx, user, workspaceName, blueprintObj,
-		provisionMode, workloadName, workloadNamespace, workloadKind)
+		provisionMode, source, workloadName, workloadNamespace, workloadKind)
 	if err != nil {
 		return nil, err
 	}
@@ -575,6 +576,7 @@ func (p *ProvisionerService) enforceWorkspaceProvision(
 	workspaceName string,
 	bp *models.Blueprint,
 	provisionMode authz.WorkspaceProvisionMode,
+	source authz.WorkspaceProvisionSource,
 	workloadName, workloadNamespace, workloadKind string,
 ) (*models.Blueprint, map[string]string, error) {
 	if p.server.Authz == nil {
@@ -594,6 +596,7 @@ func (p *ProvisionerService) enforceWorkspaceProvision(
 		WithBlueprintName(bp.Name).
 		WithBlueprint(bp).
 		WithMode(provisionMode).
+		WithSource(source).
 		WithWorkload(workloadName, workloadNamespace, workloadKind).
 		Build()
 	if err != nil {

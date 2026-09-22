@@ -1,6 +1,10 @@
-# CLAUDE.md
+@common/CLAUDE-SHARED.md
+
+# CLAUDE.md - provisioner
 
 Guidelines for Claude Code when working in this repository.
+
+See `CLAUDE-SHARED.md` (imported above) for fleet-wide conventions: the service map, developing against a live `common` checkout.
 
 ## Build and test commands
 
