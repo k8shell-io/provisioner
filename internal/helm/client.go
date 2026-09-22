@@ -80,11 +80,6 @@ func NewClient(targetNamespace string, registry config.DefaultRegistry, privateR
 	if err != nil {
 		return nil, fmt.Errorf("failed to get Kubernetes config: %w", err)
 	}
-	// client-go defaults to 5 QPS / 10 burst, which throttles this process
-	// client-side under concurrent request load; raise it well above what the
-	// provisioner's fan-out per request actually needs.
-	config.QPS = 50
-	config.Burst = 100
 
 	kubeClient, err := kubernetes.NewForConfig(config)
 	if err != nil {
