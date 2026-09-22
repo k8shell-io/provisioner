@@ -1023,7 +1023,7 @@ func (w *Workspace) canonicalIdForCleanup() string {
 func (w *Workspace) StopPod(ctx context.Context) error {
 	pods := w.client.KubeClient().CoreV1().Pods(w.client.TargetNamespace())
 
-	patch := []byte(fmt.Sprintf(`{"metadata":{"labels":{%q:"true"}}}`, helm.LabelStopRequested))
+	patch := fmt.Appendf(nil, `{"metadata":{"labels":{%q:"true"}}}`, helm.LabelStopRequested)
 	if _, err := pods.Patch(ctx, w.Name, types.MergePatchType, patch, metav1.PatchOptions{}); err != nil && !k8sErrors.IsNotFound(err) {
 		return fmt.Errorf("failed to label workspace pod %s as stopping: %w", w.Name, err)
 	}

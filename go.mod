@@ -9,7 +9,7 @@ require (
 	github.com/go-playground/validator/v10 v10.28.0
 	github.com/google/uuid v1.6.0
 	github.com/jackc/pgx/v5 v5.7.6
-	github.com/k8shell-io/common v0.61.2
+	github.com/k8shell-io/common v0.61.3
 	github.com/k8shell-io/yaml-cel v0.2.8
 	google.golang.org/grpc v1.76.0
 	gopkg.in/yaml.v3 v3.0.1
@@ -163,5 +163,3 @@ require (
 	sigs.k8s.io/randfill v1.0.0 // indirect
 	sigs.k8s.io/structured-merge-diff/v6 v6.3.0 // indirect
 )
-
-
