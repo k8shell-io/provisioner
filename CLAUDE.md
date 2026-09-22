@@ -1,6 +1,6 @@
 @common/CLAUDE-SHARED.md
 
-# CLAUDE.md
+# CLAUDE.md - provisioner
 
 Guidelines for Claude Code when working in this repository.
 
