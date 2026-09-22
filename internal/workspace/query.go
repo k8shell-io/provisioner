@@ -292,6 +292,8 @@ func QueryWorkspaces(ctx context.Context, helmClient *helm.Client, identityClien
 	opts := pushdownOptionsFromPayload(payload)
 	scope.narrow(&opts)
 	opts.InjectNamespaces = injectNamespaces
+	// QueryWorkspaces is a read-only listing RPC; see GetWorkspacesOptions.UseCache.
+	opts.UseCache = true
 
 	result, err := GetWorkspaces(ctx, helmClient, opts)
 	if err != nil {

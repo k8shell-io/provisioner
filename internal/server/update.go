@@ -86,7 +86,7 @@ func (p *ProvisionerService) UpdateWorkspaceResources(ctx context.Context,
 				"or web proxy (replace_web_proxy) must be set")
 	}
 
-	if _, pod, findErr := ws.FindWorkspace(ctx, p.server.helm, name, p.server.config.InjectNamespaces); findErr == nil &&
+	if _, pod, findErr := ws.FindWorkspace(ctx, p.server.helm, name, p.server.config.InjectNamespaces, false); findErr == nil &&
 		pod.Labels[helm.LabelInjected] == "true" {
 		return nil, status.Errorf(codes.FailedPrecondition,
 			"workspace %s is injected into a workload and cannot be updated this way", name)

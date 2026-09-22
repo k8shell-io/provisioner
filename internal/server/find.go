@@ -25,7 +25,7 @@ import (
 // FindWorkspace retrieves the details of a specific workspace
 func (p *ProvisionerService) FindWorkspace(ctx context.Context,
 	req *provisionerv1.FindWorkspaceRequest) (*commonv1.WorkspaceDetails, error) {
-	s, _, err := ws.FindWorkspace(ctx, p.server.helm, req.Workspace, p.server.config.InjectNamespaces)
+	s, _, err := ws.FindWorkspace(ctx, p.server.helm, req.Workspace, p.server.config.InjectNamespaces, true)
 	if err != nil {
 		if errors.Is(err, models.ErrWorkspaceNotFound) {
 			return nil, status.Errorf(codes.NotFound, "Workspace %s not found", req.Workspace)
@@ -60,6 +60,7 @@ func (p *ProvisionerService) GetWorkspaces(
 			Organization:     req.Organization,
 			WorkspaceName:    req.Workspace,
 			InjectNamespaces: p.server.config.InjectNamespaces,
+			UseCache:         true,
 		})
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "Failed to list workspaces: %v", err)
@@ -108,6 +109,7 @@ func (p *ProvisionerService) GetWorkspacesByUserStr(
 	identity := canUserStr.Identity()
 	opts := ws.GetWorkspacesOptions{
 		Usernames: []string{identity.Username()},
+		UseCache:  true,
 	}
 
 	if userStr.WorkloadName() != "" {

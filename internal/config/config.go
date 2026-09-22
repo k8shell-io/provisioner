@@ -37,6 +37,7 @@ type Config struct {
 	JWTVerifier         authz.JWTVerifierConfig `yaml:"jwtVerifier" validate:"required"`
 	Blueprints          BlueprintsFileConfig    `yaml:"blueprints"`
 	BaseDir             string                  `yaml:"baseDir"`
+	KubeClient          KubeClientConfig        `yaml:"kubeClient"`
 
 	// DB configures the database connection used to persist org-scoped
 	// blueprint definitions, layered on top of the file-based blueprints
@@ -123,6 +124,25 @@ type BlueprintsFileConfig struct {
 	DefaultCustomBlueprint string `yaml:"defaultCustomBlueprint"`
 }
 
+// KubeClientConfig tunes the rate limiting of the in-cluster Kubernetes
+// client used for all workspace pod/release lookups and mutations. client-go
+// defaults to 5 QPS / 10 burst when unset, which throttles the provisioner
+// client-side under concurrent request load; DefaultKubeClientQPS and
+// DefaultKubeClientBurst below are applied when the config omits either
+// field.
+type KubeClientConfig struct {
+	QPS   float32 `yaml:"qps"`
+	Burst int     `yaml:"burst"`
+}
+
+// Default Kubernetes client-side rate limits, applied when kubeClient.qps or
+// kubeClient.burst is left unset (zero) in the config file. These are
+// hardcoded starting points, not tuned for any particular deployment size.
+const (
+	DefaultKubeClientQPS   float32 = 50
+	DefaultKubeClientBurst int     = 100
+)
+
 // NewConfig loads and fully validates the server configuration from configFile.
 // Post-load steps include: parsing duration strings, applying defaults for
 // cert-manager, validating the JWT signing method, deduplicating injection
@@ -170,6 +190,13 @@ func NewConfig(configFile string) (*Config, error) {
 		cfg.ClusterDomain = ClusterDomain
 	}
 	ClusterDomain = cfg.ClusterDomain
+
+	if cfg.KubeClient.QPS == 0 {
+		cfg.KubeClient.QPS = DefaultKubeClientQPS
+	}
+	if cfg.KubeClient.Burst == 0 {
+		cfg.KubeClient.Burst = DefaultKubeClientBurst
+	}
 
 	for i := range cfg.InjectNamespaces {
 		ns := strings.TrimSpace(cfg.InjectNamespaces[i])
