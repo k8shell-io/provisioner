@@ -45,6 +45,12 @@ import (
 // Default page size for GetWorkspaces pagination when limit is not specified or invalid
 const WORKSPACE_DEFAULT_PAGE_SIZE = 20
 
+// gwLog backs GetWorkspaces' per-call timing breakdown (live pod lookup vs
+// Helm release lookup vs injected pod lookup), logged at debug level to
+// diagnose where request latency goes once the expensive paths (decoding
+// every release in a namespace, cache misses) are ruled out or fixed.
+var gwLog = log.NewLogger("workspace")
+
 // k8shelldTagOverride, when non-empty, replaces the tag of the k8shelld image
 // configured in the blueprint. Leave empty to use the blueprint's image as-is.
 // this is for debug purposes only when provisioner is running in an injected workspace
@@ -229,6 +235,8 @@ func GetWorkspaces(
 	out := make([]*models.WorkspaceDetails, 0)
 	pods := make([]corev1.Pod, 0)
 
+	var liveDur, stoppedDur, injectedDur time.Duration
+
 	// The live pod lookup and the stopped-release lookup are independent Kubernetes/Helm
 	// calls, so they run concurrently and are merged below to keep latency down.
 	if opts.InjectWorkload == "" {
@@ -242,11 +250,15 @@ func GetWorkspaces(
 		wg.Add(2)
 		go func() {
 			defer wg.Done()
+			start := time.Now()
 			liveDetails, livePods, liveErr = liveStandaloneWorkspaces(ctx, helmClient, v1, targetNamespace, opts)
+			liveDur = time.Since(start)
 		}()
 		go func() {
 			defer wg.Done()
-			stoppedDetails, stoppedPods, stoppedErr = stoppedWorkspaces(helmClient, targetNamespace, opts)
+			start := time.Now()
+			stoppedDetails, stoppedPods, stoppedErr = stoppedWorkspaces(ctx, helmClient, targetNamespace, opts)
+			stoppedDur = time.Since(start)
 		}()
 		wg.Wait()
 
@@ -274,6 +286,7 @@ func GetWorkspaces(
 	}
 
 	if len(opts.InjectNamespaces) > 0 {
+		injectedStart := time.Now()
 		injectedLabels := map[string][]string{
 			helm.LabelInjected: {"true"},
 		}
@@ -385,7 +398,17 @@ func GetWorkspaces(
 				pods = append(pods, *ip)
 			}
 		}
+		injectedDur = time.Since(injectedStart)
 	}
+
+	gwLog.Debug().
+		Str("namespace", targetNamespace).
+		Str("workspace", opts.WorkspaceName).
+		Bool("use_cache", opts.UseCache).
+		Str("live_pods", liveDur.String()).
+		Str("stopped_releases", stoppedDur.String()).
+		Str("injected_pods", injectedDur.String()).
+		Msg("GetWorkspaces timing breakdown")
 
 	return &GetWorkspacesResult{
 		Workspaces: out,
@@ -481,8 +504,8 @@ func liveStandaloneWorkspaces(
 // anyway (see (*helm.Client).ListWithSelector) — reusing one cached
 // unfiltered listing per namespace is what actually avoids paying that
 // decode cost when concurrent requests differ only by, say, a workspace name.
-func filteredCachedReleases(helmClient *helm.Client, namespace, selector string) ([]*release.Release, error) {
-	all, err := helmClient.ListDeployedReleasesCached(namespace)
+func filteredCachedReleases(ctx context.Context, helmClient *helm.Client, namespace, selector string) ([]*release.Release, error) {
+	all, err := helmClient.ListDeployedReleasesCached(ctx, namespace)
 	if err != nil {
 		return nil, err
 	}
@@ -509,6 +532,7 @@ func filteredCachedReleases(helmClient *helm.Client, namespace, selector string)
 // Callers dedupe the result against the live pod listing by name, since a pod
 // may start between the two concurrent lookups.
 func stoppedWorkspaces(
+	ctx context.Context,
 	helmClient *helm.Client,
 	targetNamespace string,
 	opts GetWorkspacesOptions,
@@ -530,15 +554,17 @@ func stoppedWorkspaces(
 	}
 	selector := getSelector(labels)
 
+	fetchStart := time.Now()
 	var (
 		releases []*release.Release
 		err      error
 	)
 	if opts.UseCache {
-		releases, err = filteredCachedReleases(helmClient, targetNamespace, selector)
+		releases, err = filteredCachedReleases(ctx, helmClient, targetNamespace, selector)
 	} else {
-		releases, err = helmClient.ListWithSelector(targetNamespace, selector)
+		releases, err = helmClient.ListReleasesBySelector(ctx, targetNamespace, selector)
 	}
+	fetchDur := time.Since(fetchStart)
 	if err != nil {
 		if strings.Contains(err.Error(), "unable to parse") {
 			return nil, nil, fmt.Errorf("%w: %s", models.ErrInvalidParameters, selector)
@@ -546,6 +572,7 @@ func stoppedWorkspaces(
 		return nil, nil, fmt.Errorf("failed to list workspace releases: %w", err)
 	}
 
+	reconstructStart := time.Now()
 	out := make([]*models.WorkspaceDetails, 0)
 	pods := make([]corev1.Pod, 0)
 	for _, rel := range releases {
@@ -572,19 +599,30 @@ func stoppedWorkspaces(
 		out = append(out, d)
 		pods = append(pods, *pod)
 	}
+	reconstructDur := time.Since(reconstructStart)
+
+	gwLog.Debug().
+		Str("namespace", targetNamespace).
+		Str("workspace", opts.WorkspaceName).
+		Bool("use_cache", opts.UseCache).
+		Int("releases_fetched", len(releases)).
+		Int("releases_matched", len(out)).
+		Str("fetch", fetchDur.String()).
+		Str("reconstruct", reconstructDur.String()).
+		Msg("stoppedWorkspaces timing split")
 
 	return out, pods, nil
 }
 
 // FindworkspaceByName finds a workspace by its name using Helm client and returns the corresponding release
-func FindWorkspaceHelmRelease(_ context.Context, helmClient *helm.Client, name string) (*release.Release, error) {
+func FindWorkspaceHelmRelease(ctx context.Context, helmClient *helm.Client, name string) (*release.Release, error) {
 	labels := map[string][]string{
 		"app.kubernetes.io/name":     {helm.WORKSPACE_CHART_NAME},
 		"app.kubernetes.io/instance": {name},
 	}
 
 	selector := getSelector(labels)
-	releases, err := helmClient.ListWithSelector(helmClient.TargetNamespace(), selector)
+	releases, err := helmClient.ListReleasesBySelector(ctx, helmClient.TargetNamespace(), selector)
 	if err != nil {
 		if strings.Contains(err.Error(), "unable to parse") {
 			return nil, fmt.Errorf("failed to list releases: %w", models.ErrInvalidParameters)
