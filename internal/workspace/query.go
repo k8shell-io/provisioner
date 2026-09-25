@@ -217,17 +217,48 @@ func resolveObligationScope(ctx context.Context, identityClient *identity.Identi
 	for _, r := range roles.Roles {
 		roleValues = append(roleValues, string(r))
 	}
-	resp, err := identityClient.GetUsers(ctx, &identityv1.GetUsersRequest{Roles: roleValues})
+	roleUsernames, err := usernamesWithRoles(ctx, identityClient, roleValues)
 	if err != nil {
 		return obligationScope{}, fmt.Errorf("failed to resolve roles obligation: %w", err)
-	}
-	roleUsernames := make([]string, 0, len(resp.GetUsers()))
-	for _, u := range resp.GetUsers() {
-		roleUsernames = append(roleUsernames, u.GetUsername())
 	}
 	scope.usernames = intersectUsernames(scope.usernames, roleUsernames)
 
 	return scope, nil
+}
+
+// usersPageSize is the page size usernamesWithRoles requests from identity's
+// GetUsers. Identity may cap it lower; usernamesWithRoles doesn't rely on
+// getting the full page back.
+const usersPageSize = 100
+
+// usernamesWithRoles returns every username holding at least one of roles.
+// identity's GetUsers is paginated (and caps an unset limit at a default
+// page size), so a single call silently truncates the set once enough users
+// hold those roles — which would wrongly drop their workspaces from a
+// roles-scoped listing. Pages are requested until one comes back empty,
+// rather than until one comes back short, so a server-side cap below
+// usersPageSize can't end the loop early.
+func usernamesWithRoles(ctx context.Context, identityClient *identity.IdentityClient,
+	roles []string) ([]string, error) {
+	usernames := make([]string, 0)
+	for offset := 0; ; {
+		resp, err := identityClient.GetUsers(ctx, &identityv1.GetUsersRequest{
+			Roles:  roles,
+			Limit:  usersPageSize,
+			Offset: int32(offset), //nolint:gosec // bounded by the number of users
+		})
+		if err != nil {
+			return nil, err
+		}
+		users := resp.GetUsers()
+		if len(users) == 0 {
+			return usernames, nil
+		}
+		for _, u := range users {
+			usernames = append(usernames, u.GetUsername())
+		}
+		offset += len(users)
+	}
 }
 
 // intersectUsernames returns the case-insensitive intersection of a and b.
