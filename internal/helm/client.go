@@ -9,11 +9,16 @@ package helm
 
 import (
 	"bufio"
+	"bytes"
+	"compress/gzip"
 	"context"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
+	"encoding/json"
 	stderrs "errors"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 	"time"
@@ -97,6 +102,10 @@ func NewClient(targetNamespace string, registry config.DefaultRegistry, privateR
 	if kubeClientBurst > 0 {
 		config.Burst = kubeClientBurst
 	}
+	log.NewLogger("helm").Info().
+		Float32("qps", config.QPS).
+		Int("burst", config.Burst).
+		Msg("Kubernetes client rate limit configured")
 
 	kubeClient, err := kubernetes.NewForConfig(config)
 	if err != nil {
@@ -354,13 +363,99 @@ func (c *Client) List(namespace string) ([]*release.Release, error) {
 	return releases, nil
 }
 
+// ListReleasesBySelector lists Helm releases in namespace whose Secret
+// matches selector (a standard Kubernetes label selector, e.g. as built by
+// the workspace package's getSelector), narrowed server-side by the
+// Kubernetes API — unlike ListWithSelector, which fetches and decodes every
+// release in the namespace regardless of selector. This works because Helm
+// writes a release's own Labels onto its storage Secret's metadata.labels
+// alongside its "owner"/"status"/"name" system labels (see
+// helm.sh/helm/v3/pkg/storage/driver/secrets.go's newSecretsObject), so the
+// same labels callers already filter pods on are equally queryable on the
+// release secret itself. Only "deployed" (i.e. current) releases are
+// returned, matching ListWithSelector's ListDeployed state mask.
+//
+// This also sidesteps createActionConfig/action.NewList, which rebuilds a
+// full Kubernetes client (including a discovery client) on every call —
+// itself a bigger cost than decoding a handful of releases. This reuses
+// c.kubeClient, already built once in NewClient.
+func (c *Client) ListReleasesBySelector(ctx context.Context, namespace, selector string) ([]*release.Release, error) {
+	secrets, err := c.kubeClient.CoreV1().Secrets(namespace).List(ctx, metav1.ListOptions{
+		LabelSelector: releaseSecretSelector(selector),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to list release secrets in namespace %s with selector %s: %w", namespace, selector, err)
+	}
+	return decodeReleaseSecrets(c.log, secrets.Items), nil
+}
+
+// releaseSecretSelector ANDs the Helm release system labels ("owner=helm",
+// "status=deployed") that scope a plain Secrets List to Helm's current
+// releases onto selector, the caller's own label selector (empty is valid —
+// it means "every deployed release").
+func releaseSecretSelector(selector string) string {
+	base := "owner=helm,status=deployed"
+	if selector == "" {
+		return base
+	}
+	return base + "," + selector
+}
+
+// decodeReleaseSecrets decodes each release Secret's "release" data field,
+// skipping (and logging) any that fail to decode rather than failing the
+// whole call — a single malformed secret shouldn't take down every listing.
+func decodeReleaseSecrets(log *zerolog.Logger, secrets []corev1.Secret) []*release.Release {
+	releases := make([]*release.Release, 0, len(secrets))
+	for i := range secrets {
+		s := &secrets[i]
+		rel, err := decodeHelmReleaseSecret(s.Data["release"])
+		if err != nil {
+			log.Warn().Err(err).Str("secret", s.Name).Msg("failed to decode Helm release secret")
+			continue
+		}
+		rel.Labels = s.Labels
+		releases = append(releases, rel)
+	}
+	return releases
+}
+
+// decodeHelmReleaseSecret decodes a Helm release Secret's "release" data
+// field. It mirrors the unexported decodeRelease in
+// helm.sh/helm/v3/pkg/storage/driver/util.go, which Helm has no public
+// equivalent for: base64-decode, then gunzip if the gzip magic header is
+// present (releases stored before Helm introduced compression are left
+// as-is), then JSON-unmarshal into a release.Release.
+func decodeHelmReleaseSecret(data []byte) (*release.Release, error) {
+	b, err := base64.StdEncoding.DecodeString(string(data))
+	if err != nil {
+		return nil, fmt.Errorf("base64 decode: %w", err)
+	}
+
+	if len(b) > 3 && bytes.Equal(b[0:3], []byte{0x1f, 0x8b, 0x08}) {
+		r, err := gzip.NewReader(bytes.NewReader(b))
+		if err != nil {
+			return nil, fmt.Errorf("gzip reader: %w", err)
+		}
+		defer r.Close()
+		if b, err = io.ReadAll(r); err != nil {
+			return nil, fmt.Errorf("gzip read: %w", err)
+		}
+	}
+
+	var rel release.Release
+	if err := json.Unmarshal(b, &rel); err != nil {
+		return nil, fmt.Errorf("json unmarshal: %w", err)
+	}
+	return &rel, nil
+}
+
 // ListWithSelector lists Helm releases in namespace, applying selector.
 // Despite taking a selector, this is not server-side filtered: Helm's List
 // action decodes every release secret in the namespace regardless of
 // selector, then filters in memory (see helm.sh/helm/v3/pkg/storage/driver
-// Secrets.List). Prefer ListDeployedReleasesCached when the caller can
-// tolerate a short-lived cache and apply its own filtering — that avoids
-// paying the decode cost on every call when only the selector differs.
+// Secrets.List). Prefer ListReleasesBySelector, which does filter
+// server-side, or ListDeployedReleasesCached when the caller can tolerate a
+// short-lived cache and apply its own filtering in memory.
 func (c *Client) ListWithSelector(namespace, selector string) ([]*release.Release, error) {
 	actionConfig, err := c.createActionConfig(namespace)
 	if err != nil {
@@ -386,9 +481,9 @@ func (c *Client) ListWithSelector(namespace, selector string) ([]*release.Releas
 
 // ListDeployedReleasesCached returns every deployed Helm release in
 // namespace, served from a short-lived cache shared across concurrent
-// callers (see ttlCache). Since Helm decodes every release in the namespace
-// regardless of selector anyway (see ListWithSelector), callers needing a
-// subset should filter this unfiltered result themselves — e.g. with
+// callers (see ttlCache). Since a plain Secrets List returns every release
+// regardless of the caller's own filter anyway, callers needing a subset
+// should filter this unfiltered result themselves — e.g. with
 // k8s.io/apimachinery/pkg/labels.Selector.Matches against each release's
 // Labels — rather than passing a selector, since that's what actually
 // benefits from the cache when concurrent requests differ only by, say, a
@@ -396,22 +491,16 @@ func (c *Client) ListWithSelector(namespace, selector string) ([]*release.Releas
 //
 // Only for read-only lookups: the cache can be up to listCacheTTL stale, so
 // callers that must observe a just-completed mutation (stop, delete, eject)
-// must use List or ListWithSelector instead.
-func (c *Client) ListDeployedReleasesCached(namespace string) ([]*release.Release, error) {
+// must use List or ListReleasesBySelector instead.
+func (c *Client) ListDeployedReleasesCached(ctx context.Context, namespace string) ([]*release.Release, error) {
 	return c.releaseCache.getOrFetch(namespace, func() ([]*release.Release, error) {
-		actionConfig, err := c.createActionConfig(namespace)
+		secrets, err := c.kubeClient.CoreV1().Secrets(namespace).List(ctx, metav1.ListOptions{
+			LabelSelector: releaseSecretSelector(""),
+		})
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("failed to list release secrets in namespace %s: %w", namespace, err)
 		}
-		list := action.NewList(actionConfig)
-		list.StateMask = action.ListDeployed
-		list.SortReverse = true
-		list.ByDate = true
-		releases, err := list.Run()
-		if err != nil {
-			return nil, fmt.Errorf("failed to list releases in namespace %s: %w", namespace, err)
-		}
-		return releases, nil
+		return decodeReleaseSecrets(c.log, secrets.Items), nil
 	})
 }
 
