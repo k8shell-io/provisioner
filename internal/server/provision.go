@@ -402,12 +402,17 @@ func (p *ProvisionerService) prepareWorkspaceWithUserStr(ctx context.Context,
 	var resolvedBpName string
 	switch {
 	case identity.BlueprintKind() == userstr.BlueprintKindCustom:
+		// A repository without a k8shell file comes back as an empty blueprint and
+		// falls back to the default below. NotFound means the repository or ref
+		// itself does not exist (or is not accessible), which must fail the
+		// provision rather than silently start a workspace with no repository.
 		blueprintpb, err := p.server.Identity.GetBlueprintByUserStr(ctx, &identityv1.UserStr{Userstr: canonicalUserStr})
 		if err != nil {
-			if status.Code(err) != codes.NotFound {
-				return nil, status.Errorf(codes.InvalidArgument, "failed to get blueprint by userstr: %v", err)
+			if status.Code(err) == codes.NotFound {
+				return nil, status.Errorf(codes.NotFound, "repository %s/%s (ref %q) not found or not accessible",
+					identity.RepoOwner(), identity.RepoName(), identity.RepoRef())
 			}
-			blueprintpb = &identityv1.Blueprint{}
+			return nil, status.Errorf(codes.InvalidArgument, "failed to get blueprint by userstr: %v", err)
 		}
 
 		p.log.Debug().Str("userstr", canonicalUserStr).Str("blueprint",
