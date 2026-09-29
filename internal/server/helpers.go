@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/k8shell-io/common/pkg/models"
+	ws "github.com/k8shell-io/provisioner/internal/workspace"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	k8sErrors "k8s.io/apimachinery/pkg/api/errors"
@@ -23,6 +24,12 @@ func convertToGRPCError(err error) error {
 	}
 	if errors.Is(err, models.ErrInvalidParameters) {
 		return status.Errorf(codes.InvalidArgument, "%s", err.Error())
+	}
+	if errors.Is(err, ws.ErrWebProxyAliasHeld) {
+		return status.Errorf(codes.AlreadyExists, "%s", err.Error())
+	}
+	if errors.Is(err, ws.ErrNoWebProxyRoute) {
+		return status.Errorf(codes.FailedPrecondition, "%s", err.Error())
 	}
 
 	return status.Errorf(codes.Internal, "%s", err.Error())

@@ -86,6 +86,24 @@ const (
 	AnnotationWebProxyPort  = "k8shell.io/web-proxy-port"
 	AnnotationWebProxyRoles = "k8shell.io/web-proxy-roles"
 
+	// LabelWebProxyAlias holds the web-proxy alias applied to a workspace pod,
+	// unique within its organization. The chart writes it at provisioning and
+	// UpdateWorkspaceResources rewrites it. It is only stamped once the
+	// workspace holds the alias's claim ConfigMap, which also carries this
+	// label (next to LabelWebProxyAliasClaim) to name the alias it claims.
+	LabelWebProxyAlias = "k8shell.io/web-proxy-alias"
+
+	// LabelWebProxyAliasClaim is stamped ("true") on the ConfigMaps that
+	// claim a web-proxy alias for a workspace. The claim is what makes an
+	// alias unique per organization: its name is derived from the
+	// (organization, alias) pair, so a second Create fails with AlreadyExists.
+	LabelWebProxyAliasClaim = "k8shell.io/web-proxy-alias-claim"
+
+	// AnnotationWebProxyAliasMessage explains why the blueprint's web-proxy
+	// alias was not applied to a workspace pod, e.g. because another
+	// workspace of the organization holds it.
+	AnnotationWebProxyAliasMessage = "k8shell.io/web-proxy-alias-message"
+
 	// LabelStopRequested is stamped on a workspace pod immediately before
 	// Workspace.StopPod deletes it, so the pod still carries the label during
 	// its graceful-termination window. AnalyzePod uses its presence to report

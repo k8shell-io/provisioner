@@ -18,6 +18,9 @@ k8shell.io/network-policy: "{{ .Values.network.networkPolicyClass }}"
 {{- if and .Values.network .Values.network.webProxy }}
 k8shell.io/web-proxy: "true"
 {{- end }}
+{{- if .Values.__webproxyalias__ }}
+k8shell.io/web-proxy-alias: "{{ .Values.__webproxyalias__ }}"
+{{- end }}
 {{- if and .Values.subdomain .Values.hostname }}
 k8shell.io/subdomain: "{{ .Values.subdomain }}"
 k8shell.io/hostname: "{{ .Values.hostname }}.{{ .Values.subdomain }}"

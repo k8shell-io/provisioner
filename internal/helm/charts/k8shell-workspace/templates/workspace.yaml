@@ -21,6 +21,9 @@ metadata:
     k8shell.io/web-proxy-port: {{ .Values.network.webProxy.port | quote }}
     k8shell.io/web-proxy-roles: {{ .Values.network.webProxy.allowedRoles | default list | toJson | quote }}
     {{- end }}
+    {{- if .Values.__webproxyaliasmessage__ }}
+    k8shell.io/web-proxy-alias-message: {{ .Values.__webproxyaliasmessage__ | quote }}
+    {{- end }}
   labels:
     {{- include "workspace.workspaceLabels" . | nindent 4 }} 
 spec:

@@ -33,14 +33,38 @@ func (p *ProvisionerService) FindWorkspace(ctx context.Context,
 		return nil, status.Errorf(codes.Internal, "Failed to get workspace details: %v", err)
 	}
 
+	p.clearExpiredJobId(s)
+	return gapi.WorkspaceDetailsToProto(s), nil
+}
+
+// FindWorkspaceByAlias retrieves the details of the workspace holding a
+// web-proxy alias within an organization.
+func (p *ProvisionerService) FindWorkspaceByAlias(ctx context.Context,
+	req *provisionerv1.FindWorkspaceByAliasRequest) (*commonv1.WorkspaceDetails, error) {
+	if req.Org == "" || req.Alias == "" {
+		return nil, status.Errorf(codes.InvalidArgument, "org and alias are required")
+	}
+
+	s, err := ws.FindWorkspaceByAlias(ctx, p.server.helm, req.Org, req.Alias)
+	if err != nil {
+		if errors.Is(err, models.ErrWorkspaceNotFound) {
+			return nil, status.Errorf(codes.NotFound, "No workspace holds alias %s in organization %s", req.Alias, req.Org)
+		}
+		return nil, status.Errorf(codes.Internal, "Failed to get workspace details: %v", err)
+	}
+
+	p.clearExpiredJobId(s)
+	return gapi.WorkspaceDetailsToProto(s), nil
+}
+
+// clearExpiredJobId drops s.JobId when its provisioning job is no longer in
+// the jobs KV store, so clients don't follow a dangling job reference.
+func (p *ProvisionerService) clearExpiredJobId(s *models.WorkspaceDetails) {
 	if p.server.provisionJobsKV != nil && s.JobId != "" {
-		_, err := p.server.provisionJobsKV.Get(s.JobId)
-		if err != nil {
+		if _, err := p.server.provisionJobsKV.Get(s.JobId); err != nil {
 			s.JobId = ""
 		}
 	}
-
-	return gapi.WorkspaceDetailsToProto(s), nil
 }
 
 // GetWorkspaces lists all workspaces, optionally filtered by user and/or blueprint

@@ -210,6 +210,16 @@ func (w *Workspace) doInstallation(ctx context.Context, opts *ProvisionOptions) 
 		return nil, fmt.Errorf("failed to create headless service: %w", err)
 	}
 
+	// The alias is claimed before the release is installed so the chart only
+	// stamps an alias this workspace actually holds.
+	alias, aliasMessage, err := w.reconcileWebProxyAlias(ctx, w.blueprintWebProxyAlias())
+	if err != nil {
+		return nil, fmt.Errorf("failed to claim web-proxy alias: %w", err)
+	}
+	values["__webproxyalias__"] = alias
+	values["__webproxyaliasmessage__"] = aliasMessage
+	w.emitWebProxyAliasWarning(opts, aliasMessage)
+
 	labels := map[string]string{
 		"app.kubernetes.io/name":       helm.WORKSPACE_CHART_NAME,
 		"app.kubernetes.io/instance":   w.Name,
@@ -266,6 +276,17 @@ func (w *Workspace) doStart(ctx context.Context, opts *ProvisionOptions) (*model
 	if err != nil {
 		return nil, fmt.Errorf("failed to get pod manifest from release: %w", err)
 	}
+
+	// The release manifest carries the alias the workspace held when it was
+	// installed. An update may have moved or cleared the claim since, and
+	// another workspace may have taken the alias meanwhile, so re-claim it
+	// before the pod comes back with the label.
+	alias, aliasMessage, err := w.reconcileWebProxyAlias(ctx, pod.Labels[helm.LabelWebProxyAlias])
+	if err != nil {
+		return nil, fmt.Errorf("failed to claim web-proxy alias: %w", err)
+	}
+	applyWebProxyAliasToPod(pod, alias, aliasMessage)
+	w.emitWebProxyAliasWarning(opts, aliasMessage)
 
 	namespace := w.client.TargetNamespace()
 	_, err = w.client.KubeClient().CoreV1().Pods(namespace).Create(ctx, pod, metav1.CreateOptions{})

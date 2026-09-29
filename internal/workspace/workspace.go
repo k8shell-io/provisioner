@@ -1027,14 +1027,7 @@ func (w *Workspace) GetPodStatus(ctx context.Context) (*models.WorkspaceStatus, 
 // IsInstalled reports whether a Helm release for this workspace exists in the
 // target namespace, regardless of its status or whether the pod is running.
 func (w *Workspace) IsInstalled(ctx context.Context) (bool, error) {
-	_, err := w.client.GetRelease(w.Name)
-	if err != nil {
-		if strings.Contains(err.Error(), "not found") || strings.Contains(err.Error(), "release: not found") {
-			return false, nil
-		}
-		return false, err
-	}
-	return true, nil
+	return releaseExists(w.client, w.Name)
 }
 
 // Uninstall removes the workspace Helm release. When lock is true it acquires
@@ -1265,6 +1258,8 @@ func workspaceDetailsCore(pod *corev1.Pod) *models.WorkspaceDetails {
 	// reading the Helm release. Absent for injected workspaces.
 	var webProxyPort int
 	var webProxyRoles []models.Role
+	webProxyAlias := pod.Labels[helm.LabelWebProxyAlias]
+	webProxyAliasMessage := pod.Annotations[helm.AnnotationWebProxyAliasMessage]
 	if raw := pod.Annotations[helm.AnnotationWebProxyPort]; raw != "" {
 		if p, err := strconv.Atoi(raw); err == nil {
 			webProxyPort = p
@@ -1301,6 +1296,9 @@ func workspaceDetailsCore(pod *corev1.Pod) *models.WorkspaceDetails {
 		AllowEgressToPods:  egressPods,
 		WebProxyPort:       webProxyPort,
 		WebProxyRoles:      webProxyRoles,
+
+		WebProxyAlias:        webProxyAlias,
+		WebProxyAliasMessage: webProxyAliasMessage,
 
 		WorkspaceType: workspaceType,
 		WorkloadKind:  workloadKind,

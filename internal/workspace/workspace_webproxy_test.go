@@ -93,3 +93,15 @@ func TestWorkspaceDetailsCoreWebProxy(t *testing.T) {
 		}
 	})
 }
+
+func TestWorkspaceDetailsCoreWebProxyAlias(t *testing.T) {
+	pod := baseWebProxyPod(t)
+	pod.Annotations[helm.AnnotationWebProxyPort] = "8080"
+	pod.Labels[helm.LabelWebProxyAlias] = "nats-course"
+	pod.Annotations[helm.AnnotationWebProxyAliasMessage] = "stale"
+
+	d := workspaceDetailsCore(pod)
+	if d.WebProxyAlias != "nats-course" || d.WebProxyAliasMessage != "stale" {
+		t.Fatalf("alias = %q, message = %q", d.WebProxyAlias, d.WebProxyAliasMessage)
+	}
+}
