@@ -246,7 +246,7 @@ func GetWorkspaces(
 		}()
 		go func() {
 			defer wg.Done()
-			stoppedDetails, stoppedPods, stoppedErr = stoppedWorkspaces(helmClient, targetNamespace, opts)
+			stoppedDetails, stoppedPods, stoppedErr = stoppedWorkspaces(ctx, helmClient, targetNamespace, opts)
 		}()
 		wg.Wait()
 
@@ -481,8 +481,8 @@ func liveStandaloneWorkspaces(
 // anyway (see (*helm.Client).ListWithSelector) — reusing one cached
 // unfiltered listing per namespace is what actually avoids paying that
 // decode cost when concurrent requests differ only by, say, a workspace name.
-func filteredCachedReleases(helmClient *helm.Client, namespace, selector string) ([]*release.Release, error) {
-	all, err := helmClient.ListDeployedReleasesCached(namespace)
+func filteredCachedReleases(ctx context.Context, helmClient *helm.Client, namespace, selector string) ([]*release.Release, error) {
+	all, err := helmClient.ListDeployedReleasesCached(ctx, namespace)
 	if err != nil {
 		return nil, err
 	}
@@ -509,6 +509,7 @@ func filteredCachedReleases(helmClient *helm.Client, namespace, selector string)
 // Callers dedupe the result against the live pod listing by name, since a pod
 // may start between the two concurrent lookups.
 func stoppedWorkspaces(
+	ctx context.Context,
 	helmClient *helm.Client,
 	targetNamespace string,
 	opts GetWorkspacesOptions,
@@ -535,9 +536,9 @@ func stoppedWorkspaces(
 		err      error
 	)
 	if opts.UseCache {
-		releases, err = filteredCachedReleases(helmClient, targetNamespace, selector)
+		releases, err = filteredCachedReleases(ctx, helmClient, targetNamespace, selector)
 	} else {
-		releases, err = helmClient.ListWithSelector(targetNamespace, selector)
+		releases, err = helmClient.ListReleasesBySelector(ctx, targetNamespace, selector)
 	}
 	if err != nil {
 		if strings.Contains(err.Error(), "unable to parse") {
@@ -577,14 +578,14 @@ func stoppedWorkspaces(
 }
 
 // FindworkspaceByName finds a workspace by its name using Helm client and returns the corresponding release
-func FindWorkspaceHelmRelease(_ context.Context, helmClient *helm.Client, name string) (*release.Release, error) {
+func FindWorkspaceHelmRelease(ctx context.Context, helmClient *helm.Client, name string) (*release.Release, error) {
 	labels := map[string][]string{
 		"app.kubernetes.io/name":     {helm.WORKSPACE_CHART_NAME},
 		"app.kubernetes.io/instance": {name},
 	}
 
 	selector := getSelector(labels)
-	releases, err := helmClient.ListWithSelector(helmClient.TargetNamespace(), selector)
+	releases, err := helmClient.ListReleasesBySelector(ctx, helmClient.TargetNamespace(), selector)
 	if err != nil {
 		if strings.Contains(err.Error(), "unable to parse") {
 			return nil, fmt.Errorf("failed to list releases: %w", models.ErrInvalidParameters)
@@ -1026,14 +1027,7 @@ func (w *Workspace) GetPodStatus(ctx context.Context) (*models.WorkspaceStatus, 
 // IsInstalled reports whether a Helm release for this workspace exists in the
 // target namespace, regardless of its status or whether the pod is running.
 func (w *Workspace) IsInstalled(ctx context.Context) (bool, error) {
-	_, err := w.client.GetRelease(w.Name)
-	if err != nil {
-		if strings.Contains(err.Error(), "not found") || strings.Contains(err.Error(), "release: not found") {
-			return false, nil
-		}
-		return false, err
-	}
-	return true, nil
+	return releaseExists(w.client, w.Name)
 }
 
 // Uninstall removes the workspace Helm release. When lock is true it acquires
@@ -1264,6 +1258,8 @@ func workspaceDetailsCore(pod *corev1.Pod) *models.WorkspaceDetails {
 	// reading the Helm release. Absent for injected workspaces.
 	var webProxyPort int
 	var webProxyRoles []models.Role
+	webProxyAlias := pod.Labels[helm.LabelWebProxyAlias]
+	webProxyAliasMessage := pod.Annotations[helm.AnnotationWebProxyAliasMessage]
 	if raw := pod.Annotations[helm.AnnotationWebProxyPort]; raw != "" {
 		if p, err := strconv.Atoi(raw); err == nil {
 			webProxyPort = p
@@ -1300,6 +1296,9 @@ func workspaceDetailsCore(pod *corev1.Pod) *models.WorkspaceDetails {
 		AllowEgressToPods:  egressPods,
 		WebProxyPort:       webProxyPort,
 		WebProxyRoles:      webProxyRoles,
+
+		WebProxyAlias:        webProxyAlias,
+		WebProxyAliasMessage: webProxyAliasMessage,
 
 		WorkspaceType: workspaceType,
 		WorkloadKind:  workloadKind,

@@ -13,6 +13,7 @@ import (
 	provisionerv1 "github.com/k8shell-io/common/pkg/api/gen/go/provisioner/v1"
 	"github.com/k8shell-io/common/pkg/models"
 	"github.com/k8shell-io/common/pkg/utils"
+	"github.com/k8shell-io/common/pkg/validator"
 	"github.com/k8shell-io/provisioner/internal/helm"
 	ws "github.com/k8shell-io/provisioner/internal/workspace"
 	"google.golang.org/grpc/codes"
@@ -80,10 +81,20 @@ func (p *ProvisionerService) UpdateWorkspaceResources(ctx context.Context,
 		opts.WebProxyRoles = n.WebProxyRoles
 	}
 
-	if !opts.ChangeResources && !opts.ChangeNetwork && !opts.ReplaceWebProxy {
+	if n := req.Network; n != nil && n.WebProxyAlias != nil {
+		alias := n.GetWebProxyAlias()
+		if alias != "" && !validator.IsWebProxyAlias(alias) {
+			return nil, status.Errorf(codes.InvalidArgument,
+				"web_proxy_alias %q must be a lowercase DNS label (a-z, 0-9, '-', at most 63 characters, no '--', not all digits)", alias)
+		}
+		opts.ChangeWebProxyAlias = true
+		opts.WebProxyAlias = alias
+	}
+
+	if !opts.ChangeResources && !opts.ChangeNetwork && !opts.ReplaceWebProxy && !opts.ChangeWebProxyAlias {
 		return nil, status.Errorf(codes.InvalidArgument,
 			"at least one of resources (cpu/memory), network (network_policy_class/replace_egress) "+
-				"or web proxy (replace_web_proxy) must be set")
+				"or web proxy (replace_web_proxy/web_proxy_alias) must be set")
 	}
 
 	if _, pod, findErr := ws.FindWorkspace(ctx, p.server.helm, name, p.server.config.InjectNamespaces, false); findErr == nil &&
@@ -146,6 +157,14 @@ func (p *ProvisionerService) UpdateWorkspaceResources(ctx context.Context,
 			changes = append(changes, fmt.Sprintf("web proxy port=%d", result.AppliedWebProxyPort))
 		} else {
 			changes = append(changes, "web proxy route cleared")
+		}
+	}
+	if result.WebProxyAliasChanged {
+		resp.AppliedWebProxyAlias = result.AppliedWebProxyAlias
+		if result.AppliedWebProxyAlias != "" {
+			changes = append(changes, fmt.Sprintf("web proxy alias=%s", result.AppliedWebProxyAlias))
+		} else {
+			changes = append(changes, "web proxy alias cleared")
 		}
 	}
 	resp.Message = fmt.Sprintf("Workspace %s updated (%s); reverts on the next re-provision",

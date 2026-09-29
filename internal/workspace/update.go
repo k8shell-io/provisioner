@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/k8shell-io/common/pkg/models"
@@ -21,6 +22,7 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
+	corev1client "k8s.io/client-go/kubernetes/typed/core/v1"
 	sigsyaml "sigs.k8s.io/yaml"
 )
 
@@ -79,6 +81,13 @@ type UpdateOptions struct {
 	ReplaceWebProxy bool
 	WebProxyPort    int
 	WebProxyRoles   []string
+
+	// ChangeWebProxyAlias gates WebProxyAlias: a non-empty value claims and
+	// applies that alias (the workspace must publish a route, either already
+	// or through this update), "" clears it. Clearing the route through
+	// ReplaceWebProxy clears the alias regardless of this gate.
+	ChangeWebProxyAlias bool
+	WebProxyAlias       string
 }
 
 // UpdateResult reports the settings in effect after UpdateResourcesAndNetwork.
@@ -90,21 +99,39 @@ type UpdateResult struct {
 	AppliedNetworkPolicyClass string
 	WebProxyChanged           bool
 	AppliedWebProxyPort       int
+	WebProxyAliasChanged      bool
+	AppliedWebProxyAlias      string
 }
 
 // UpdateResourcesAndNetwork applies opts to the workspace's live Kubernetes
-// objects. Resources are resized first (it needs a running pod); the network
-// policy is re-applied second; the web-proxy route is re-applied last. Each
-// step is skipped when its Change* / Replace* gate is false. The Helm release
-// is never modified, so the workspace reverts to its blueprint's resources,
-// network class and web-proxy route the next time the release is re-applied.
+// objects. The web-proxy changes are validated first and the alias claimed,
+// so that a missing route or a contested alias fails the update before
+// anything has changed; resources are resized next (it needs a running pod);
+// the network policy is re-applied after that; the web-proxy route and alias
+// are written last, together in one pod patch. If any step fails, an alias
+// claimed by this update is given back. Each step is skipped when its
+// Change* / Replace* gate is false. The Helm release is never modified, so
+// the workspace reverts to its blueprint's resources, network class,
+// web-proxy route and alias the next time the release is re-applied.
 func (w *Workspace) UpdateResourcesAndNetwork(ctx context.Context, opts UpdateOptions) (*UpdateResult, error) {
 	res := &UpdateResult{}
+
+	wp, err := prepareWebProxyUpdate(ctx, w.client.KubeClient().CoreV1().Pods(w.client.TargetNamespace()),
+		newAliasClaims(w.client, w.log), w.Name, w.canonicalIdForCleanup(), opts)
+	if err != nil {
+		return nil, err
+	}
+	fail := func(err error) (*UpdateResult, error) {
+		if wp != nil {
+			wp.abort(ctx)
+		}
+		return nil, err
+	}
 
 	if opts.ChangeResources {
 		cpu, mem, err := w.resizeMainContainer(ctx, opts.CPU, opts.Memory)
 		if err != nil {
-			return nil, err
+			return fail(err)
 		}
 		res.ResourcesChanged = true
 		res.AppliedCPU = cpu
@@ -114,7 +141,7 @@ func (w *Workspace) UpdateResourcesAndNetwork(ctx context.Context, opts UpdateOp
 	if opts.ChangeNetwork {
 		class, classChanged, err := w.reapplyNetworkPolicies(ctx, opts)
 		if err != nil {
-			return nil, err
+			return fail(err)
 		}
 		res.NetworkChanged = true
 		// Only report a class when one was explicitly applied. An egress-only
@@ -125,50 +152,130 @@ func (w *Workspace) UpdateResourcesAndNetwork(ctx context.Context, opts UpdateOp
 		}
 	}
 
-	if opts.ReplaceWebProxy {
-		port, err := w.reapplyWebProxy(ctx, opts)
+	if wp != nil {
+		port, alias, err := wp.commit(ctx)
 		if err != nil {
 			return nil, err
 		}
-		res.WebProxyChanged = true
-		res.AppliedWebProxyPort = port
+		if opts.ReplaceWebProxy {
+			res.WebProxyChanged = true
+			res.AppliedWebProxyPort = port
+		}
+		if opts.ChangeWebProxyAlias {
+			res.WebProxyAliasChanged = true
+			res.AppliedWebProxyAlias = alias
+		}
+		w.log.Info().Str("workspace", w.Name).Int("port", port).Str("alias", alias).
+			Msg("re-applied workspace web-proxy route")
 	}
 
 	return res, nil
 }
 
-// reapplyWebProxy replaces the workspace's web-proxy route by patching the
-// live pod's metadata: the k8shell.io/web-proxy-port and
-// k8shell.io/web-proxy-roles annotations and the k8shell.io/web-proxy
-// discovery label. A zero opts.WebProxyPort clears all three. No NetworkPolicy
-// is touched — proxy traffic ingresses via the api-server, which every class
-// already permits. It returns the port in effect after the patch (0 when
-// cleared).
-func (w *Workspace) reapplyWebProxy(ctx context.Context, opts UpdateOptions) (int, error) {
-	ns := w.client.TargetNamespace()
+// webProxyUpdate is an update's web-proxy route and alias change, validated
+// and with its alias claimed, waiting to be written to the workspace pod.
+type webProxyUpdate struct {
+	pods        corev1client.PodInterface
+	claims      *aliasClaims
+	pod         *corev1.Pod
+	canonicalID string
+	opts        UpdateOptions
+	// keep is the claim the workspace holds once the update is committed;
+	// prev is the claim for the alias on the pod now. They differ when the
+	// update moves or clears the alias.
+	keep, prev string
+}
 
+// prepareWebProxyUpdate validates the web-proxy part of opts against the
+// workspace pod and claims the alias it sets, without changing the pod. It
+// returns nil when opts changes neither the route nor the alias. Setting an
+// alias requires the route in effect after the update: one the same update
+// publishes, or the pod's current one when the update leaves the route
+// alone. So an alias combined with clearing the route fails with
+// ErrNoWebProxyRoute, and an alias another workspace holds with
+// ErrWebProxyAliasHeld; in both cases nothing has changed.
+func prepareWebProxyUpdate(ctx context.Context, pods corev1client.PodInterface, claims *aliasClaims,
+	name, canonicalID string, opts UpdateOptions) (*webProxyUpdate, error) {
+	if !opts.ReplaceWebProxy && !opts.ChangeWebProxyAlias {
+		return nil, nil
+	}
+	pod, err := pods.Get(ctx, name, metav1.GetOptions{})
+	if err != nil {
+		if k8serrors.IsNotFound(err) {
+			return nil, fmt.Errorf("%w: %s", models.ErrWorkspaceNotFound, name)
+		}
+		return nil, fmt.Errorf("failed to get workspace pod %s: %w", name, err)
+	}
+
+	u := &webProxyUpdate{pods: pods, claims: claims, pod: pod, canonicalID: canonicalID, opts: opts}
+	if cur := pod.Labels[helm.LabelWebProxyAlias]; cur != "" {
+		u.prev = aliasClaimName(pod.Labels[helm.LabelOrganization], cur)
+	}
+	u.keep = u.prev
+
+	switch {
+	case opts.ChangeWebProxyAlias:
+		if u.keep, err = claims.claimForUpdate(ctx, pod, opts, canonicalID); err != nil {
+			return nil, err
+		}
+	case u.clearsRoute():
+		u.keep = ""
+	}
+	return u, nil
+}
+
+// clearsRoute reports whether the update removes the web-proxy route.
+func (u *webProxyUpdate) clearsRoute() bool {
+	return u.opts.ReplaceWebProxy && u.opts.WebProxyPort == 0
+}
+
+// commit writes the route and alias to the pod in a single merge patch and
+// releases the workspace's claims other than the one it now holds. It
+// returns the route's port and the alias in effect afterwards (0 and "" when
+// cleared). On failure the claim this update took is given back.
+func (u *webProxyUpdate) commit(ctx context.Context) (int, string, error) {
 	annotations := map[string]interface{}{}
 	labels := map[string]interface{}{}
-	port := 0
 
-	if opts.WebProxyPort > 0 {
-		port = opts.WebProxyPort
-		roles := opts.WebProxyRoles
-		if roles == nil {
-			roles = []string{}
+	port, _ := strconv.Atoi(u.pod.Annotations[helm.AnnotationWebProxyPort])
+	if u.opts.ReplaceWebProxy {
+		port = u.opts.WebProxyPort
+		if port > 0 {
+			roles := u.opts.WebProxyRoles
+			if roles == nil {
+				roles = []string{}
+			}
+			rolesJSON, err := json.Marshal(roles)
+			if err != nil {
+				u.abort(ctx)
+				return 0, "", fmt.Errorf("failed to encode web-proxy roles annotation for %s: %w", u.pod.Name, err)
+			}
+			annotations[helm.AnnotationWebProxyPort] = strconv.Itoa(port)
+			annotations[helm.AnnotationWebProxyRoles] = string(rolesJSON)
+			labels[helm.LabelWebProxy] = "true"
+		} else {
+			// nil clears the key via merge patch.
+			annotations[helm.AnnotationWebProxyPort] = nil
+			annotations[helm.AnnotationWebProxyRoles] = nil
+			labels[helm.LabelWebProxy] = nil
 		}
-		rolesJSON, err := json.Marshal(roles)
-		if err != nil {
-			return 0, fmt.Errorf("failed to encode web-proxy roles annotation for %s: %w", w.Name, err)
+	}
+
+	alias := u.pod.Labels[helm.LabelWebProxyAlias]
+	// An alias without a route is meaningless, so clearing the route clears
+	// the alias too. Any change to the alias also drops the message about an
+	// unapplied blueprint alias.
+	if u.opts.ChangeWebProxyAlias || u.clearsRoute() {
+		alias = ""
+		if u.opts.ChangeWebProxyAlias {
+			alias = u.opts.WebProxyAlias
 		}
-		annotations[helm.AnnotationWebProxyPort] = fmt.Sprintf("%d", port)
-		annotations[helm.AnnotationWebProxyRoles] = string(rolesJSON)
-		labels[helm.LabelWebProxy] = "true"
-	} else {
-		// nil clears the key via merge patch.
-		annotations[helm.AnnotationWebProxyPort] = nil
-		annotations[helm.AnnotationWebProxyRoles] = nil
-		labels[helm.LabelWebProxy] = nil
+		if alias != "" {
+			labels[helm.LabelWebProxyAlias] = alias
+		} else {
+			labels[helm.LabelWebProxyAlias] = nil
+		}
+		annotations[helm.AnnotationWebProxyAliasMessage] = nil
 	}
 
 	podPatch, err := json.Marshal(map[string]interface{}{
@@ -178,19 +285,35 @@ func (w *Workspace) reapplyWebProxy(ctx context.Context, opts UpdateOptions) (in
 		},
 	})
 	if err != nil {
-		return 0, fmt.Errorf("failed to build web-proxy metadata patch for %s: %w", w.Name, err)
+		u.abort(ctx)
+		return 0, "", fmt.Errorf("failed to build web-proxy metadata patch for %s: %w", u.pod.Name, err)
 	}
-	if _, err := w.client.KubeClient().CoreV1().Pods(ns).Patch(ctx, w.Name, types.MergePatchType,
-		podPatch, metav1.PatchOptions{}); err != nil {
+	if _, err := u.pods.Patch(ctx, u.pod.Name, types.MergePatchType, podPatch, metav1.PatchOptions{}); err != nil {
+		u.abort(ctx)
 		if k8serrors.IsNotFound(err) {
-			return 0, fmt.Errorf("%w: %s", models.ErrWorkspaceNotFound, w.Name)
+			return 0, "", fmt.Errorf("%w: %s", models.ErrWorkspaceNotFound, u.pod.Name)
 		}
-		return 0, fmt.Errorf("failed to update web-proxy metadata on workspace pod %s: %w", w.Name, err)
+		return 0, "", fmt.Errorf("failed to update web-proxy metadata on workspace pod %s: %w", u.pod.Name, err)
 	}
 
-	w.log.Info().Str("workspace", w.Name).Int("port", port).Int("roles", len(opts.WebProxyRoles)).
-		Msg("re-applied workspace web-proxy route")
-	return port, nil
+	if u.keep != u.prev {
+		u.release(ctx, u.keep)
+	}
+	return port, alias, nil
+}
+
+// abort gives back a claim prepareWebProxyUpdate took, keeping the one for
+// the alias the pod still carries.
+func (u *webProxyUpdate) abort(ctx context.Context) {
+	if u.keep != u.prev {
+		u.release(ctx, u.prev)
+	}
+}
+
+func (u *webProxyUpdate) release(ctx context.Context, keep string) {
+	if err := u.claims.release(ctx, u.canonicalID, keep); err != nil && u.claims.log != nil {
+		u.claims.log.Error().Err(err).Msgf("Failed to release web-proxy alias claims of workspace %s", u.pod.Name)
+	}
 }
 
 // resizeMainContainer changes the CPU and/or memory limits of the workspace's

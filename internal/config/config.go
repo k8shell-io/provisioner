@@ -137,10 +137,13 @@ type KubeClientConfig struct {
 
 // Default Kubernetes client-side rate limits, applied when kubeClient.qps or
 // kubeClient.burst is left unset (zero) in the config file. These are
-// hardcoded starting points, not tuned for any particular deployment size.
+// hardcoded starting points, not tuned for any particular deployment size —
+// raised from 50/100 after tracing ~24-46ms client-side throttling waits
+// (see rest.Config.QPS/Burst) on Helm release-list cache misses under
+// bursty request load in workspaces-staging.
 const (
-	DefaultKubeClientQPS   float32 = 50
-	DefaultKubeClientBurst int     = 100
+	DefaultKubeClientQPS   float32 = 150
+	DefaultKubeClientBurst int     = 300
 )
 
 // NewConfig loads and fully validates the server configuration from configFile.

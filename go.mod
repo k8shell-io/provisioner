@@ -9,7 +9,7 @@ require (
 	github.com/go-playground/validator/v10 v10.28.0
 	github.com/google/uuid v1.6.0
 	github.com/jackc/pgx/v5 v5.7.6
-	github.com/k8shell-io/common v0.61.3
+	github.com/k8shell-io/common v0.62.2
 	github.com/k8shell-io/yaml-cel v0.2.8
 	golang.org/x/sync v0.17.0
 	google.golang.org/grpc v1.76.0
