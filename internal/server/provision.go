@@ -199,6 +199,9 @@ func (p *ProvisionerService) ProvisionWorkspaceStream(
 		// Secret.
 	}
 
+	p.storeThreatDetection(ctx, workspace, provisionMode, workspaceNamespace,
+		workloadName, workloadKind, parsedUserStr.Namespace(p.server.helm.TargetNamespace()))
+
 	if p.server.provisionJobsKV != nil {
 		job = NewProvisionJob(workspace.Name, identity.Username(), p.server.provisionJobsKV, p.log)
 		workspace.SetJobId(job.ID)

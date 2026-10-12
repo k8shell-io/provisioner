@@ -731,6 +731,21 @@ func (w *Workspace) Username() string {
 	return w.user.Username
 }
 
+// Blueprint returns the blueprint the workspace is provisioned from, after any
+// policy patches were applied.
+func (w *Workspace) Blueprint() *models.Blueprint {
+	return w.blueprint
+}
+
+// UserSource returns the identity source of the workspace's owning user, or ""
+// if the workspace was constructed without a user lookup.
+func (w *Workspace) UserSource() string {
+	if w.user == nil {
+		return ""
+	}
+	return w.user.Source
+}
+
 // SetBlueprintChain stores the inheritance chain for this workspace's blueprint.
 func (w *Workspace) SetBlueprintChain(chain []string) {
 	w.blueprintChain = chain

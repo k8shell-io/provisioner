@@ -46,6 +46,9 @@ type Server struct {
 	bpManager       *blueprint.BlueprintManager
 	helm            *helm.Client
 	provisionJobsKV *natsc.JetStreamKV
+	// threatDetectionKV is nil when NATS is disabled or worktrace has not
+	// created the bucket; threat:detect results are then not stored.
+	threatDetectionKV *natsc.JetStreamKV
 	DB              *db.DB
 }
 
@@ -176,6 +179,13 @@ func NewServer(configFile string, appVersion string, commit string) (*Server, er
 		})
 		if err != nil {
 			return nil, fmt.Errorf("create provision jobs kv: %w", err)
+		}
+
+		// Only worktrace creates this bucket; a missing one means it is not installed.
+		server.threatDetectionKV, err = server.nats.OpenKV(natsc.THREAT_DETECTION_BUCKET)
+		if err != nil {
+			server.log.Info().Err(err).Msg("Threat detection bucket not available; detect policy results will not be stored")
+			server.threatDetectionKV = nil
 		}
 	}
 
