@@ -28,11 +28,14 @@ import (
 
 // PAT_SCOPES defines the scopes for the Personal Access Token created for the workspace.
 var PAT_SCOPES = []string{
-	"session:list:self",            // list sessions for workspace user
-	"user:read:profile:self",       // read user profile information (username, fullname, email
-	"user:read:credentials:*:self", // use credential helpers (git, registry, kubernetes)
-	"user:write:password:self",     // set password for workspace user
-	"workspace:delete:self",        // allow the workspace to delete itself
+	"session:list:self",                     // list sessions for workspace user
+	"user:read:profile:self",                // read user profile information (username, fullname, email
+	"user:read:credentials:registry:self",   // use registry credential helper
+	"user:read:credentials:kubernetes:self", // use kubernetes credential helper
+	"git:fetch",                             // clone/fetch/pull via the api server git proxy
+	"git:push",                              // push via the api server git proxy
+	"user:write:password:self",              // set password for workspace user
+	"workspace:delete:self",                 // allow the workspace to delete itself
 }
 
 // workspaceEventStream is satisfied by any generated server-streaming handle
@@ -199,6 +202,8 @@ func (p *ProvisionerService) ProvisionWorkspaceStream(
 		// Secret.
 	}
 
+	// Record the detection decision before the pod is created so its first
+	// events already get it.
 	p.storeThreatDetection(ctx, workspace, provisionMode, workspaceNamespace,
 		workloadName, workloadKind, parsedUserStr.Namespace(p.server.helm.TargetNamespace()))
 
@@ -364,6 +369,7 @@ func (p *ProvisionerService) runWorkspaceStream(
 
 		case runErr := <-errorChan:
 			if runErr != nil {
+				p.log.Error().Err(runErr).Msgf("Workspace %s operation failed", workspaceName)
 				emitEvent(&provisionerv1.ProvisionEvent{
 					Type:       string(models.WorkspaceStreamEventTypeStatus),
 					Timestamp:  time.Now().Format("2006-01-02 15:04:05"),
