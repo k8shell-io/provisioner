@@ -1012,6 +1012,55 @@ func (w *Workspace) Template(ctx context.Context) (string, error) {
 	return out, nil
 }
 
+// RenderedResources renders the workspace chart as Provision would, or as
+// Inject would when injectNamespace is set, and returns its documents as
+// helm.ManifestDocuments does. The workspace itself is not modified.
+func (w *Workspace) RenderedResources(ctx context.Context, injectNamespace string) (map[string]map[string]any, error) {
+	if injectNamespace == "" {
+		manifest, err := w.Template(ctx)
+		if err != nil {
+			return nil, err
+		}
+		return helm.ManifestDocuments(manifest)
+	}
+
+	bp, err := sanitizeBlueprintForInjection(w.blueprint)
+	if err != nil {
+		return nil, fmt.Errorf("failed to sanitize blueprint for injection: %w", err)
+	}
+	injected := *w
+	injected.blueprint = bp
+	values, err := injected.Values()
+	if err != nil {
+		return nil, err
+	}
+	values["__targetnamespace__"] = injectNamespace
+
+	canonicalId := w.canonicalId
+	if w.userStr != nil {
+		canonicalId = w.userStr.CanonicalId()
+	}
+	manifest, err := w.client.Template(ctx, helm.WORKSPACE_CHART_NAME, helm.InstallOptions{
+		ReleaseName: canonicalId,
+		Values:      values,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return helm.ManifestDocuments(manifest)
+}
+
+// ReleasedResources returns the documents of the workspace's installed Helm
+// release, as helm.ManifestDocuments does. A restart recreates the pod from
+// this manifest, so it is what will actually run.
+func (w *Workspace) ReleasedResources(_ context.Context) (map[string]map[string]any, error) {
+	rel, err := w.client.GetRelease(w.Name)
+	if err != nil {
+		return nil, err
+	}
+	return helm.ManifestDocuments(rel.Manifest)
+}
+
 // TemplateHash returns the SHA-256 hex digest of the rendered workspace
 // manifest, used to detect configuration drift between Helm releases.
 func (w *Workspace) TemplateHash(ctx context.Context) (string, error) {

@@ -14,7 +14,6 @@ import (
 	authzv1 "github.com/k8shell-io/common/pkg/api/gen/go/authz/v1"
 	identityv1 "github.com/k8shell-io/common/pkg/api/gen/go/identity/v1"
 	"github.com/k8shell-io/common/pkg/authz"
-	"github.com/k8shell-io/common/pkg/models"
 	natsc "github.com/k8shell-io/common/pkg/nats"
 
 	ws "github.com/k8shell-io/provisioner/internal/workspace"
@@ -25,8 +24,10 @@ import (
 type threatDetectParams struct {
 	workspace string
 	owner     string
-	// blueprint is the blueprint being provisioned, after policy patches.
-	blueprint *models.Blueprint
+	blueprint string
+	// resources are the rendered chart documents keyed "Kind/name", without
+	// Secrets and ConfigMap data; nil when they could not be rendered.
+	resources map[string]map[string]any
 	mode      authz.WorkspaceProvisionMode
 	// namespace is the target namespace for standalone workspaces and the
 	// workload's namespace for injected ones.
@@ -65,9 +66,11 @@ func (p *ProvisionerService) threatDetection() *natsc.JetStreamKV {
 // storeThreatDetection evaluates the threat:detect policy for the workspace
 // being (re)provisioned and stores the result as the policy part of its entry
 // in the threat detection bucket. The policy is evaluated for the workspace
-// owner with the patched blueprint, so it also works for restarts that no
-// userstr drives. The policy only selects which attack categories worktrace
-// watches, so every failure is logged and otherwise ignored: provisioning
+// owner with the chart documents returned by resources (what will actually be
+// created), so it also works for restarts that no userstr drives. If they
+// cannot be rendered, the policy is evaluated without them. The policy only
+// selects which attack categories worktrace watches, so every failure is
+// logged and otherwise ignored: provisioning
 // must not depend on it, and the existing entry is left untouched. It is a
 // no-op when authz or the bucket is not available.
 func (p *ProvisionerService) storeThreatDetection(
@@ -75,6 +78,7 @@ func (p *ProvisionerService) storeThreatDetection(
 	workspace *ws.Workspace,
 	mode authz.WorkspaceProvisionMode,
 	injectNamespace, workloadName, workloadKind, standaloneNamespace string,
+	resources func(context.Context) (map[string]map[string]any, error),
 ) {
 	if p.server.Authz == nil {
 		return
@@ -88,15 +92,22 @@ func (p *ProvisionerService) storeThreatDetection(
 	params := threatDetectParams{
 		workspace: workspace.Name,
 		owner:     owner,
-		blueprint: workspace.Blueprint(),
 		mode:      mode,
 		namespace: standaloneNamespace,
+	}
+	if bp := workspace.Blueprint(); bp != nil {
+		params.blueprint = bp.Name
 	}
 	if mode == authz.WorkspaceProvisionModeInject {
 		params.namespace = injectNamespace
 		params.workloadName = workloadName
 		params.workloadKind = workloadKind
 	}
+	rendered, err := resources(ctx)
+	if err != nil {
+		p.log.Warn().Err(err).Msgf("threat:detect: failed to render resources for workspace %s", workspace.Name)
+	}
+	params.resources = rendered
 
 	tokenResp, err := p.server.Identity.IssueUserToken(ctx, &identityv1.IssueUserTokenRequest{
 		Username: owner,
@@ -127,14 +138,13 @@ func (p *ProvisionerService) storeThreatDetection(
 func evaluateThreatDetect(ctx context.Context, client authzv1.AuthzServiceClient, token string,
 	params threatDetectParams) (*authz.PolicyResult, error) {
 
-	builder := authz.NewThreatDetectEvalRequest(params.workspace).
+	req, err := authz.NewThreatDetectEvalRequest(params.workspace).
 		WithOwner(params.owner).
 		WithMode(params.mode, params.namespace).
-		WithWorkload(params.workloadName, params.workloadKind)
-	if params.blueprint != nil {
-		builder = builder.WithBlueprintName(params.blueprint.Name).WithBlueprint(params.blueprint)
-	}
-	req, err := builder.Build()
+		WithWorkload(params.workloadName, params.workloadKind).
+		WithBlueprintName(params.blueprint).
+		WithResources(params.resources).
+		Build()
 	if err != nil {
 		return nil, fmt.Errorf("build threat:detect request: %w", err)
 	}

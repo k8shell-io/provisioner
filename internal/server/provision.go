@@ -32,6 +32,7 @@ var PAT_SCOPES = []string{
 	"user:read:profile:self",                // read user profile information (username, fullname, email
 	"user:read:credentials:registry:self",   // use registry credential helper
 	"user:read:credentials:kubernetes:self", // use kubernetes credential helper
+	"user:read:credentials:git:self",        // use git credential helper
 	"git:fetch",                             // clone/fetch/pull via the api server git proxy
 	"git:push",                              // push via the api server git proxy
 	"user:write:password:self",              // set password for workspace user
@@ -205,7 +206,13 @@ func (p *ProvisionerService) ProvisionWorkspaceStream(
 	// Record the detection decision before the pod is created so its first
 	// events already get it.
 	p.storeThreatDetection(ctx, workspace, provisionMode, workspaceNamespace,
-		workloadName, workloadKind, parsedUserStr.Namespace(p.server.helm.TargetNamespace()))
+		workloadName, workloadKind, parsedUserStr.Namespace(p.server.helm.TargetNamespace()),
+		func(ctx context.Context) (map[string]map[string]any, error) {
+			if injectMode {
+				return workspace.RenderedResources(ctx, workspaceNamespace)
+			}
+			return workspace.RenderedResources(ctx, "")
+		})
 
 	if p.server.provisionJobsKV != nil {
 		job = NewProvisionJob(workspace.Name, identity.Username(), p.server.provisionJobsKV, p.log)

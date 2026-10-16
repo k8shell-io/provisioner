@@ -436,7 +436,7 @@ func (p *ProvisionerService) StartWorkspaceStream(
 
 	// Refresh the detection decision before the pod is created.
 	p.storeThreatDetection(ctx, workspace, authz.WorkspaceProvisionModeStandalone, "", "", "",
-		p.server.helm.TargetNamespace())
+		p.server.helm.TargetNamespace(), workspace.ReleasedResources)
 
 	var job *ProvisionJobServer
 	if p.server.provisionJobsKV != nil {

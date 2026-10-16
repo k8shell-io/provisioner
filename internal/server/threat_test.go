@@ -13,7 +13,6 @@ import (
 
 	authzv1 "github.com/k8shell-io/common/pkg/api/gen/go/authz/v1"
 	"github.com/k8shell-io/common/pkg/authz"
-	"github.com/k8shell-io/common/pkg/models"
 	natsc "github.com/k8shell-io/common/pkg/nats"
 )
 
@@ -78,8 +77,9 @@ func TestEvaluateThreatDetect(t *testing.T) {
 	t.Run("standalone", func(t *testing.T) {
 		f := &fakeAuthz{resp: &authzv1.EvaluateResponse{Obligations: map[string]string{"detect": "all"}}}
 		res, err := evaluateThreatDetect(context.Background(), f, "tok", threatDetectParams{
-			workspace: "ws-1", owner: "alice", blueprint: &models.Blueprint{Name: "bp"},
-			mode: authz.WorkspaceProvisionModeStandalone, namespace: "k8shell",
+			workspace: "ws-1", owner: "alice", blueprint: "bp",
+			resources: map[string]map[string]any{"Pod/ws-1": {"kind": "Pod"}},
+			mode:      authz.WorkspaceProvisionModeStandalone, namespace: "k8shell",
 		})
 		if err != nil {
 			t.Fatal(err)
@@ -92,8 +92,11 @@ func TestEvaluateThreatDetect(t *testing.T) {
 			f.req.Context["mode"] != "standalone" || f.req.Context["namespace"] != "k8shell" {
 			t.Fatalf("unexpected request: %+v", f.req)
 		}
-		if f.req.Resource.Attributes["blueprint"] != "bp" || f.req.Context["blueprint"] == "" {
-			t.Fatalf("blueprint not sent: attrs=%v context=%v", f.req.Resource.Attributes, f.req.Context)
+		if f.req.Resource.Attributes["blueprint"] != "bp" {
+			t.Fatalf("blueprint name not sent: attrs=%v", f.req.Resource.Attributes)
+		}
+		if f.req.Context["resources"] != `{"Pod/ws-1":{"kind":"Pod"}}` {
+			t.Fatalf("resources not sent: context=%v", f.req.Context)
 		}
 	})
 
@@ -111,8 +114,8 @@ func TestEvaluateThreatDetect(t *testing.T) {
 			c["workload_name"] != "web" || c["workload_kind"] != "Deployment" {
 			t.Fatalf("unexpected context: %v", c)
 		}
-		if _, ok := c["blueprint"]; ok {
-			t.Fatalf("blueprint sent without one: %v", c)
+		if _, ok := c["resources"]; ok {
+			t.Fatalf("resources sent without any: %v", c)
 		}
 	})
 
