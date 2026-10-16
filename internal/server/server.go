@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"sync"
 	"syscall"
 
 	"github.com/k8shell-io/common/pkg/api/client/identity"
@@ -46,7 +47,11 @@ type Server struct {
 	bpManager       *blueprint.BlueprintManager
 	helm            *helm.Client
 	provisionJobsKV *natsc.JetStreamKV
-	DB              *db.DB
+	// threatDetectionKV is the worktrace-owned bucket holding per-workspace
+	// threat:detect decisions; opened lazily by threatDetection.
+	threatDetectionKV   *natsc.JetStreamKV
+	threatDetectionKVMu sync.Mutex
+	DB                  *db.DB
 }
 
 // ProvisionerService implements the gRPC service for workspace provisioning

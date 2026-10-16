@@ -184,7 +184,12 @@ spec:
       #     sleep 86400
       #   done
 
+      # Run under catatonit (shipped with podman) as PID 1. podman itself does not
+      # reap orphaned conmon/runtime children reparented to PID 1, so without an
+      # init every `podman run`/`exec` leaves zombies behind on the node.
       command:
+      - /usr/libexec/podman/catatonit
+      - --
       - podman
       args:
       - system

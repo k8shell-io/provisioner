@@ -9,6 +9,7 @@ COMMON_VERSION ?= latest
 
 .PHONY: all init bump-common install-test-deps install-gh test-static test build test-binary test-self vendor image image-debug image-release reload dlv debug-setup coverage clean help
 
+
 # Default target
 all: build
 

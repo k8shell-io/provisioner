@@ -10,6 +10,7 @@ import (
 	"time"
 
 	provisionerv1 "github.com/k8shell-io/common/pkg/api/gen/go/provisioner/v1"
+	"github.com/k8shell-io/common/pkg/authz"
 	"github.com/k8shell-io/common/pkg/models"
 	"github.com/k8shell-io/provisioner/internal/helm"
 	ws "github.com/k8shell-io/provisioner/internal/workspace"
@@ -74,6 +75,7 @@ func (p *ProvisionerService) DeleteWorkspace(ctx context.Context,
 				if ejectErr := workspace.Eject(bgCtx, ejectOpts); ejectErr != nil {
 					p.log.Error().Err(ejectErr).Msgf("Failed to eject workspace %s", name)
 				} else {
+					p.clearThreatDetection(canonicalId)
 					p.log.Info().Msgf("Successfully ejected workspace %s", name)
 				}
 			}()
@@ -87,6 +89,7 @@ func (p *ProvisionerService) DeleteWorkspace(ctx context.Context,
 		if err := workspace.Eject(ctx, ejectOpts); err != nil {
 			return nil, status.Errorf(codes.Internal, "failed to eject workspace %s: %v", name, err)
 		}
+		p.clearThreatDetection(canonicalId)
 		p.log.Info().Msgf("Successfully ejected workspace %s", name)
 		return &provisionerv1.DeleteWorkspaceResponse{
 			Message: fmt.Sprintf("Successfully ejected workspace %s", name),
@@ -137,6 +140,7 @@ func (p *ProvisionerService) DeleteWorkspace(ctx context.Context,
 			if err != nil {
 				p.log.Error().Err(err).Msgf("Failed to delete workspace %s", name)
 			} else {
+				p.clearThreatDetection(w.Name)
 				p.log.Info().Msgf("Successfully deleted workspace %s", name)
 			}
 		}()
@@ -159,6 +163,7 @@ func (p *ProvisionerService) DeleteWorkspace(ctx context.Context,
 		return nil, status.Errorf(codes.Internal, "Failed to delete workspace %s: %v", name, err)
 	}
 
+	p.clearThreatDetection(w.Name)
 	p.log.Info().Msgf("Successfully deleted workspace %s", name)
 	return &provisionerv1.DeleteWorkspaceResponse{
 		Message: fmt.Sprintf("Successfully deleted workspace %s", name),
@@ -276,6 +281,11 @@ func (p *ProvisionerService) deleteUserWorkspaces(ctx context.Context, username 
 			p.log.Error().Err(err).Msgf("Failed to delete workspace %s for user %s", name, username)
 			continue
 		}
+		detectionKey := pod.Labels[helm.LabelCanonicalId]
+		if detectionKey == "" {
+			detectionKey = name
+		}
+		p.clearThreatDetection(detectionKey)
 		p.log.Info().Msgf("Successfully deleted workspace %s for user %s", name, username)
 	}
 
@@ -424,6 +434,10 @@ func (p *ProvisionerService) StartWorkspaceStream(
 		timeout = 20
 	}
 
+	// Refresh the detection decision before the pod is created.
+	p.storeThreatDetection(ctx, workspace, authz.WorkspaceProvisionModeStandalone, "", "", "",
+		p.server.helm.TargetNamespace(), workspace.ReleasedResources)
+
 	var job *ProvisionJobServer
 	if p.server.provisionJobsKV != nil {
 		if workspace.JobId != "" {
@@ -510,6 +524,8 @@ func (p *ProvisionerService) EjectWorkspace(
 	}); err != nil {
 		return nil, status.Errorf(codes.Internal, "failed to eject workspace %s: %v", workspaceCanonicalId, err)
 	}
+
+	p.clearThreatDetection(workspaceCanonicalId)
 
 	return &provisionerv1.EjectWorkspaceResponse{
 		Workspace: workspaceCanonicalId,
