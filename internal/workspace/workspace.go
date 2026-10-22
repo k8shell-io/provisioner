@@ -61,6 +61,7 @@ type Workspace struct {
 	log                *zerolog.Logger
 	blueprint          *models.Blueprint
 	blueprintChain     []string // ordered inheritance chain from root ancestor to this blueprint
+	blueprintRevision  string   // content revision of the resolved blueprint
 	appliedObligations map[string]string
 	user               *models.User
 	userStr            *userstr.CanonicalUserStr
@@ -746,6 +747,11 @@ func (w *Workspace) UserSource() string {
 	return w.user.Source
 }
 
+// SetBlueprintRevision stores the content revision of this workspace's blueprint.
+func (w *Workspace) SetBlueprintRevision(revision string) {
+	w.blueprintRevision = revision
+}
+
 // SetBlueprintChain stores the inheritance chain for this workspace's blueprint.
 func (w *Workspace) SetBlueprintChain(chain []string) {
 	w.blueprintChain = chain
@@ -912,6 +918,7 @@ func (w *Workspace) Values() (map[string]interface{}, error) {
 	values["__user__"] = userValues
 	values["__username__"] = w.user.Username
 	values["__blueprint__"] = w.blueprint.Name
+	values["__blueprintrevision__"] = w.blueprintRevision
 	values["__organization__"] = w.user.Organization
 	values["__networkpolicy__"] = w.blueprint.Network.NetworkPolicyClass
 	values["__registry__"] = w.client.RegistryValues()
@@ -1356,6 +1363,7 @@ func workspaceDetailsCore(pod *corev1.Pod) *models.WorkspaceDetails {
 		Namespace:    pod.Namespace,
 
 		NetworkPolicyClass: pod.Labels[helm.LabelNetworkPolicy],
+		BlueprintRevision:  pod.Labels[helm.LabelBlueprintRevision],
 		AllowEgressToCIDRs: egressCIDRs,
 		AllowEgressToPods:  egressPods,
 		WebProxyPort:       webProxyPort,

@@ -21,6 +21,10 @@ var ErrBlueprintExists = errors.New("org blueprint already exists")
 // DeleteBlueprint when no blueprint with the given (org, name) exists.
 var ErrBlueprintNotFound = errors.New("org blueprint not found")
 
+// ErrBlueprintConflict is returned by UpdateBlueprint when the stored
+// blueprint no longer matches the content the caller based its update on.
+var ErrBlueprintConflict = errors.New("org blueprint was modified concurrently")
+
 // ErrOrgNotFound is returned by CreateBlueprint when org does not exist in
 // identity.organizations (see the FK on org_blueprints.org).
 var ErrOrgNotFound = errors.New("organization not found")
@@ -53,18 +57,30 @@ func (d *DB) CreateBlueprint(org, name, description string, yaml []byte, isTempl
 // UpdateBlueprint replaces an existing org blueprint's yaml content, its
 // is_template flag, and optionally its description. name and org together
 // identify the blueprint and are immutable; pass a nil description to leave
-// it unchanged. Returns ErrBlueprintNotFound when no blueprint with that
-// (org, name) exists.
-func (d *DB) UpdateBlueprint(org, name string, description *string, yaml []byte, isTemplate bool) (*models.OrgBlueprint, error) {
+// it unchanged. A non-nil expectedYAML makes the update a compare-and-swap:
+// it is applied only if the stored yaml still equals expectedYAML, and
+// ErrBlueprintConflict is returned otherwise. Returns ErrBlueprintNotFound
+// when no blueprint with that (org, name) exists.
+func (d *DB) UpdateBlueprint(org, name string, description *string, yaml []byte, isTemplate bool,
+	expectedYAML []byte) (*models.OrgBlueprint, error) {
 	bp := &models.OrgBlueprint{Org: org, Name: name}
 	err := d.Pool.QueryRow(context.Background(),
 		`UPDATE provisioner.org_blueprints
 		 SET description = COALESCE($3, description), yaml = $4, is_template = $5, updated_at = NOW()
-		 WHERE org=$1 AND name=$2
+		 WHERE org=$1 AND name=$2 AND ($6::bytea IS NULL OR yaml = $6::bytea)
 		 RETURNING COALESCE(description, ''), yaml, is_template, created_at, updated_at`,
-		org, name, description, yaml, isTemplate,
+		org, name, description, yaml, isTemplate, expectedYAML,
 	).Scan(&bp.Description, &bp.YAML, &bp.IsTemplate, &bp.CreatedAt, &bp.UpdatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
+		if expectedYAML != nil {
+			existing, lerr := d.LookupBlueprint(org, name)
+			if lerr != nil {
+				return nil, fmt.Errorf("update org blueprint: %w", lerr)
+			}
+			if existing != nil {
+				return nil, fmt.Errorf("%w: org %q name %q", ErrBlueprintConflict, org, name)
+			}
+		}
 		return nil, fmt.Errorf("%w: org %q name %q", ErrBlueprintNotFound, org, name)
 	}
 	if err != nil {

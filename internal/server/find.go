@@ -34,6 +34,7 @@ func (p *ProvisionerService) FindWorkspace(ctx context.Context,
 	}
 
 	p.clearExpiredJobId(s)
+	ws.MarkBlueprintOutdated([]*models.WorkspaceDetails{s}, p.server.bpManager.GetBlueprintRevision)
 	return gapi.WorkspaceDetailsToProto(s), nil
 }
 
@@ -54,6 +55,7 @@ func (p *ProvisionerService) FindWorkspaceByAlias(ctx context.Context,
 	}
 
 	p.clearExpiredJobId(s)
+	ws.MarkBlueprintOutdated([]*models.WorkspaceDetails{s}, p.server.bpManager.GetBlueprintRevision)
 	return gapi.WorkspaceDetailsToProto(s), nil
 }
 
@@ -100,6 +102,8 @@ func (p *ProvisionerService) GetWorkspaces(
 			}
 		}
 	}
+
+	ws.MarkBlueprintOutdated(workspaces.Workspaces, p.server.bpManager.GetBlueprintRevision)
 
 	var protoWorkspaces []*commonv1.WorkspaceDetails
 	for _, w := range workspaces.Workspaces {
@@ -160,6 +164,8 @@ func (p *ProvisionerService) GetWorkspacesByUserStr(
 		return nil, status.Errorf(codes.Internal, "failed to list workspaces: %v", err)
 	}
 
+	ws.MarkBlueprintOutdated(workspaces.Workspaces, p.server.bpManager.GetBlueprintRevision)
+
 	var protoWorkspaces []*commonv1.WorkspaceDetails
 	for _, w := range workspaces.Workspaces {
 		protoWorkspaces = append(protoWorkspaces, gapi.WorkspaceDetailsToProto(w))
@@ -183,7 +189,8 @@ func (p *ProvisionerService) QueryWorkspaces(
 	ctx context.Context,
 	req *provisionerv1.QueryWorkspacesRequest,
 ) (*provisionerv1.GetWorkspacesResponse, error) {
-	workspaces, err := ws.QueryWorkspaces(ctx, p.server.helm, p.server.Identity, p.server.config.InjectNamespaces, req.GetQuery())
+	workspaces, err := ws.QueryWorkspaces(ctx, p.server.helm, p.server.Identity, p.server.config.InjectNamespaces,
+		p.server.bpManager.GetBlueprintRevision, req.GetQuery())
 	if err != nil {
 		if errors.Is(err, models.ErrInvalidParameters) {
 			return nil, status.Errorf(codes.InvalidArgument, "invalid query: %v", err)
@@ -277,6 +284,8 @@ func (p *ProvisionerService) ListInjectWorkloads(ctx context.Context,
 			Blueprint:    w.Blueprint,
 			RepoSource:   w.RepoSource,
 			RepoRevision: w.RepoRevision,
+
+			BlueprintRevision: w.BlueprintRevision,
 		})
 	}
 
@@ -346,7 +355,7 @@ func (p *ProvisionerService) GetBlueprint(_ context.Context,
 	req *provisionerv1.GetBlueprintRequest,
 ) (*provisionerv1.GetBlueprintResponse, error) {
 
-	raw, own, template, err := p.server.bpManager.GetRawBlueprintScoped(req.GetOrg(), req.GetName())
+	raw, own, template, revision, err := p.server.bpManager.GetRawBlueprintScoped(req.GetOrg(), req.GetName())
 	if err != nil {
 		if errors.Is(err, blueprint.ErrBlueprintNotFound) {
 			return nil, status.Errorf(codes.NotFound, "Blueprint %s not found", req.GetName())
@@ -368,6 +377,7 @@ func (p *ProvisionerService) GetBlueprint(_ context.Context,
 		Blueprint:    b,
 		OwnBlueprint: ownB,
 		Template:     template,
+		Revision:     revision,
 	}, nil
 }
 

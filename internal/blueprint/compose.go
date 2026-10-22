@@ -86,6 +86,7 @@ func (bm *BlueprintManager) ComposeRaw(customBlueprint *models.CustomBlueprint, 
 		Name:     blueprintName,
 		Template: "",
 		Node:     mergedNode,
+		Revision: computeRevision(mergedNode),
 	}, nil
 }
 
@@ -112,8 +113,10 @@ func (bm *BlueprintManager) Compose(customBlueprint *models.CustomBlueprint, org
 // ComposeWithScope merges a custom blueprint with its template, evaluates all
 // CEL expressions using scope, decodes the result into a models.Blueprint, and
 // validates it. It is the end-to-end path for provisioning with a custom blueprint.
+// The returned revision is the content revision of the composed (unevaluated)
+// blueprint, see RawBlueprint.Revision.
 func (bm *BlueprintManager) ComposeWithScope(customBlueprint *models.CustomBlueprint,
-	scope *BlueprintScope) (*models.Blueprint, error) {
+	scope *BlueprintScope) (*models.Blueprint, string, error) {
 	var org string
 	if scope.User != nil {
 		org = scope.User.Organization
@@ -121,31 +124,31 @@ func (bm *BlueprintManager) ComposeWithScope(customBlueprint *models.CustomBluep
 	rawBp, err := bm.ComposeRaw(customBlueprint, org)
 	if err != nil {
 		bm.log.Error().Err(err).Msg("Failed to compose blueprint with scope")
-		return nil, err
+		return nil, "", err
 	}
 
 	scope.Metadata.Name = NormalizeDNSLabel(rawBp.Name)
 	var tmpl yamlcel.CELTemplate
 	if err := rawBp.Node.Decode(&tmpl); err != nil {
-		return nil, fmt.Errorf("failed to decode CEL template for %s: %w", rawBp.Name, err)
+		return nil, "", fmt.Errorf("failed to decode CEL template for %s: %w", rawBp.Name, err)
 	}
 
 	mapScope, err := scope.ToMap()
 	mapScope["blueprint"] = rawBp.Name
 	if err != nil {
-		return nil, fmt.Errorf("failed to convert scope to map: %w", err)
+		return nil, "", fmt.Errorf("failed to convert scope to map: %w", err)
 	}
 
 	docBytes, err := tmpl.EvalToBytes(mapScope, map[string]string{})
 	if err != nil {
-		return nil, fmt.Errorf("error evaluating CEL template for %s: %w", rawBp.Name, err)
+		return nil, "", fmt.Errorf("error evaluating CEL template for %s: %w", rawBp.Name, err)
 	}
 
 	var bp models.Blueprint
 	decoder := yaml.NewDecoder(bytes.NewReader(docBytes))
 	decoder.KnownFields(bm.knownFields)
 	if err := decoder.Decode(&bp); err != nil {
-		return nil, fmt.Errorf("%w", err)
+		return nil, "", fmt.Errorf("%w", err)
 	}
 
 	if bp.Name != "" {
@@ -154,10 +157,10 @@ func (bm *BlueprintManager) ComposeWithScope(customBlueprint *models.CustomBluep
 
 	v := bp.Validate()
 	if !v.IsValid() {
-		return nil, fmt.Errorf("blueprint validation failed: %v", v.Errors())
+		return nil, "", fmt.Errorf("blueprint validation failed: %v", v.Errors())
 	}
 
 	bp.Metadata = *scope.Metadata
 
-	return &bp, nil
+	return &bp, rawBp.Revision, nil
 }

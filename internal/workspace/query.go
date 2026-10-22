@@ -90,6 +90,16 @@ var WorkspacesQueryDescriptor = query.NewDescriptor("workspaces").
 		queryv1.Operator_OPERATOR_EQ, queryv1.Operator_OPERATOR_NE,
 		queryv1.Operator_OPERATOR_GT, queryv1.Operator_OPERATOR_GTE,
 		queryv1.Operator_OPERATOR_LT, queryv1.Operator_OPERATOR_LTE).
+	// blueprint_revision is absent on workspaces provisioned before
+	// revisions were recorded, so it supports EXISTS.
+	Field("blueprint_revision", queryv1.FieldType_FIELD_TYPE_STRING,
+		queryv1.Operator_OPERATOR_EQ, queryv1.Operator_OPERATOR_NE, queryv1.Operator_OPERATOR_IN, queryv1.Operator_OPERATOR_EXISTS).
+	// blueprint_outdated is unset when it cannot be determined (see
+	// MarkBlueprintOutdated), so it supports EXISTS. As for every field, EQ
+	// matches only workspaces where it is set while NE also matches those
+	// where it is unset.
+	Field("blueprint_outdated", queryv1.FieldType_FIELD_TYPE_BOOLEAN,
+		queryv1.Operator_OPERATOR_EQ, queryv1.Operator_OPERATOR_NE, queryv1.Operator_OPERATOR_EXISTS).
 	DefaultSort("name", queryv1.SortDir_SORT_DIR_ASC).
 	Build()
 
@@ -125,6 +135,15 @@ var workspaceFieldValues = map[string]func(w *models.WorkspaceDetails) (string, 
 			return "", false
 		}
 		return w.Created.UTC().Format(time.RFC3339), true
+	},
+	"blueprint_revision": func(w *models.WorkspaceDetails) (string, bool) {
+		return w.BlueprintRevision, w.BlueprintRevision != ""
+	},
+	"blueprint_outdated": func(w *models.WorkspaceDetails) (string, bool) {
+		if w.BlueprintOutdated == nil {
+			return "", false
+		}
+		return strconv.FormatBool(*w.BlueprintOutdated), true
 	},
 }
 
@@ -304,7 +323,7 @@ func intersectUsernames(a, b []string) []string {
 // workspace-side equivalent (workspaces carry no role information); it may
 // be nil as long as no caller ever presents a roles obligation.
 func QueryWorkspaces(ctx context.Context, helmClient *helm.Client, identityClient *identity.IdentityClient,
-	injectNamespaces []string, payload *queryv1.Payload) (*GetWorkspacesResult, error) {
+	injectNamespaces []string, currentRevision BlueprintRevisionFunc, payload *queryv1.Payload) (*GetWorkspacesResult, error) {
 	if err := query.Validate(WorkspacesQueryDescriptor, payload); err != nil {
 		return nil, fmt.Errorf("%w: %s", models.ErrInvalidParameters, err)
 	}
@@ -330,6 +349,9 @@ func QueryWorkspaces(ctx context.Context, helmClient *helm.Client, identityClien
 	if err != nil {
 		return nil, err
 	}
+
+	// Before filtering, so blueprint_outdated can be queried and sorted on.
+	MarkBlueprintOutdated(result.Workspaces, currentRevision)
 
 	filtered := make([]*models.WorkspaceDetails, 0, len(result.Workspaces))
 	for _, w := range result.Workspaces {
@@ -476,6 +498,8 @@ func matchesCondition(w *models.WorkspaceDetails, c *queryv1.Condition) (bool, e
 			switch {
 			case typ == queryv1.FieldType_FIELD_TYPE_DATETIME:
 				matched, err = matchesDatetime(value, queryv1.Operator_OPERATOR_EQ, c.GetValues()[0])
+			case typ == queryv1.FieldType_FIELD_TYPE_BOOLEAN:
+				matched, err = matchesBoolean(value, c.GetValues()[0])
 			case quantity:
 				matched, err = matchesQuantity(value, queryv1.Operator_OPERATOR_EQ, c.GetValues()[0])
 			default:
@@ -514,6 +538,20 @@ func matchesCondition(w *models.WorkspaceDetails, c *queryv1.Condition) (bool, e
 	default:
 		return false, fmt.Errorf("query: unsupported operator %s", c.GetOp())
 	}
+}
+
+// matchesBoolean compares a stored boolean field value with a condition
+// value, accepting any spelling strconv.ParseBool does (e.g. "true", "1").
+func matchesBoolean(fieldValue, raw string) (bool, error) {
+	fv, err := strconv.ParseBool(fieldValue)
+	if err != nil {
+		return false, fmt.Errorf("invalid stored boolean %q: %w", fieldValue, err)
+	}
+	cv, err := strconv.ParseBool(raw)
+	if err != nil {
+		return false, fmt.Errorf("invalid boolean %q: %w", raw, err)
+	}
+	return fv == cv, nil
 }
 
 // matchesQuantity compares two Kubernetes resource.Quantity strings (e.g.

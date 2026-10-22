@@ -416,6 +416,9 @@ func (p *ProvisionerService) prepareWorkspaceWithUserStr(ctx context.Context,
 
 	var blueprintObj *models.Blueprint
 	var resolvedBpName string
+	// bpRevision is set when the revision cannot be looked up by resolvedBpName,
+	// i.e. for a custom blueprint composed from a repo k8shell file.
+	var bpRevision string
 	switch {
 	case identity.BlueprintKind() == userstr.BlueprintKindCustom:
 		// A repository without a k8shell file comes back as an empty blueprint and
@@ -517,7 +520,7 @@ func (p *ProvisionerService) prepareWorkspaceWithUserStr(ctx context.Context,
 			return nil, convertToGRPCError(errx)
 		}
 
-		blueprintObj, err = p.server.bpManager.ComposeWithScope(parsedCustomBlueprint, scope)
+		blueprintObj, bpRevision, err = p.server.bpManager.ComposeWithScope(parsedCustomBlueprint, scope)
 		if err != nil {
 			return nil, status.Errorf(codes.InvalidArgument, "Failed to compose blueprint: %v", err)
 		}
@@ -576,6 +579,10 @@ func (p *ProvisionerService) prepareWorkspaceWithUserStr(ctx context.Context,
 		return nil, status.Errorf(codes.Internal, "Failed to create workspace: %v", err)
 	}
 	workspace.SetBlueprintChain(p.server.bpManager.GetBlueprintChain(user.Organization, resolvedBpName))
+	if bpRevision == "" {
+		bpRevision = p.server.bpManager.GetBlueprintRevision(user.Organization, resolvedBpName)
+	}
+	workspace.SetBlueprintRevision(bpRevision)
 	workspace.SetAppliedObligations(obligations)
 	workspace.SetProvisionContext(provisionMode, workloadName, workloadNamespace, workloadKind)
 

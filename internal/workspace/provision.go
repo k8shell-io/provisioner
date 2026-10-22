@@ -229,6 +229,9 @@ func (w *Workspace) doInstallation(ctx context.Context, opts *ProvisionOptions) 
 		helm.LabelBlueprint:            w.blueprint.Name,
 		helm.LabelOrganization:         w.user.Organization,
 	}
+	if w.blueprintRevision != "" {
+		labels[helm.LabelBlueprintRevision] = w.blueprintRevision
+	}
 
 	startTime := time.Now()
 	err = w.client.Install(ctx, helm.WORKSPACE_CHART_NAME, helm.InstallOptions{

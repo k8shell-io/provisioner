@@ -46,6 +46,10 @@ var BlueprintsQueryDescriptor = query.NewDescriptor("blueprints").
 		queryv1.Operator_OPERATOR_EQ, queryv1.Operator_OPERATOR_NE,
 		queryv1.Operator_OPERATOR_GT, queryv1.Operator_OPERATOR_GTE,
 		queryv1.Operator_OPERATOR_LT, queryv1.Operator_OPERATOR_LTE).
+	// revision is empty for an org blueprint that no longer resolves (see
+	// GetBlueprintsSummary), so it supports EXISTS.
+	Field("revision", queryv1.FieldType_FIELD_TYPE_STRING,
+		queryv1.Operator_OPERATOR_EQ, queryv1.Operator_OPERATOR_NE, queryv1.Operator_OPERATOR_IN, queryv1.Operator_OPERATOR_EXISTS).
 	DefaultSort("name", queryv1.SortDir_SORT_DIR_ASC).
 	Build()
 
@@ -74,6 +78,7 @@ var blueprintFieldValues = map[string]func(b *models.BlueprintSummary) (string, 
 		}
 		return b.UpdatedAt.UTC().Format(time.RFC3339), true
 	},
+	"revision": func(b *models.BlueprintSummary) (string, bool) { return b.Revision, b.Revision != "" },
 }
 
 func blueprintFieldType(name string) queryv1.FieldType {

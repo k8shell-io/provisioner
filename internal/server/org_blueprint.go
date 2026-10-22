@@ -9,6 +9,7 @@ import (
 
 	provisionerv1 "github.com/k8shell-io/common/pkg/api/gen/go/provisioner/v1"
 	"github.com/k8shell-io/common/pkg/gapi"
+	"github.com/k8shell-io/common/pkg/models"
 	"github.com/k8shell-io/provisioner/internal/blueprint"
 	dbpkg "github.com/k8shell-io/provisioner/internal/db"
 	"google.golang.org/grpc/codes"
@@ -69,7 +70,7 @@ func (p *ProvisionerService) CreateBlueprint(_ context.Context,
 		return nil, status.Errorf(codes.Internal, "blueprint stored but failed to reload blueprint manager: %v", err)
 	}
 
-	return gapi.OrgBlueprintToProto(bp), nil
+	return p.orgBlueprintToProto(bp), nil
 }
 
 // UpdateBlueprint replaces the YAML content of an existing org-scoped
@@ -107,10 +108,37 @@ func (p *ProvisionerService) UpdateBlueprint(_ context.Context,
 		return nil, status.Error(codes.InvalidArgument, "blueprint yaml must set a name")
 	}
 
-	bp, err := p.server.DB.UpdateBlueprint(req.GetOrg(), name, &description, yamlDoc, isTemplate)
+	// With expected_revision set, check the stored row's revision and then
+	// swap only if that row's yaml is still what the check saw, so a
+	// concurrent update in between is caught too.
+	var expectedYAML []byte
+	if expected := req.GetExpectedRevision(); expected != "" {
+		current, err := p.server.DB.GetBlueprint(req.GetOrg(), name)
+		if err != nil {
+			if errors.Is(err, dbpkg.ErrBlueprintNotFound) {
+				return nil, status.Errorf(codes.NotFound, "blueprint '%s' not found for org '%s'", name, req.GetOrg())
+			}
+			return nil, status.Errorf(codes.Internal, "failed to load org blueprint: %v", err)
+		}
+		revision, err := p.server.bpManager.OrgBlueprintRevision(current)
+		if err != nil {
+			return nil, status.Errorf(codes.Internal, "failed to compute current blueprint revision: %v", err)
+		}
+		if revision != expected {
+			return nil, status.Errorf(codes.Aborted,
+				"blueprint '%s' for org '%s' is at revision %s, not %s", name, req.GetOrg(), revision, expected)
+		}
+		expectedYAML = current.YAML
+	}
+
+	bp, err := p.server.DB.UpdateBlueprint(req.GetOrg(), name, &description, yamlDoc, isTemplate, expectedYAML)
 	if err != nil {
-		if errors.Is(err, dbpkg.ErrBlueprintNotFound) {
+		switch {
+		case errors.Is(err, dbpkg.ErrBlueprintNotFound):
 			return nil, status.Errorf(codes.NotFound, "blueprint '%s' not found for org '%s'", name, req.GetOrg())
+		case errors.Is(err, dbpkg.ErrBlueprintConflict):
+			return nil, status.Errorf(codes.Aborted,
+				"blueprint '%s' for org '%s' was modified concurrently", name, req.GetOrg())
 		}
 		return nil, status.Errorf(codes.Internal, "failed to update org blueprint: %v", err)
 	}
@@ -119,7 +147,19 @@ func (p *ProvisionerService) UpdateBlueprint(_ context.Context,
 		return nil, status.Errorf(codes.Internal, "blueprint stored but failed to reload blueprint manager: %v", err)
 	}
 
-	return gapi.OrgBlueprintToProto(bp), nil
+	return p.orgBlueprintToProto(bp), nil
+}
+
+// orgBlueprintToProto converts bp to its protobuf message, filling in its
+// revision. The revision is left empty if bp does not resolve.
+func (p *ProvisionerService) orgBlueprintToProto(bp *models.OrgBlueprint) *provisionerv1.OrgBlueprint {
+	revision, err := p.server.bpManager.OrgBlueprintRevision(bp)
+	if err != nil {
+		p.log.Warn().Err(err).Str("org", bp.Org).Str("blueprint", bp.Name).
+			Msg("Failed to compute org blueprint revision")
+	}
+	bp.Revision = revision
+	return gapi.OrgBlueprintToProto(bp)
 }
 
 // DeleteBlueprint removes an org-scoped blueprint from the database, and

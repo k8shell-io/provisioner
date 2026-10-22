@@ -35,6 +35,9 @@ type InjectWorkloadInfo struct {
 	Blueprint    string
 	RepoSource   string
 	RepoRevision string
+	// BlueprintRevision is the revision of the blueprint the injected
+	// workspace was created from; unrelated to RepoRevision.
+	BlueprintRevision string
 }
 
 // injectedWorkloadInfo is the injection state for a single workload, keyed by
@@ -44,6 +47,8 @@ type injectedWorkloadInfo struct {
 	Username     string
 	Organization string
 	Blueprint    string
+
+	BlueprintRevision string
 }
 
 // ListInjectWorkloads lists workloads eligible for workspace injection across
@@ -129,6 +134,8 @@ func injectedWorkloadsInNamespace(ctx context.Context, kubeClient kubernetes.Int
 			Username:     pod.Labels[helm.LabelUsername],
 			Organization: pod.Labels[helm.LabelOrganization],
 			Blueprint:    pod.Labels[helm.LabelBlueprint],
+
+			BlueprintRevision: pod.Labels[helm.LabelBlueprintRevision],
 		}
 	}
 	return out, nil
@@ -201,6 +208,7 @@ func buildInjectWorkloadInfo(namespace, kind, name string, replicas int32, tplAn
 		info.Username = inj.Username
 		info.Organization = inj.Organization
 		info.Blueprint = inj.Blueprint
+		info.BlueprintRevision = inj.BlueprintRevision
 	}
 	return info
 }

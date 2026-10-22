@@ -45,6 +45,10 @@ const (
 	LabelStorageName  = "k8shell.io/storage-name"
 	LabelSubdomain    = "k8shell.io/subdomain"
 
+	// LabelBlueprintRevision holds the content revision of the blueprint
+	// the workspace was provisioned from (blueprint.RawBlueprint.Revision).
+	LabelBlueprintRevision = "k8shell.io/blueprint-revision"
+
 	// LabelHostname holds the workspace's in-cluster DNS name in the form
 	// "<hostname>.<subdomain>" (peers in the same namespace reach the workspace
 	// at this name). It is only stamped when both hostname and subdomain are set.
@@ -292,9 +296,10 @@ func (c *Client) InjectionSpecFromTemplate(ctx context.Context,
 	}
 
 	podLabelAllowlist := map[string]bool{
-		LabelUsername:     true,
-		LabelOrganization: true,
-		LabelBlueprint:    true,
+		LabelUsername:          true,
+		LabelOrganization:      true,
+		LabelBlueprint:         true,
+		LabelBlueprintRevision: true,
 	}
 	podLabels := make(map[string]string)
 	for k, v := range pod.Labels {
@@ -436,6 +441,8 @@ func (c *Client) EjectFromWorkload(ctx context.Context, adapter WorkloadAdapter,
 		LabelUsername:     true,
 		LabelOrganization: true,
 		LabelBlueprint:    true,
+		// LabelBlueprintRevision is stripped on eject like LabelBlueprint.
+		LabelBlueprintRevision: true,
 	}
 	newLabels := make(map[string]string)
 	for k, v := range tpl.Labels {

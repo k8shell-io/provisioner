@@ -10,6 +10,9 @@ k8shell.io/canonical-id: "{{ .Values.__canonicalid__ }}"
 k8shell.io/k8shelld-version: {{ .Values.__appversion__ }}
 k8shell.io/canonical-id: "{{ .Values.__canonicalid__ }}"
 k8shell.io/blueprint: "{{ .Values.__blueprint__ }}"
+{{- if .Values.__blueprintrevision__ }}
+k8shell.io/blueprint-revision: "{{ .Values.__blueprintrevision__ }}"
+{{- end }}
 k8shell.io/username: "{{ .Values.__username__ }}"
 k8shell.io/organization: "{{ .Values.__organization__ }}"
 {{- if and .Values.network .Values.network.networkPolicyClass }}

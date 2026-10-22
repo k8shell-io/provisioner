@@ -293,3 +293,28 @@ func TestQueryBlueprints_UnknownFieldIsInvalid(t *testing.T) {
 		t.Fatalf("expected ErrInvalidParameters, got %v", err)
 	}
 }
+
+func TestQueryBlueprints_FilterByRevision(t *testing.T) {
+	bm := newQueryTestManager(t)
+
+	gammaRev := bm.GetBlueprintRevision("acme", "gamma")
+	if gammaRev == "" {
+		t.Fatal("expected gamma to have a revision")
+	}
+	payload := &queryv1.Payload{
+		Obligations: unrestrictedObligations(),
+		Filters: &queryv1.Filters{
+			Conditions: []*queryv1.Condition{
+				{Field: "revision", Op: queryv1.Operator_OPERATOR_EQ, Values: []string{gammaRev}},
+			},
+		},
+	}
+	got, err := bm.QueryBlueprints(payload)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	equalNames(t, got, []string{"gamma"})
+	if got[0].Revision != gammaRev {
+		t.Fatalf("expected returned revision %q, got %q", gammaRev, got[0].Revision)
+	}
+}

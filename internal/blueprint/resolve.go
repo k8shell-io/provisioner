@@ -49,6 +49,7 @@ func (bm *BlueprintManager) resolveRawTemplate(bpName string, visited map[string
 			bp.InheritanceChain = []string{bpName}
 		}
 		bp.OwnNode = ownNode
+		bp.Revision = computeRevision(ownNode)
 		return bp, nil
 	}
 
@@ -94,6 +95,7 @@ func (bm *BlueprintManager) resolveRawTemplate(bpName string, visited map[string
 		Node:             mergedNode,
 		OwnNode:          ownNode,
 		InheritanceChain: append(parent.InheritanceChain, bpName),
+		Revision:         computeRevision(mergedNode),
 	}, nil
 }
 

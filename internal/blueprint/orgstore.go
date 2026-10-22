@@ -125,6 +125,7 @@ func (bm *BlueprintManager) buildOrgRawBlueprint(ob *models.OrgBlueprint) (*RawB
 	}
 	if template == "" {
 		rb.InheritanceChain = []string{ob.Name}
+		rb.Revision = computeRevision(own)
 		return rb, nil
 	}
 
@@ -141,6 +142,7 @@ func (bm *BlueprintManager) buildOrgRawBlueprint(ob *models.OrgBlueprint) (*RawB
 	}
 	rb.Node = merged
 	rb.InheritanceChain = append(append([]string{}, parent.InheritanceChain...), ob.Name)
+	rb.Revision = computeRevision(merged)
 	return rb, nil
 }
 

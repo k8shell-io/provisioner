@@ -47,6 +47,12 @@ type RawBlueprint struct {
 	OwnNode          *yaml.Node // content defined directly on this blueprint, before merging with Template
 	InheritanceChain []string   // ordered list of blueprint names from root ancestor to this blueprint
 
+	// Revision is a short content hash of Node (see computeRevision). Since
+	// Node includes everything inherited from the template chain, a change
+	// to any ancestor that alters this blueprint's effective content also
+	// changes its Revision.
+	Revision string
+
 	// CreatedAt and UpdatedAt record when the blueprint was first registered
 	// and last changed. For a file-based blueprint both are set to the source
 	// file's last-modified time (a file carries no separate creation record);
@@ -888,6 +894,34 @@ func (bm *BlueprintManager) GetBlueprintChain(org, name string) []string {
 	return rawBp.InheritanceChain
 }
 
+// GetBlueprintRevision returns the content revision of the given blueprint
+// (see RawBlueprint.Revision), scoped by org the same way GetBlueprint is.
+// Returns "" if the blueprint is not found.
+func (bm *BlueprintManager) GetBlueprintRevision(org, name string) string {
+	rawBp, ok, err := bm.lookupOrgFromStore(org, name)
+	if err != nil || !ok {
+		bm.mu.RLock()
+		fileBp, exists := bm.rawBlueprints[name]
+		bm.mu.RUnlock()
+		if !exists {
+			return ""
+		}
+		rawBp = fileBp
+	}
+	return rawBp.Revision
+}
+
+// OrgBlueprintRevision returns the revision ob would have once resolved
+// against its template (see RawBlueprint.Revision), without registering it.
+// Callers must NOT hold bm.mu.
+func (bm *BlueprintManager) OrgBlueprintRevision(ob *models.OrgBlueprint) (string, error) {
+	rb, err := bm.buildOrgRawBlueprint(ob)
+	if err != nil {
+		return "", err
+	}
+	return rb.Revision, nil
+}
+
 // GetBlueprintTemplate returns the name of the immediate parent Template for
 // the given blueprint name, or "" if it does not inherit from one. org scopes
 // the lookup the same way GetBlueprint does. Returns ErrBlueprintNotFound if
@@ -931,6 +965,7 @@ func (bm *BlueprintManager) GetBlueprintsSummary() ([]*models.BlueprintSummary, 
 			Template:    bp.Template,
 			CreatedAt:   bp.CreatedAt,
 			UpdatedAt:   bp.UpdatedAt,
+			Revision:    bp.Revision,
 		})
 	}
 	bm.mu.RUnlock()
@@ -951,6 +986,13 @@ func (bm *BlueprintManager) GetBlueprintsSummary() ([]*models.BlueprintSummary, 
 		if err != nil {
 			isTemplate = ob.IsTemplate
 		}
+		// A row that no longer resolves (e.g. its template was removed) is
+		// still listed, just without a revision.
+		revision, err := bm.OrgBlueprintRevision(ob)
+		if err != nil {
+			bm.log.Warn().Err(err).Str("org", ob.Org).Str("blueprint", ob.Name).
+				Msg("Failed to compute org blueprint revision")
+		}
 		summaries = append(summaries, &models.BlueprintSummary{
 			Name:        ob.Name,
 			Description: ob.Description,
@@ -959,6 +1001,7 @@ func (bm *BlueprintManager) GetBlueprintsSummary() ([]*models.BlueprintSummary, 
 			Template:    template,
 			CreatedAt:   ob.CreatedAt,
 			UpdatedAt:   ob.UpdatedAt,
+			Revision:    revision,
 		})
 	}
 	return summaries, nil
@@ -1005,28 +1048,28 @@ func (bm *BlueprintManager) GetRawBlueprintOwn(name string) (interface{}, error)
 // defined directly on the blueprint (own), and the name of the immediate
 // parent template, if any. CEL expressions are returned with a "!cel:"
 // prefix, as in GetRawBlueprint.
-func (bm *BlueprintManager) GetRawBlueprintScoped(org, name string) (merged, own interface{}, template string, err error) {
+func (bm *BlueprintManager) GetRawBlueprintScoped(org, name string) (merged, own interface{}, template, revision string, err error) {
 	rawBp, ok, err := bm.lookupOrgFromStore(org, name)
 	if err != nil {
-		return nil, nil, "", err
+		return nil, nil, "", "", err
 	}
 	if !ok {
 		bm.mu.RLock()
 		fileBp, exists := bm.rawBlueprints[name]
 		bm.mu.RUnlock()
 		if !exists || fileBp.Org != "" {
-			return nil, nil, "", fmt.Errorf("blueprint %s not found: %w", name, ErrBlueprintNotFound)
+			return nil, nil, "", "", fmt.Errorf("blueprint %s not found: %w", name, ErrBlueprintNotFound)
 		}
 		rawBp = fileBp
 	}
 
 	if merged, err = bm.decodeRawNode(rawBp.Node); err != nil {
-		return nil, nil, "", err
+		return nil, nil, "", "", err
 	}
 	if own, err = bm.decodeRawNode(rawBp.OwnNode); err != nil {
-		return nil, nil, "", err
+		return nil, nil, "", "", err
 	}
-	return merged, own, rawBp.Template, nil
+	return merged, own, rawBp.Template, rawBp.Revision, nil
 }
 
 // decodeRawNode clones node (preserving CEL expressions as "!cel:"-prefixed
