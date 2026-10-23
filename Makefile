@@ -9,7 +9,6 @@ COMMON_VERSION ?= latest
 
 .PHONY: all init bump-common install-test-deps install-gh test-static test build test-binary test-self vendor image image-debug image-release reload dlv debug-setup coverage clean help
 
-
 # Default target
 all: build
 
@@ -30,7 +29,7 @@ install-test-deps: ##@ Install test dependencies
                    ##@ Installs golangci-lint and gosec for static analysis
 	@echo "Installing test dependencies..."
 	@echo "Installing golangci-lint..."
-	go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
+	go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest
 	@echo "Installing gosec..."
 	go install github.com/securego/gosec/v2/cmd/gosec@latest
 	@echo "Installing go-junit-report..."
@@ -63,7 +62,7 @@ test-static: ##@ Run static analysis
              ##@ Used in CI/CD workflow to catch code quality and security issues
 test-static: install-test-deps
 	@echo "Running golangci-lint..."
-	golangci-lint run --timeout=5m ./...
+	golangci-lint run ./...
 	@echo "Running gosec security scan for HIGH severity issues only..."
 	gosec -exclude-generated -fmt=junit-xml -out=$(REPORTS_DIR)/gosec-junit.xml -severity high -quiet ./...
 	@if [ ! -s $(REPORTS_DIR)/gosec-junit.xml ]; then echo '<?xml version="1.0" encoding="UTF-8"?><testsuites></testsuites>' > $(REPORTS_DIR)/gosec-junit.xml; fi
