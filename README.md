@@ -101,7 +101,7 @@ test/          # Integration and smoke tests
 
 ## Prerequisites
 
-- Go 1.24+
+- Go 1.27+
 - Docker
 - A running Kubernetes cluster accessible via `~/.kube/config` (or in-cluster)
 - NATS JetStream (optional — required for provisioning job tracking)
