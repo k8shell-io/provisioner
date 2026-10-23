@@ -36,7 +36,7 @@ func LoadChartFromMemory(chartName string) (*chart.Chart, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to create temp dir: %w", err)
 	}
-	defer os.RemoveAll(tempDir)
+	defer func() { _ = os.RemoveAll(tempDir) }()
 
 	chartPath := filepath.Join(tempDir, chartName)
 	if err := fs.WalkDir(chartFS, chartName, func(path string, d fs.DirEntry, err error) error {

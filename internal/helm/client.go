@@ -436,7 +436,7 @@ func decodeHelmReleaseSecret(data []byte) (*release.Release, error) {
 		if err != nil {
 			return nil, fmt.Errorf("gzip reader: %w", err)
 		}
-		defer r.Close()
+		defer func() { _ = r.Close() }()
 		if b, err = io.ReadAll(r); err != nil {
 			return nil, fmt.Errorf("gzip read: %w", err)
 		}

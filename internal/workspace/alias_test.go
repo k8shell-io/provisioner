@@ -28,7 +28,7 @@ func newTestAliasClaims(now time.Time, live ...string) *aliasClaims {
 		liveSet[w] = true
 	}
 	return &aliasClaims{
-		kube:      fake.NewSimpleClientset(),
+		kube:      fake.NewClientset(),
 		namespace: "test",
 		holderExists: func(_ context.Context, workspace string) (bool, error) {
 			return liveSet[workspace], nil

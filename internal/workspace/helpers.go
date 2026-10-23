@@ -201,7 +201,7 @@ func marshalYAMLAllFields(v interface{}) ([]byte, error) {
 // toFullValue recursively converts a reflect.Value to a plain Go value
 // (map, slice, scalar) using yaml tag names and preserving zero values.
 func toFullValue(rv reflect.Value) (interface{}, error) {
-	for rv.Kind() == reflect.Ptr || rv.Kind() == reflect.Interface {
+	for rv.Kind() == reflect.Pointer || rv.Kind() == reflect.Interface {
 		if rv.IsNil() {
 			return nil, nil
 		}
