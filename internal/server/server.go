@@ -290,6 +290,10 @@ func (s *Server) Serve() error {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
+	// Serve the read-only workspace lookups from watch-backed caches rather
+	// than listing pods and Helm release secrets on every request.
+	s.helm.StartWorkspaceInformers(ctx, s.config.InjectNamespaces)
+
 	// Start injection watcher whenever injection is configured.
 	if len(s.config.InjectNamespaces) > 0 {
 		watcher := NewInjectionWatcher(s.helm, s.config.InjectNamespaces)

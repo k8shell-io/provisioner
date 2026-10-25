@@ -98,13 +98,13 @@ type GetWorkspacesOptions struct {
 	// were injected into. InjectKind is optional; omitting it matches any kind.
 	InjectWorkload string
 	InjectKind     string
-	// UseCache serves the underlying Kubernetes/Helm listings from a
-	// short-lived, per-process cache (see helm.Client's ListDeployedReleasesCached
-	// and ListPodsCached) instead of issuing fresh calls, coalescing
-	// concurrent identical lookups. Only safe for read-only callers: leave
-	// false (the default) for anything that mutates a workspace based on
-	// this result (stop, delete, eject), so it observes a just-completed
-	// change rather than a stale cached one.
+	// UseCache serves the underlying Kubernetes/Helm listings from the
+	// per-process informer caches, or a short-lived TTL cache where those
+	// don't apply (see helm.Client's ListDeployedReleasePodsCached and
+	// ListPodsCached), instead of issuing fresh calls. Only safe for
+	// read-only callers: leave false (the default) for anything that mutates
+	// a workspace based on this result (stop, delete, eject), so it observes
+	// a just-completed change rather than a stale cached one.
 	UseCache bool
 }
 
@@ -475,15 +475,15 @@ func liveStandaloneWorkspaces(
 	return out, pods, nil
 }
 
-// filteredCachedReleases returns the releases in helmClient's cached,
+// filteredCachedReleasePods returns the ReleasePods in helmClient's cached,
 // unfiltered per-namespace release listing that match selector. Selector is
 // applied here in memory rather than passed to Helm, since Helm's own List
 // action decodes every release in the namespace regardless of selector
 // anyway (see (*helm.Client).ListWithSelector) — reusing one cached
 // unfiltered listing per namespace is what actually avoids paying that
-// decode cost when concurrent requests differ only by, say, a workspace name.
-func filteredCachedReleases(ctx context.Context, helmClient *helm.Client, namespace, selector string) ([]*release.Release, error) {
-	all, err := helmClient.ListDeployedReleasesCached(ctx, namespace)
+// decode cost on every request.
+func filteredCachedReleasePods(ctx context.Context, helmClient *helm.Client, namespace, selector string) ([]*helm.ReleasePod, error) {
+	all, err := helmClient.ListDeployedReleasePodsCached(ctx, namespace)
 	if err != nil {
 		return nil, err
 	}
@@ -494,13 +494,45 @@ func filteredCachedReleases(ctx context.Context, helmClient *helm.Client, namesp
 	if err != nil {
 		return nil, fmt.Errorf("unable to parse selector %q: %w", selector, err)
 	}
-	filtered := make([]*release.Release, 0, len(all))
-	for _, rel := range all {
-		if sel.Matches(k8slabels.Set(rel.Labels)) {
-			filtered = append(filtered, rel)
+	filtered := make([]*helm.ReleasePod, 0, len(all))
+	for _, rp := range all {
+		if sel.Matches(k8slabels.Set(rp.Labels)) {
+			filtered = append(filtered, rp)
 		}
 	}
 	return filtered, nil
+}
+
+// stoppedReleasePods lists the deployed workspace releases matching selector
+// as ReleasePods, from the cache when opts.UseCache is set (where each
+// release's pod manifest was already decoded once, when the release
+// changed), or otherwise straight from Helm, decoding each pod manifest now.
+// Releases without a pod manifest are left out.
+func stoppedReleasePods(ctx context.Context, helmClient *helm.Client, namespace, selector string,
+	opts GetWorkspacesOptions) ([]*helm.ReleasePod, error) {
+	if opts.UseCache {
+		return filteredCachedReleasePods(ctx, helmClient, namespace, selector)
+	}
+
+	releases, err := helmClient.ListReleasesBySelector(ctx, namespace, selector)
+	if err != nil {
+		return nil, err
+	}
+	rps := make([]*helm.ReleasePod, 0, len(releases))
+	for _, rel := range releases {
+		pod, err := helm.PodManifestFromRelease(rel)
+		if err != nil {
+			continue
+		}
+		rp := &helm.ReleasePod{Pod: pod}
+		rp.Name = rel.Name
+		if rel.Info != nil {
+			rp.FirstDeployed = rel.Info.FirstDeployed.Time
+			rp.LastDeployed = rel.Info.LastDeployed.Time
+		}
+		rps = append(rps, rp)
+	}
+	return rps, nil
 }
 
 // stoppedWorkspaces discovers standalone workspaces whose Helm release is
@@ -532,15 +564,7 @@ func stoppedWorkspaces(
 	}
 	selector := getSelector(labels)
 
-	var (
-		releases []*release.Release
-		err      error
-	)
-	if opts.UseCache {
-		releases, err = filteredCachedReleases(ctx, helmClient, targetNamespace, selector)
-	} else {
-		releases, err = helmClient.ListReleasesBySelector(ctx, targetNamespace, selector)
-	}
+	releasePods, err := stoppedReleasePods(ctx, helmClient, targetNamespace, selector, opts)
 	if err != nil {
 		if strings.Contains(err.Error(), "unable to parse") {
 			return nil, nil, fmt.Errorf("%w: %s", models.ErrInvalidParameters, selector)
@@ -550,9 +574,9 @@ func stoppedWorkspaces(
 
 	out := make([]*models.WorkspaceDetails, 0)
 	pods := make([]corev1.Pod, 0)
-	for _, rel := range releases {
-		pod, err := helm.PodManifestFromRelease(rel)
-		if err != nil {
+	for _, rp := range releasePods {
+		pod := rp.Pod
+		if pod == nil {
 			continue
 		}
 		if !podMatchesWorkspaceFilters(pod, opts) {
@@ -562,9 +586,9 @@ func stoppedWorkspaces(
 			continue
 		}
 
-		created := rel.Info.LastDeployed.Time
+		created := rp.LastDeployed
 		if created.IsZero() {
-			created = rel.Info.FirstDeployed.Time
+			created = rp.FirstDeployed
 		}
 
 		d := workspaceDetailsFromStoppedPod(pod, created)

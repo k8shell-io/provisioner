@@ -21,6 +21,7 @@ import (
 	"io"
 	"os"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	log "github.com/k8shell-io/common/pkg/logger"
@@ -59,10 +60,14 @@ type Client struct {
 	AppVersion      string
 	Commit          string
 
-	// releaseCache and podCache back ListDeployedReleasesCached and
-	// ListPodsCached, used only by the read-only workspace lookup RPCs (see
+	// informers, once started (StartWorkspaceInformers), serve
+	// ListDeployedReleasePodsCached and ListPodsCached from watch-backed
+	// caches; releaseCache and podCache are the TTL-cached fallback for
+	// whatever the informers don't cover or haven't synced yet. All of them
+	// back only the read-only workspace lookup RPCs (see
 	// internal/server/find.go). Mutating flows must not read through them.
-	releaseCache *ttlCache[[]*release.Release]
+	informers    atomic.Pointer[workspaceInformers]
+	releaseCache *ttlCache[[]*ReleasePod]
 	podCache     *ttlCache[[]corev1.Pod]
 }
 
@@ -132,7 +137,7 @@ func NewClient(targetNamespace string, registry config.DefaultRegistry, privateR
 		targetNamespace: targetNamespace,
 		Registry:        registry,
 		PrivateRegistry: privateRegistry,
-		releaseCache:    newTTLCache[[]*release.Release](),
+		releaseCache:    newTTLCache[[]*ReleasePod](),
 		podCache:        newTTLCache[[]corev1.Pod](),
 	}, nil
 }
@@ -454,8 +459,8 @@ func decodeHelmReleaseSecret(data []byte) (*release.Release, error) {
 // action decodes every release secret in the namespace regardless of
 // selector, then filters in memory (see helm.sh/helm/v3/pkg/storage/driver
 // Secrets.List). Prefer ListReleasesBySelector, which does filter
-// server-side, or ListDeployedReleasesCached when the caller can tolerate a
-// short-lived cache and apply its own filtering in memory.
+// server-side, or ListDeployedReleasePodsCached when the caller can tolerate
+// a cache and apply its own filtering in memory.
 func (c *Client) ListWithSelector(namespace, selector string) ([]*release.Release, error) {
 	actionConfig, err := c.createActionConfig(namespace)
 	if err != nil {
@@ -479,42 +484,61 @@ func (c *Client) ListWithSelector(namespace, selector string) ([]*release.Releas
 	return releases, nil
 }
 
-// ListDeployedReleasesCached returns every deployed Helm release in
-// namespace, served from a short-lived cache shared across concurrent
-// callers (see ttlCache). Since a plain Secrets List returns every release
-// regardless of the caller's own filter anyway, callers needing a subset
-// should filter this unfiltered result themselves — e.g. with
-// k8s.io/apimachinery/pkg/labels.Selector.Matches against each release's
-// Labels — rather than passing a selector, since that's what actually
-// benefits from the cache when concurrent requests differ only by, say, a
-// workspace name.
+// ListDeployedReleasePodsCached returns a ReleasePod for every deployed Helm
+// release in namespace. For the target namespace it is served from the
+// release-secret informer once synced (see StartWorkspaceInformers);
+// otherwise from a short-lived cache shared across concurrent callers (see
+// ttlCache). Callers needing a subset filter the result themselves, e.g.
+// with k8s.io/apimachinery/pkg/labels.Selector.Matches against each
+// ReleasePod's Labels. The returned ReleasePods are shared and must not be
+// mutated.
 //
-// Only for read-only lookups: the cache can be up to listCacheTTL stale, so
-// callers that must observe a just-completed mutation (stop, delete, eject)
-// must use List or ListReleasesBySelector instead.
-func (c *Client) ListDeployedReleasesCached(ctx context.Context, namespace string) ([]*release.Release, error) {
-	return c.releaseCache.getOrFetch(namespace, func() ([]*release.Release, error) {
+// Only for read-only lookups: the result can lag the cluster (by up to
+// listCacheTTL on the fallback path), so callers that must observe a
+// just-completed mutation (stop, delete, eject) must use List or
+// ListReleasesBySelector instead.
+func (c *Client) ListDeployedReleasePodsCached(ctx context.Context, namespace string) ([]*ReleasePod, error) {
+	if inf := c.informers.Load(); inf != nil {
+		if rps, ok := inf.listReleasePods(namespace); ok {
+			return rps, nil
+		}
+	}
+	return c.releaseCache.getOrFetch(namespace, func() ([]*ReleasePod, error) {
 		secrets, err := c.kubeClient.CoreV1().Secrets(namespace).List(ctx, metav1.ListOptions{
 			LabelSelector: releaseSecretSelector(""),
 		})
 		if err != nil {
 			return nil, fmt.Errorf("failed to list release secrets in namespace %s: %w", namespace, err)
 		}
-		return decodeReleaseSecrets(c.log, secrets.Items), nil
+		rps := make([]*ReleasePod, 0, len(secrets.Items))
+		for i := range secrets.Items {
+			rps = append(rps, releasePodFromSecret(c.log, &secrets.Items[i]))
+		}
+		return rps, nil
 	})
 }
 
-// ListPodsCached lists pods in namespace matching selector, served from a
-// short-lived cache shared across concurrent callers with an identical
-// (namespace, selector) pair (see ttlCache) — which read-only workspace
-// lookups very often share, since request-specific narrowing (e.g. a
-// workspace name) is usually applied by the caller after listing rather than
-// folded into the selector.
+// ListPodsCached lists pods in namespace matching selector. When an informer
+// covers the lookup (see StartWorkspaceInformers) and has synced, it is
+// served from there; otherwise from a short-lived cache shared across
+// concurrent callers with an identical (namespace, selector) pair (see
+// ttlCache). The returned pods share maps and slices with the cache and must
+// not be mutated.
 //
-// Only for read-only lookups: the cache can be up to listCacheTTL stale, so
-// callers that must observe a just-completed mutation (stop, delete, eject)
-// must list pods directly via KubeClient() instead.
+// Only for read-only lookups: the result can lag the cluster (by up to
+// listCacheTTL on the fallback path), so callers that must observe a
+// just-completed mutation (stop, delete, eject) must list pods directly via
+// KubeClient() instead.
 func (c *Client) ListPodsCached(ctx context.Context, namespace, selector string) ([]corev1.Pod, error) {
+	if inf := c.informers.Load(); inf != nil {
+		pods, ok, err := inf.listPods(namespace, selector)
+		if err != nil {
+			return nil, err
+		}
+		if ok {
+			return pods, nil
+		}
+	}
 	return c.podCache.getOrFetch(namespace+"|"+selector, func() ([]corev1.Pod, error) {
 		list, err := c.kubeClient.CoreV1().Pods(namespace).List(ctx, metav1.ListOptions{LabelSelector: selector})
 		if err != nil {
