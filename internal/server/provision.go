@@ -181,6 +181,11 @@ func (p *ProvisionerService) ProvisionWorkspaceStream(
 				"Workspace %s already exists and is running", workspace.Name))
 		}
 
+		if st != nil && st.Status == models.WorkspaceStatusNodeLost {
+			return p.sendHandshakeErr(msgStream, workspace.Name, convertToGRPCError(
+				fmt.Errorf("%w: %s", ws.ErrNodeUnreachable, st.Message)))
+		}
+
 		// Provision waits again under the workspace lock, which is what makes
 		// the start safe; this gate only gives the client an early, clear error.
 		if st != nil && (st.Status == models.WorkspaceStatusStopping || st.Status == models.WorkspaceStatusTerminating) {

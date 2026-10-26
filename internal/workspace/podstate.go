@@ -32,6 +32,7 @@ const (
 	StageRunning      PodLifecycleStage = "Running"
 	StageStopping     PodLifecycleStage = "Stopping"
 	StageTerminating  PodLifecycleStage = "Terminating"
+	StageNodeLost     PodLifecycleStage = "NodeLost"
 	StageStopped      PodLifecycleStage = "Stopped"
 	StageFailed       PodLifecycleStage = "Failed"
 	StageUnknown      PodLifecycleStage = "Unknown"
@@ -86,6 +87,8 @@ func stageToStatus(stage PodLifecycleStage) models.WorkspaceStatusMessage {
 		return models.WorkspaceStatusStopping
 	case StageTerminating:
 		return models.WorkspaceStatusTerminating
+	case StageNodeLost:
+		return models.WorkspaceStatusNodeLost
 	case StageStopped:
 		return models.WorkspaceStatusStopped
 	case StageFailed:
@@ -93,6 +96,43 @@ func stageToStatus(stage PodLifecycleStage) models.WorkspaceStatusMessage {
 	default:
 		return models.WorkspaceStatusUnknown
 	}
+}
+
+// nodeLostGrace is how long past its deletion deadline a pod may linger before
+// it is considered stuck on an unreachable node. The deadline already includes
+// the termination grace period; this slack covers kubelet latency.
+const nodeLostGrace = 15 * time.Second
+
+// podNodeLost reports whether a pod that is being deleted is stuck because its
+// node cannot complete the deletion. It is derived from the pod alone, so no
+// cluster-scoped access to Node objects is needed: the deletion deadline passed
+// a while ago, the node controller has marked the pod not Ready, and some
+// container is still recorded as Running or Waiting. A live kubelet would
+// have recorded every container as Terminated by then. A kubelet or container
+// runtime that is hung without the node being down looks the same, and the
+// workspace is equally stuck in that case.
+func podNodeLost(pod *corev1.Pod, now time.Time) bool {
+	if pod.DeletionTimestamp == nil || pod.Spec.NodeName == "" {
+		return false
+	}
+	if now.Sub(pod.DeletionTimestamp.Time) < nodeLostGrace {
+		return false
+	}
+	ready := false
+	for _, c := range pod.Status.Conditions {
+		if c.Type == corev1.PodReady {
+			ready = c.Status == corev1.ConditionTrue
+		}
+	}
+	if ready {
+		return false
+	}
+	for _, cs := range pod.Status.ContainerStatuses {
+		if cs.State.Terminated == nil {
+			return true
+		}
+	}
+	return false
 }
 
 // AnalyzePod derives a PodStateSnapshot from a pod and its associated K8s events.
@@ -157,6 +197,10 @@ func AnalyzePod(pod *corev1.Pod, events []corev1.Event, crashLoopThreshold int32
 		if pod.Labels[helm.LabelStopRequested] == "true" {
 			stage = StageStopping
 			message = "Workspace is stopping"
+		}
+		if podNodeLost(pod, time.Now()) {
+			stage = StageNodeLost
+			message = fmt.Sprintf("Node %s is unreachable; workspace will stop when it returns", pod.Spec.NodeName)
 		}
 		return PodStateSnapshot{
 			Created:         pod.CreationTimestamp.Time,

@@ -24,6 +24,9 @@ func convertToGRPCError(err error) error {
 	if errors.Is(err, ws.ErrWebProxyAliasHeld) {
 		return status.Errorf(codes.AlreadyExists, "%s", err.Error())
 	}
+	if errors.Is(err, ws.ErrNodeUnreachable) {
+		return status.Errorf(codes.FailedPrecondition, "%s", err.Error())
+	}
 	if errors.Is(err, ws.ErrNoWebProxyRoute) {
 		return status.Errorf(codes.FailedPrecondition, "%s", err.Error())
 	}

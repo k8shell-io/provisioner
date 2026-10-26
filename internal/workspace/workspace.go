@@ -1180,12 +1180,34 @@ func (w *Workspace) canonicalIdForCleanup() string {
 	return w.Name
 }
 
+// EnsureNodeReachable returns ErrNodeUnreachable when the workspace pod is
+// stuck deleting on an unreachable node. Such a workspace cannot be stopped
+// (the pod is already being deleted and nothing can finish it); it can only
+// be terminated. A missing pod is not an error.
+func (w *Workspace) EnsureNodeReachable(ctx context.Context) error {
+	pod, err := w.client.KubeClient().CoreV1().Pods(w.client.TargetNamespace()).Get(ctx, w.Name, metav1.GetOptions{})
+	if err != nil {
+		if apierrors.IsNotFound(err) {
+			return nil
+		}
+		return fmt.Errorf("failed to get workspace pod %s: %w", w.Name, err)
+	}
+	if podNodeLost(pod, time.Now()) {
+		return fmt.Errorf("%w: node %s is unreachable, the workspace can only be terminated", ErrNodeUnreachable, pod.Spec.NodeName)
+	}
+	return nil
+}
+
 // StopPod deletes only the workspace pod, leaving the Helm release and all
 // other resources (PVCs, secrets, ConfigMaps) intact. The pod is labeled
 // immediately before deletion so it carries the label through its
 // graceful-termination window, letting AnalyzePod report
 // WorkspaceStatusStopping instead of WorkspaceStatusTerminating.
 func (w *Workspace) StopPod(ctx context.Context) error {
+	if err := w.EnsureNodeReachable(ctx); err != nil {
+		return err
+	}
+
 	pods := w.client.KubeClient().CoreV1().Pods(w.client.TargetNamespace())
 
 	patch := fmt.Appendf(nil, `{"metadata":{"labels":{%q:"true"}}}`, helm.LabelStopRequested)

@@ -315,6 +315,11 @@ func (p *ProvisionerService) StopWorkspace(ctx context.Context,
 		return nil, convertToGRPCError(err)
 	}
 
+	// Rejected up front, before the lock and before the PAT is deleted below.
+	if err := w.EnsureNodeReachable(ctx); err != nil {
+		return nil, convertToGRPCError(err)
+	}
+
 	lockCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 
@@ -348,6 +353,12 @@ func (p *ProvisionerService) StopWorkspace(ctx context.Context,
 			time.Sleep(time.Duration(req.DelaySeconds) * time.Second)
 			p.log.Debug().Msgf("Starting async stop of workspace pod %s", name)
 
+			// the node may have been lost during the delay
+			if err := w.EnsureNodeReachable(bgCtx); err != nil {
+				p.log.Warn().Err(err).Msgf("Not stopping workspace pod %s", name)
+				return
+			}
+
 			if err := w.DeletePAT(bgCtx); err != nil {
 				p.log.Error().Err(err).Msgf("Failed to delete PAT for workspace %s", name)
 			}
@@ -376,6 +387,9 @@ func (p *ProvisionerService) StopWorkspace(ctx context.Context,
 	}
 
 	if err := w.StopPod(bgCtx); err != nil {
+		if errors.Is(err, ws.ErrNodeUnreachable) {
+			return nil, convertToGRPCError(err)
+		}
 		return nil, status.Errorf(codes.Internal, "Failed to stop workspace pod %s: %v", name, err)
 	}
 

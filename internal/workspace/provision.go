@@ -17,6 +17,11 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
+// ErrNodeUnreachable is returned when a workspace cannot be started because its
+// pod is stuck deleting on an unreachable node. The workspace starts once the
+// node returns, or it can be terminated.
+var ErrNodeUnreachable = errors.New("workspace node is unreachable")
+
 // ProvisionOptions represents the options for provisioning a workspace
 type ProvisionOptions struct {
 	Timeout     int
@@ -143,6 +148,9 @@ func (w *Workspace) provisionExisting(ctx context.Context, opts *ProvisionOption
 			return nil, err
 		}
 		return snapToWorkspaceStatus(snap), nil
+	case models.WorkspaceStatusNodeLost:
+		// the deletion cannot finish before the node returns; waiting is futile
+		return nil, fmt.Errorf("%w: %s", ErrNodeUnreachable, status.Message)
 	case models.WorkspaceStatusStopping, models.WorkspaceStatusTerminating:
 		// pod is already being deleted
 		w.log.Info().Msgf("Workspace %s pod is %s, waiting for it to be gone", w.Name, status.Status)

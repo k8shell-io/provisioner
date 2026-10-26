@@ -7,7 +7,7 @@ require (
 	github.com/go-playground/validator/v10 v10.30.5
 	github.com/google/uuid v1.6.0
 	github.com/jackc/pgx/v5 v5.11.0
-	github.com/k8shell-io/common v0.65.0
+	github.com/k8shell-io/common v0.65.1
 	github.com/k8shell-io/yaml-cel v0.2.8
 	github.com/nats-io/nats.go v1.54.0
 	github.com/pmezard/go-difflib v1.0.1-0.20181226105442-5d4384ee4fb2
