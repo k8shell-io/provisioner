@@ -142,6 +142,20 @@ func NewClient(targetNamespace string, registry config.DefaultRegistry, privateR
 	}, nil
 }
 
+// NewClientWithKube returns a Client backed only by the given Kubernetes
+// client, for tests that exercise pod-level operations against a fake
+// clientset. Any Helm operation on it fails.
+func NewClientWithKube(kubeClient kubernetes.Interface, targetNamespace string) *Client {
+	return &Client{
+		log:             log.NewLogger("helm"),
+		settings:        cli.New(),
+		kubeClient:      kubeClient,
+		targetNamespace: targetNamespace,
+		releaseCache:    newTTLCache[[]*ReleasePod](),
+		podCache:        newTTLCache[[]corev1.Pod](),
+	}
+}
+
 // RegistryValues returns the merged registry values for Helm chart templates.
 // host comes from DefaultRegistry and is used to prefix image names.
 func (c *Client) RegistryValues() map[string]interface{} {

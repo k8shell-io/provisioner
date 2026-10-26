@@ -122,31 +122,116 @@ func (w *Workspace) Provision(ctx context.Context, opts *ProvisionOptions) (*mod
 			return status, nil
 		}
 
-		if status.Status == models.WorkspaceStatusPulling {
-			w.log.Info().Msgf("Workspace %s pod is pulling image, waiting", w.Name)
-			pw := NewPodWatcher(w.client.KubeClient(), w.client.TargetNamespace(), w.Name, w.log)
-			snap, err := pw.Watch(ctx, opts, true)
-			if err != nil {
-				return nil, err
-			}
-			return snapToWorkspaceStatus(snap), nil
-		}
+		return w.provisionExisting(ctx, opts, status)
+	}
 
-		if status.Status == models.WorkspaceStatusStopped {
-			w.log.Info().Msgf("Workspace %s pod is stopped, recycling pod", w.Name)
-			if err := w.StopPod(ctx); err != nil {
-				return nil, fmt.Errorf("failed to delete stopped pod: %w", err)
-			}
-			return w.doStart(ctx, opts)
-		}
+	return w.install(ctx, opts)
+}
 
-		w.log.Debug().Msgf("Workspace %s still not running after acquiring lock, proceeding with reinstall", w.Name)
-		if err := w.client.Uninstall(w.Name, int(opts.Timeout), true); err != nil {
-			return nil, fmt.Errorf("failed to delete workspace: %w", err)
+// provisionExisting starts a workspace whose Helm release exists and whose pod
+// is not running. It never uninstalls the release: that would delete the
+// PVCs, and with them the user's data. Only the pod is recycled; the release
+// is removed solely by an explicit terminate (Uninstall).
+func (w *Workspace) provisionExisting(ctx context.Context, opts *ProvisionOptions, status *models.WorkspaceStatus) (*models.WorkspaceStatus, error) {
+	switch status.Status {
+	case models.WorkspaceStatusProvisioning, models.WorkspaceStatusPulling:
+		// another request is already starting the pod
+		w.log.Info().Msgf("Workspace %s pod is %s, waiting", w.Name, status.Status)
+		pw := NewPodWatcher(w.client.KubeClient(), w.client.TargetNamespace(), w.Name, w.log)
+		snap, err := pw.Watch(ctx, opts, true)
+		if err != nil {
+			return nil, err
+		}
+		return snapToWorkspaceStatus(snap), nil
+	case models.WorkspaceStatusStopping, models.WorkspaceStatusTerminating:
+		// pod is already being deleted
+		w.log.Info().Msgf("Workspace %s pod is %s, waiting for it to be gone", w.Name, status.Status)
+	default: // Stopped, Failing, Unknown
+		w.log.Info().Msgf("Workspace %s pod is %s, recycling pod", w.Name, status.Status)
+		if err := w.StopPod(ctx); err != nil {
+			return nil, fmt.Errorf("failed to delete workspace pod: %w", err)
 		}
 	}
 
+	if err := w.WaitForPodGone(ctx, time.Duration(opts.Timeout)*time.Second); err != nil {
+		return nil, err
+	}
+
+	// a terminate may have removed the release while we waited
+	installed, err := w.installed(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to recheck if workspace exists: %w", err)
+	}
+	if !installed {
+		return w.install(ctx, opts)
+	}
+	return w.start(ctx, opts)
+}
+
+// WaitForPodGone polls until the workspace pod has been deleted or timeout
+// elapses; a non-positive timeout means 20 seconds. Provision uses it to wait
+// for a pod that is being deleted before the pod is re-created.
+func (w *Workspace) WaitForPodGone(ctx context.Context, timeout time.Duration) error {
+	if timeout <= 0 {
+		timeout = 20 * time.Second
+	}
+
+	wctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
+	pods := w.client.KubeClient().CoreV1().Pods(w.client.TargetNamespace())
+
+	ticker := time.NewTicker(waitPodGoneInterval)
+	defer ticker.Stop()
+
+	for {
+		_, err := pods.Get(wctx, w.Name, metav1.GetOptions{})
+		if err != nil {
+			if apierrors.IsNotFound(err) {
+				return nil
+			}
+			return fmt.Errorf("failed to get workspace pod %s while waiting for deletion: %w", w.Name, err)
+		}
+
+		select {
+		case <-wctx.Done():
+			return fmt.Errorf("timeout waiting for workspace pod %s to be deleted: %w", w.Name, wctx.Err())
+		case <-ticker.C:
+		}
+	}
+}
+
+// waitPodGoneInterval is the poll interval of WaitForPodGone.
+const waitPodGoneInterval = 500 * time.Millisecond
+
+// installed, start and install are the steps Provision delegates to; a test
+// can replace them through w.steps.
+func (w *Workspace) installed(ctx context.Context) (bool, error) {
+	if w.steps.isInstalled != nil {
+		return w.steps.isInstalled(ctx)
+	}
+	return w.IsInstalled(ctx)
+}
+
+func (w *Workspace) start(ctx context.Context, opts *ProvisionOptions) (*models.WorkspaceStatus, error) {
+	if w.steps.doStart != nil {
+		return w.steps.doStart(ctx, opts)
+	}
+	return w.doStart(ctx, opts)
+}
+
+func (w *Workspace) install(ctx context.Context, opts *ProvisionOptions) (*models.WorkspaceStatus, error) {
+	if w.steps.doInstallation != nil {
+		return w.steps.doInstallation(ctx, opts)
+	}
 	return w.doInstallation(ctx, opts)
+}
+
+// provisionSteps lets tests replace the steps that need a real Helm release.
+type provisionSteps struct {
+	isInstalled    func(ctx context.Context) (bool, error)
+	doStart        func(ctx context.Context, opts *ProvisionOptions) (*models.WorkspaceStatus, error)
+	doInstallation func(ctx context.Context, opts *ProvisionOptions) (*models.WorkspaceStatus, error)
 }
 
 // Lock acquires a distributed lock for the workspace

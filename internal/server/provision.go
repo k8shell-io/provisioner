@@ -181,10 +181,12 @@ func (p *ProvisionerService) ProvisionWorkspaceStream(
 				"Workspace %s already exists and is running", workspace.Name))
 		}
 
-		if st != nil && st.Status == models.WorkspaceStatusTerminating {
-			p.log.Debug().Msgf("Workspace %s is terminating, waiting for pod to be gone", workspace.Name)
+		// Provision waits again under the workspace lock, which is what makes
+		// the start safe; this gate only gives the client an early, clear error.
+		if st != nil && (st.Status == models.WorkspaceStatusStopping || st.Status == models.WorkspaceStatusTerminating) {
+			p.log.Debug().Msgf("Workspace %s is %s, waiting for pod to be gone", workspace.Name, st.Status)
 			waitDur := time.Duration(timeout) * time.Second
-			if err := p.waitForWorkspacePodGone(ctx, workspace.Name, waitDur); err != nil {
+			if err := workspace.WaitForPodGone(ctx, waitDur); err != nil {
 				return p.sendHandshakeErr(msgStream, workspace.Name, status.Errorf(codes.DeadlineExceeded,
 					"Workspace %s is still being deleted; please retry: %v", workspace.Name, err))
 			}

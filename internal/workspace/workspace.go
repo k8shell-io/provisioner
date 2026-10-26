@@ -66,6 +66,7 @@ type Workspace struct {
 	user               *models.User
 	userStr            *userstr.CanonicalUserStr
 	workspaceLock      *WorkspaceLock
+	steps              provisionSteps
 
 	provisionMode     authz.WorkspaceProvisionMode
 	workloadName      string
