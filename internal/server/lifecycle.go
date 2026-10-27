@@ -97,6 +97,15 @@ func (p *ProvisionerService) DeleteWorkspace(ctx context.Context,
 	}
 
 	w, err := ws.NewWorkspaceFromHelmRelease(ctx, name, p.server.helm, p.server.Identity, p.server.config)
+	if errors.Is(err, models.ErrWorkspaceNotFound) {
+		// A release left in "uninstalling"/"failed" by an interrupted operation
+		// is invisible to the lookup above; finish deleting it.
+		stuck, stuckErr := p.server.helm.StuckReleaseExists(ctx, p.server.helm.TargetNamespace(), name)
+		if stuckErr == nil && stuck {
+			p.log.Warn().Msgf("Workspace %s has a non-deployed Helm release, completing its deletion", name)
+			w, err = ws.NewWorkspaceForUninstall(name, p.server.helm)
+		}
+	}
 	if err != nil {
 		return nil, convertToGRPCError(err)
 	}

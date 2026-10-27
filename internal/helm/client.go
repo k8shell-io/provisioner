@@ -408,6 +408,21 @@ func (c *Client) ListReleasesBySelector(ctx context.Context, namespace, selector
 	return decodeReleaseSecrets(c.log, secrets.Items), nil
 }
 
+// StuckReleaseExists reports whether namespace holds a release named name
+// whose latest revision is not "deployed" but still present in storage, i.e.
+// one an interrupted uninstall (status "uninstalling") or a failed
+// install/upgrade left behind. ListReleasesBySelector never returns these, so
+// callers use this to let deletion finish them.
+func (c *Client) StuckReleaseExists(ctx context.Context, namespace, name string) (bool, error) {
+	secrets, err := c.kubeClient.CoreV1().Secrets(namespace).List(ctx, metav1.ListOptions{
+		LabelSelector: "owner=helm,name=" + name + ",status in (uninstalling,failed,pending-install,pending-upgrade,pending-rollback)",
+	})
+	if err != nil {
+		return false, fmt.Errorf("failed to list release secrets for %s in namespace %s: %w", name, namespace, err)
+	}
+	return len(secrets.Items) > 0, nil
+}
+
 // releaseSecretSelector ANDs the Helm release system labels ("owner=helm",
 // "status=deployed") that scope a plain Secrets List to Helm's current
 // releases onto selector, the caller's own label selector (empty is valid —
