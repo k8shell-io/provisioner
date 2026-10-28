@@ -385,6 +385,9 @@ func (w *Workspace) doStart(ctx context.Context, opts *ProvisionOptions) (*model
 	w.emitWebProxyAliasWarning(opts, aliasMessage)
 
 	namespace := w.client.TargetNamespace()
+	// The stored manifest lacks the ownership metadata Helm adds at install
+	// time; without it a later uninstall would leave this pod behind.
+	stampHelmOwnership(pod, w.Name, namespace)
 	_, err = w.client.KubeClient().CoreV1().Pods(namespace).Create(ctx, pod, metav1.CreateOptions{})
 	if err != nil {
 		return nil, fmt.Errorf("failed to create workspace pod: %w", err)

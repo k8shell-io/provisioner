@@ -871,7 +871,9 @@ func (c *Client) createActionConfig(namespace string) (*action.Configuration, er
 		c.settings.RESTClientGetter(),
 		namespace,
 		os.Getenv("HELM_DRIVER"),
-		c.log.Debug().Msgf,
+		// A fresh event per call: a bound c.log.Debug().Msgf reuses one pooled
+		// event and panics on Helm's second log line.
+		func(format string, v ...interface{}) { c.log.Debug().Msgf(format, v...) },
 	); err != nil {
 		return nil, fmt.Errorf("failed to initialize Helm action config for namespace %s: %w", namespace, err)
 	}
