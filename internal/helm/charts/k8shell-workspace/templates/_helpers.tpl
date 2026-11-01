@@ -140,6 +140,21 @@ Uses regex to detect registry hostname in image name
 {{- end }}
 
 {{/*
+Resources for init containers of a pod with a VM based runtime class. The kubelet
+only sets the pod cgroup memory limit when every container has one; without it the
+VM guest RAM (counted in the pod cgroup) is not bounded on the host.
+*/}}
+{{- define "workspace.vmInitResources" -}}
+resources:
+  requests:
+    cpu: 10m
+    memory: 64Mi
+  limits:
+    cpu: "1"
+    memory: 1Gi
+{{- end }}
+
+{{/*
 Convenience helper for k8shelld image
 */}}
 {{- define "workspace.k8shelldImage" -}}

@@ -15,6 +15,7 @@
                 "SECRET_FILES": "/opt/shared/provisioner/secrets",
                 "WORKSPACE_REGISTRY": "registry.k8shell.io",
                 "WORKSPACE_STORAGE_CLASS": "zfs-csi-k8shell-staging",
+                "KATA_RUNTIME_CLASS": "kata-qemu",
                 // "TARGET_NAMESPACE": "workspaces-test", // k8shell-workspace
                 "TARGET_NAMESPACE": "workspaces-staging",
                 "IDENTITY_SERVICE_URL": "http://identity.k8shell-test:9090",

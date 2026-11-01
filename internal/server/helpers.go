@@ -27,6 +27,9 @@ func convertToGRPCError(err error) error {
 	if errors.Is(err, ws.ErrNodeUnreachable) {
 		return status.Errorf(codes.FailedPrecondition, "%s", err.Error())
 	}
+	if errors.Is(err, ws.ErrResizeUnsupported) {
+		return status.Errorf(codes.FailedPrecondition, "%s", err.Error())
+	}
 	if errors.Is(err, ws.ErrNoWebProxyRoute) {
 		return status.Errorf(codes.FailedPrecondition, "%s", err.Error())
 	}

@@ -20,3 +20,10 @@ blueprints:
     template: base
     description: Plain Alpine Linux workspace.
     image: docker.io/alpine:latest
+
+  - name: kata-docker
+    template: kata
+    description: Kata VM workspace with the Docker CLI, backed by the workspace's Podman socket.
+
+    env:
+      DOCKER_HOST: "unix:///var/run/podman/podman.sock"

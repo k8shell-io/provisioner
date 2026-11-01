@@ -7,7 +7,7 @@ RUNTIME ?= alpine
 # Override with: make bump-common COMMON_VERSION=v0.62.0
 COMMON_VERSION ?= latest
 
-.PHONY: all init bump-common install-test-deps install-gh test-static test build test-binary test-self vendor image image-debug image-release reload dlv debug-setup coverage clean help
+.PHONY: all init kata-memstats bump-common install-test-deps install-gh test-static test build test-binary test-self vendor image image-debug image-release reload dlv debug-setup coverage clean help
 
 # Default target
 all: build
@@ -139,6 +139,10 @@ debug-setup: ##@ Set up local debug environment
 	@GO_VERSION=$$(grep -m1 '^go ' go.mod | awk '{print $$2}') && \
 	printf 'go %s\n\nuse (\n\t.\n\t/opt/shared/common\n)\n' "$$GO_VERSION" > go.work
 	ln -sfn /opt/shared/common common
+
+kata-memstats: ##@ Sample memory of a node running Kata workspaces (NODE=kube-w4 [INTERVAL=30] [COUNT=0] [GUEST=1])
+               ##@ Prints node memory, /dev/shm usage, per-VM QEMU RSS and guest MemFree/Cached per Kata pod; COUNT=0 runs until Ctrl-C
+	@./scripts/kata-memstats.sh
 
 coverage:  ##@ Calculate test coverage percentage from coverage.out
 	@go tool cover -func=$(REPORTS_DIR)/coverage.out | grep total | awk '{print $$3}'

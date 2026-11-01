@@ -15,6 +15,7 @@ import (
 	"github.com/k8shell-io/common/pkg/utils"
 	"github.com/k8shell-io/provisioner/internal/blueprint"
 	"github.com/k8shell-io/provisioner/internal/helm"
+	"github.com/k8shell-io/provisioner/internal/podmanprofile"
 	ws "github.com/k8shell-io/provisioner/internal/workspace"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -84,6 +85,13 @@ func (p *ProvisionerService) DiffWorkspaceBlueprint(ctx context.Context,
 	current, err = authz.ApplyProvisionPatches(current, patches)
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "failed to apply policy patches to blueprint: %v", err)
+	}
+
+	// The deployed values carry the podman profile already expanded, so the
+	// current blueprint has to be expanded the same way to compare like with like.
+	current, err = podmanprofile.Effective(current, user)
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "failed to apply podman profile: %v", err)
 	}
 
 	envResp, err := p.server.Identity.ListUserEnvVars(ctx, &identityv1.ListUserEnvVarsRequest{Username: username})

@@ -29,6 +29,7 @@ import (
 	log "github.com/k8shell-io/common/pkg/logger"
 
 	"github.com/k8shell-io/common/pkg/models"
+	"github.com/k8shell-io/provisioner/internal/podmanprofile"
 	"github.com/k8shell-io/yaml-cel/pkg/yamlcel"
 	"github.com/rs/zerolog"
 	"gopkg.in/yaml.v3"
@@ -279,6 +280,9 @@ func (bm *BlueprintManager) validateAllBlueprints() []error {
 		for _, e := range validateIgnoreOrphans(bp) {
 			allErrors = append(allErrors, fmt.Errorf("blueprint '%s': %w", name, e))
 		}
+		for _, e := range validatePodmanProfile(bp) {
+			allErrors = append(allErrors, fmt.Errorf("blueprint '%s': %w", name, e))
+		}
 		for _, e := range validateSecurityContexts(bp) {
 			allErrors = append(allErrors, fmt.Errorf("blueprint '%s': %w", name, e))
 		}
@@ -403,6 +407,11 @@ func validateResourceQuantities(bp *models.Blueprint) []error {
 		if _, err := resource.ParseQuantity(q.value); err != nil {
 			errs = append(errs, newFieldError(q.name, "%s: %q is not a valid Kubernetes quantity: %v", q.name, q.value, err))
 		}
+	}
+
+	// the ratios themselves are range checked by the validate tags on models.Overcommit
+	if bp.Podman.Resources.Overcommit != nil {
+		errs = append(errs, newFieldError("podman.resources.overcommit", "podman.resources.overcommit: not supported, set resources.overcommit instead"))
 	}
 	return errs
 }
@@ -785,6 +794,94 @@ func validateSecurityContexts(bp *models.Blueprint) []error {
 		}
 	}
 
+	return errs
+}
+
+// validatePodmanProfile checks the podman storage image and init container
+// settings against the storages they refer to. It validates the blueprint as
+// a workspace will see it, i.e. with the podman profile's defaults applied
+// (a placeholder user stands in for the workspace user).
+func validatePodmanProfile(bp *models.Blueprint) []error {
+	var errs []error
+
+	if bp.Podman.Profile != "" && !podmanprofile.Valid(bp.Podman.Profile) {
+		return []error{newFieldError("podman.profile", "podman.profile: unknown profile %q", bp.Podman.Profile)}
+	}
+
+	eff, err := podmanprofile.Effective(bp, &models.User{Username: "user", UID: 1000, GID: 1000})
+	if errors.Is(err, podmanprofile.ErrKataRuntimeClass) {
+		return []error{newFieldError("runtimeClassName", "runtimeClassName: %v", err)}
+	}
+	if err != nil {
+		return []error{newFieldError("podman.profile", "podman.profile: %v", err)}
+	}
+	p := eff.Podman
+	if !p.Enabled {
+		return nil
+	}
+
+	for i, ic := range p.InitContainers {
+		for _, name := range ic.Storages {
+			if s, ok := p.Storages[name]; !ok || !s.Enabled {
+				errs = append(errs, newFieldError(fmt.Sprintf("podman.initContainers[%d].storages", i),
+					"podman.initContainers[%d]: storage %q is not an enabled podman storage", i, name))
+			}
+		}
+	}
+
+	if n := p.CacheTrimSeconds; n != nil && *n != 0 {
+		switch {
+		case *n < podmanprofile.MinCacheTrimSeconds:
+			errs = append(errs, newFieldError("podman.cacheTrimSeconds",
+				"podman.cacheTrimSeconds %d must be 0 (off) or at least %d", *n, podmanprofile.MinCacheTrimSeconds))
+		case eff.RuntimeClassName == "":
+			errs = append(errs, newFieldError("podman.cacheTrimSeconds",
+				"podman.cacheTrimSeconds needs runtimeClassName: in a plain container it would drop the node's page cache"))
+		}
+	}
+
+	si := p.StorageImage
+	if si == nil {
+		return errs
+	}
+	storage, ok := p.Storages[si.Storage]
+	if !ok || !storage.Enabled {
+		return append(errs, newFieldError("podman.storageImage.storage",
+			"podman.storageImage.storage: %q is not an enabled podman storage", si.Storage))
+	}
+	if si.DiskPath == "" {
+		errs = append(errs, newFieldError("podman.storageImage.diskPath", "podman.storageImage.diskPath is required"))
+	}
+
+	volumeMode := podmanprofile.ClaimVolumeMode(storage)
+	claim, hasClaim := podmanprofile.StorageSize(storage)
+	switch si.Mode {
+	case "block":
+		if !podmanprofile.IsPVC(storage) {
+			errs = append(errs, newFieldError("podman.storageImage.mode",
+				"podman.storageImage: mode block needs a persistent volume claim, podman.storages[%s] is type %s", si.Storage, storage.Type))
+		} else if volumeMode != "Block" {
+			errs = append(errs, newFieldError("podman.storageImage.mode",
+				"podman.storageImage: mode block needs podman.storages[%s].claimSpec.volumeMode Block, got %s", si.Storage, volumeMode))
+		}
+	case "file":
+		if volumeMode == "Block" {
+			errs = append(errs, newFieldError("podman.storageImage.mode",
+				"podman.storageImage: mode file needs a Filesystem claim, podman.storages[%s] is volumeMode Block", si.Storage))
+		}
+		if si.Size == "" {
+			errs = append(errs, newFieldError("podman.storageImage.size",
+				"podman.storageImage.size is required (it defaults to 90%% of the claim, or of the sizeLimit of an emptyDir storage, when that is set)"))
+			break
+		}
+		q, err := resource.ParseQuantity(si.Size)
+		if err != nil {
+			errs = append(errs, newFieldError("podman.storageImage.size", "podman.storageImage.size: %q is not a valid quantity: %v", si.Size, err))
+		} else if hasClaim && q.Value() >= claim {
+			errs = append(errs, newFieldError("podman.storageImage.size",
+				"podman.storageImage.size %s must be smaller than the capacity of podman.storages[%s], or the volume fills up under the image", si.Size, si.Storage))
+		}
+	}
 	return errs
 }
 

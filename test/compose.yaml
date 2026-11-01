@@ -11,6 +11,7 @@ services:
       SECRET_FILES: /app/secrets
       WORKSPACE_REGISTRY: "fitcr.ksi.in.fit.cvut.cz"
       WORKSPACE_STORAGE_CLASS: "zfs-csi-k8shell-test"
+      KATA_RUNTIME_CLASS: "kata-qemu"
       HELM_DEBUG: "true"
       HELM_DEBUG_MANIFEST: "true"
       USERNAME: "testuser"

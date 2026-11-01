@@ -261,7 +261,11 @@ func sanitizeBlueprintForInjection(bp *models.Blueprint) (*models.Blueprint, err
 		}
 	}
 
+	// An injected workload keeps its own runtime class, and the podman sidecar
+	// (with its profile) is never added to it.
+	copy.RuntimeClassName = ""
 	copy.Podman.Enabled = false
+	copy.Podman.Profile = ""
 	for name, s := range copy.Podman.Storages {
 		s.Enabled = false
 		copy.Podman.Storages[name] = s

@@ -48,6 +48,22 @@ var ciliumNetworkPolicyGVR = schema.GroupVersionResource{
 	Resource: "ciliumnetworkpolicies",
 }
 
+// ErrResizeUnsupported is returned when a workspace's resources cannot be
+// resized in place, e.g. because it runs in a VM-based runtime class.
+var ErrResizeUnsupported = errors.New("live resize is not supported")
+
+// checkResizable refuses a live resize for a pod in a VM-based runtime class
+// (e.g. Kata). Such a runtime sizes its VM once, when the pod starts, from the
+// container limits, so patching the limits afterwards would report success
+// without giving the workspace any more CPU or memory.
+func checkResizable(pod *corev1.Pod) error {
+	if rc := pod.Spec.RuntimeClassName; rc != nil && *rc != "" {
+		return fmt.Errorf("%w: workspace %s runs in runtime class %q, which sizes its VM at start; restart the workspace to change its resources",
+			ErrResizeUnsupported, pod.Name, *rc)
+	}
+	return nil
+}
+
 // UpdateOptions describes an out-of-band change to a workspace's CPU/memory
 // limits and/or its network policy. It is applied directly to the live
 // Kubernetes objects, leaving the Helm release untouched.
@@ -329,6 +345,10 @@ func (w *Workspace) resizeMainContainer(ctx context.Context, cpu, memory string)
 			return "", "", fmt.Errorf("%w: %s", models.ErrWorkspaceNotFound, w.Name)
 		}
 		return "", "", fmt.Errorf("failed to get workspace pod %s: %w", w.Name, err)
+	}
+
+	if err := checkResizable(pod); err != nil {
+		return "", "", err
 	}
 
 	var current *corev1.Container

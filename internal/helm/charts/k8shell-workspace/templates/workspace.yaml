@@ -1,7 +1,19 @@
 {{- $podman := .Values.podman | default dict -}}
+{{- /* requests derived from resources.overcommit; empty when no ratio is set */ -}}
+{{- $rr := .Values.resourceRequests | default dict -}}
+{{- $mainRR := $rr.main | default dict -}}
+{{- $podmanRR := $rr.podman | default dict -}}
 {{- $defaultSecurityContext := dict "runAsUser" 0 "runAsGroup" 0 -}}
 {{- $securityContext := merge (dict) (.Values.securityContext | default dict) $defaultSecurityContext -}}
 {{- $releaseName := .Release.Name }}
+{{- $si := $podman.storageImage | default dict -}}
+{{- $siBlock := eq ($si.mode | default "") "block" -}}
+{{- $siStorage := $si.storage | default "graphdb" -}}
+{{- $siMount := $si.mountPath | default "/var/lib/containers/storage" -}}
+{{- $siEnabled := and ($podman.enabled | default false) $si.mode -}}
+{{- /* storages the init-base container chowns: a raw block device cannot be */ -}}
+{{- $chownPodmanStorages := $podman.storages | default dict -}}
+{{- if and $siEnabled $siBlock }}{{- $chownPodmanStorages = omit $chownPodmanStorages $siStorage -}}{{- end -}}
 
 apiVersion: v1
 kind: Pod
@@ -27,6 +39,9 @@ metadata:
   labels:
     {{- include "workspace.workspaceLabels" . | nindent 4 }} 
 spec:
+  {{- if .Values.runtimeClassName }}
+  runtimeClassName: {{ .Values.runtimeClassName }}
+  {{- end }}
   {{ if .Values.__registry__.regcred }}
   imagePullSecrets:
   - name: {{ .Values.__registry__.regcred }}
@@ -46,6 +61,9 @@ spec:
       # tail of the container log into state.terminated.message, which the
       # provisioner surfaces as lastFailMessage.
       terminationMessagePolicy: FallbackToLogsOnError
+      {{- if .Values.runtimeClassName }}
+      {{- include "workspace.vmInitResources" . | nindent 6 }}
+      {{- end }}
       securityContext:
         runAsUser: 0
         runAsGroup: 0
@@ -56,15 +74,80 @@ spec:
           /k8shell/dist/scripts/init-base
           {{- include "workspace.storage.chownCommands" (dict "storages" .Values.storages "user" .Values.__user__) | nindent 10 }}
           {{- if ($podman.enabled | default false) }}
-          {{- include "workspace.storage.chownCommands" (dict "storages" $podman.storages "user" .Values.__user__) | nindent 10 }}
+          {{- include "workspace.storage.chownCommands" (dict "storages" $chownPodmanStorages "user" .Values.__user__) | nindent 10 }}
           {{- end }}
       volumeMounts:
         - name: bin-volume
           mountPath: /usr/local/bin
         {{- include "workspace.storage.chownVolumeMounts" (dict "storages" .Values.storages "prefix" "" "user" .Values.__user__) | nindent 8 }}
         {{- if ($podman.enabled | default false) }}
-        {{- include "workspace.storage.chownVolumeMounts" (dict "storages" $podman.storages "prefix" "podman-" "user" .Values.__user__) | nindent 8 }}
+        {{- include "workspace.storage.chownVolumeMounts" (dict "storages" $chownPodmanStorages "prefix" "podman-" "user" .Values.__user__) | nindent 8 }}
         {{- end }}
+
+    {{- if $siEnabled }}
+    #### init container that prepares the podman storage image (file) or device (block)
+    - name: init-podman-disk
+      image: {{ include "workspace.imageWithRegistry" (dict "image" (required "podman.storageImage.initImage is required" $si.initImage) "registry" .Values.__registry__.host) }}
+      imagePullPolicy: {{ .Values.k8shelld.imagePullPolicy }}
+      terminationMessagePolicy: FallbackToLogsOnError
+      {{- if .Values.runtimeClassName }}
+      {{- include "workspace.vmInitResources" . | nindent 6 }}
+      {{- end }}
+      securityContext:
+        runAsUser: 0
+        runAsGroup: 0
+      command:
+        - /bin/sh
+        - -c
+        - |
+          set -e
+          {{- if $siBlock }}
+          dev={{ required "podman.storageImage.diskPath is required for mode block" $si.diskPath }}
+          blkid $dev >/dev/null 2>&1 || mkfs.ext4 -q $dev
+          {{- else }}
+          img={{ required "podman.storageImage.diskPath is required for mode file" $si.diskPath }}/storage.img
+          [ -f $img ] && exit 0
+          # build under a temporary name so an interrupted run is never mistaken for a formatted image
+          rm -f $img.tmp
+          truncate -s {{ required "podman.storageImage.size is required for mode file" $si.size }} $img.tmp
+          mkfs.ext4 -q -F $img.tmp
+          mv $img.tmp $img
+          {{- end }}
+      {{- if $siBlock }}
+      volumeDevices:
+        - name: storage-podman-{{ $siStorage }}
+          devicePath: {{ $si.diskPath }}
+      {{- else }}
+      volumeMounts:
+        - name: storage-podman-{{ $siStorage }}
+          mountPath: {{ $si.diskPath }}
+      {{- end }}
+    {{- end }}
+
+    {{- range $ic := ($podman.initContainers | default list) }}
+    {{- if $podman.enabled }}
+    - name: {{ $ic.name }}
+      image: {{ include "workspace.imageWithRegistry" (dict "image" $ic.image "registry" $.Values.__registry__.host) }}
+      imagePullPolicy: {{ $.Values.k8shelld.imagePullPolicy }}
+      terminationMessagePolicy: FallbackToLogsOnError
+      {{- if $.Values.runtimeClassName }}
+      {{- include "workspace.vmInitResources" $ | nindent 6 }}
+      {{- end }}
+      securityContext:
+        runAsUser: 0
+        runAsGroup: 0
+      command:
+        {{- toYaml $ic.command | nindent 8 }}
+      {{- if $ic.storages }}
+      volumeMounts:
+        {{- range $sn := $ic.storages }}
+        {{- $st := index ($podman.storages | default dict) $sn }}
+        - name: storage-podman-{{ $sn }}
+          mountPath: {{ (required (printf "podman.initContainers[%s]: unknown storage %s" $ic.name $sn) $st).path }}
+        {{- end }}
+      {{- end }}
+    {{- end }}
+    {{- end }}
 
   containers:
     #### main container
@@ -87,8 +170,8 @@ spec:
       {{- if .Values.resources }}
       resources:
         requests:
-          cpu: "0.1"
-          memory: "128Mi"
+          cpu: {{ $mainRR.cpu | default "0.1" | quote }}
+          memory: {{ $mainRR.memory | default "128Mi" | quote }}
         limits:
           {{- if .Values.resources.cpu }}
           cpu: {{ .Values.resources.cpu }}
@@ -175,6 +258,18 @@ spec:
     {{- if ($podman.enabled | default false) }}
     - name: k8shell-podman
       image: {{ $podman.image }}
+      {{- if .Values.runtimeClassName }}
+      # Only for VM runtimes: the kubelet sets the pod cgroup memory limit (which bounds
+      # the VM guest RAM on the host) only when every container has a memory limit.
+      # Note the sidecar limit also counts into the VM size.
+      resources:
+        requests:
+          cpu: {{ $podmanRR.cpu | default "10m" | quote }}
+          memory: {{ $podmanRR.memory | default "128Mi" | quote }}
+        limits:
+          cpu: {{ ($podman.resources).cpu | default "1" | quote }}
+          memory: {{ ($podman.resources).memory | default "2Gi" | quote }}
+      {{- end }}
       # command: ["/bin/sh"]
       # args:
       # - -c
@@ -187,6 +282,40 @@ spec:
       # Run under catatonit (shipped with podman) as PID 1. podman itself does not
       # reap orphaned conmon/runtime children reparented to PID 1, so without an
       # init every `podman run`/`exec` leaves zombies behind on the node.
+      {{- if or $podman.startupScript $siEnabled $podman.cacheTrimSeconds }}
+      # A startup script and/or the storage image mount run first, as root.
+      command:
+      - /bin/sh
+      - -c
+      args:
+      - |
+        set -e
+        {{- if $podman.startupScript }}
+        {{- $podman.startupScript | nindent 8 }}
+        {{- end }}
+        {{- if $siEnabled }}
+        mkdir -p {{ $siMount }}
+        {{- if $siBlock }}
+        mount {{ $si.diskPath }} {{ $siMount }}
+        {{- else }}
+        # Attach the image with direct I/O, so its data isn't cached twice in the
+        # guest (by the loop device and by the backing file), and reuse the device
+        # when the container restarts.
+        img={{ $si.diskPath }}/storage.img
+        dev=$(losetup -j $img -n -O NAME | head -n 1)
+        [ -n "$dev" ] || dev=$(losetup -f --show --direct-io=on $img)
+        losetup --direct-io=on $dev
+        mount $dev {{ $siMount }}
+        {{- end }}
+        {{- end }}
+        {{- /* Only for a VM-based runtime class: in a plain container the privileged
+               write to /proc/sys/vm would drop the node's page cache. */}}
+        {{- if and .Values.runtimeClassName $podman.cacheTrimSeconds }}
+        # return cold guest page cache to the host
+        ( while true; do sleep {{ $podman.cacheTrimSeconds | int }}; echo 1 > /proc/sys/vm/drop_caches; done ) &
+        {{- end }}
+        exec /usr/libexec/podman/catatonit -- podman system service --time=0 unix:///var/run/podman/podman.sock
+      {{- else }}
       command:
       - /usr/libexec/podman/catatonit
       - --
@@ -196,6 +325,7 @@ spec:
       - service
       - --time=0
       - unix:///var/run/podman/podman.sock
+      {{- end }}
       # On non-zero exit with an empty /dev/termination-log, the kubelet copies the
       # tail of the container log into state.terminated.message, which the
       # provisioner surfaces as lastFailMessage.
@@ -227,7 +357,7 @@ spec:
       {{- end }}
       {{- if $podman.storages }}
       {{- range $storageName, $storage := $podman.storages }}
-      {{- if and $storage (kindIs "map" $storage) ($storage.enabled | default false) }}
+      {{- if and $storage (kindIs "map" $storage) ($storage.enabled | default false) (not (and $siEnabled $siBlock (eq $storageName $siStorage))) }}
         - name: storage-podman-{{ $storageName }}
           mountPath: {{ $storage.path }}
           readOnly: {{ $storage.readonly | default false }}
@@ -240,6 +370,11 @@ spec:
           mountPath: {{ $path }}
           subPath: {{ $path | replace "/" "__" }}
       {{- end }}
+      {{- end }}
+      {{- if and $siEnabled $siBlock }}
+      volumeDevices:
+        - name: storage-podman-{{ $siStorage }}
+          devicePath: {{ $si.diskPath }}
       {{- end }}
     {{- end }}
 
@@ -302,8 +437,23 @@ spec:
   {{- range $storageName, $storage := $podman.storages }}
   {{- if and $storage (kindIs "map" $storage) ($storage.enabled | default false) }}
   - name: storage-podman-{{ $storageName }}
+    {{- if eq ($storage.type | default "local") "memory" }}
+    emptyDir:
+      medium: Memory
+      {{- if $storage.sizeLimit }}
+      sizeLimit: {{ $storage.sizeLimit }}
+      {{- end }}
+    {{- else if eq ($storage.type | default "local") "emptyDir" }}
+    {{- if $storage.sizeLimit }}
+    emptyDir:
+      sizeLimit: {{ $storage.sizeLimit }}
+    {{- else }}
+    emptyDir: {}
+    {{- end }}
+    {{- else }}
     persistentVolumeClaim:
       claimName: pvc-{{ $releaseName }}-podman-{{ $storageName }}
+    {{- end }}
   {{- end }}
   {{- end }}
   {{- end }}
@@ -319,7 +469,12 @@ spec:
   {{- end }}
   {{- if ($podman.enabled | default false) }}
   - name: podman-sock
+    {{- if $podman.socketMedium }}
+    emptyDir:
+      medium: {{ $podman.socketMedium }}
+    {{- else }}
     emptyDir: {}
+    {{- end }}
   {{- if $podman.extFiles }}
   - name: podman-ext-files-volume
     configMap:

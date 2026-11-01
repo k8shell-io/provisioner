@@ -12,7 +12,7 @@
 {{- if ($podman.enabled | default false) }}
 {{- if $podman.storages }}
 {{- range $storageName, $storage := $podman.storages }}
-{{- if and $storage ($storage.enabled | default false) }}
+{{- if and $storage ($storage.enabled | default false) (ne ($storage.type | default "local") "memory") (ne ($storage.type | default "local") "emptyDir") }}
 ---
   {{- include "pvc-template" (dict "name" $storageName "storage" $storage "pvcPrefix" "podman-" "ctx" $ ) }}
 {{- end }}

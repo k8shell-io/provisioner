@@ -31,6 +31,7 @@ import (
 	"github.com/k8shell-io/provisioner/internal/blueprint"
 	"github.com/k8shell-io/provisioner/internal/config"
 	"github.com/k8shell-io/provisioner/internal/helm"
+	"github.com/k8shell-io/provisioner/internal/podmanprofile"
 	"github.com/rs/zerolog"
 	"gopkg.in/yaml.v3"
 	"helm.sh/helm/v3/pkg/release"
@@ -903,7 +904,12 @@ func (w *Workspace) Values() (map[string]interface{}, error) {
 		return nil, fmt.Errorf("blueprint is nil for workspace %s", w.Name)
 	}
 
-	values, err := toMap(w.blueprint)
+	bp, err := podmanprofile.Effective(w.blueprint, w.user)
+	if err != nil {
+		return nil, fmt.Errorf("failed to apply podman profile: %w", err)
+	}
+
+	values, err := toMap(bp)
 	if err != nil {
 		return nil, fmt.Errorf("failed to convert blueprint to map: %w", err)
 	}
@@ -914,6 +920,25 @@ func (w *Workspace) Values() (map[string]interface{}, error) {
 				repo, _, _ := strings.Cut(image, ":")
 				k8shelldValues["image"] = repo + ":" + k8shelldTagOverride
 			}
+		}
+	}
+
+	mainRequests, err := overcommitRequests(bp.Resources)
+	if err != nil {
+		return nil, fmt.Errorf("failed to derive resource requests: %w", err)
+	}
+	podmanRequests, err := overcommitRequests(models.Resources{
+		CPU:        bp.Podman.Resources.CPU,
+		Memory:     bp.Podman.Resources.Memory,
+		Overcommit: bp.Resources.Overcommit,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to derive podman resource requests: %w", err)
+	}
+	if mainRequests != nil || podmanRequests != nil {
+		values["resourceRequests"] = map[string]interface{}{
+			"main":   mainRequests,
+			"podman": podmanRequests,
 		}
 	}
 

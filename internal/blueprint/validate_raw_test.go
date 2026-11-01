@@ -1138,3 +1138,43 @@ func TestValidateRawBlueprintClaimSpecResourceNames(t *testing.T) {
 		})
 	}
 }
+
+// TestValidateRawBlueprintOvercommit checks the resources.overcommit ratios:
+// a ratio below 1 would make the request larger than the limit, and the
+// podman section has no overcommit of its own.
+func TestValidateRawBlueprintOvercommit(t *testing.T) {
+	bm := newTestManager(t, nil)
+
+	base := `
+name: my-blueprint
+description: A test blueprint
+image: myimage:latest
+k8shelld:
+  image: k8shelld-image:latest
+resources:
+  cpu: 4
+  memory: 8Gi
+`
+	tests := []struct {
+		name       string
+		extra      string
+		wantIssues int
+	}{
+		{"valid ratios", "  overcommit:\n    cpu: 4\n    memory: 1.5\npodman:\n  resources:\n    cpu: 500m\n    memory: 512Mi\n", 0},
+		{"memory below one", "  overcommit:\n    memory: 0.5\npodman:\n  resources:\n    cpu: 500m\n    memory: 512Mi\n", 1},
+		{"cpu below one", "  overcommit:\n    cpu: 0\npodman:\n  resources:\n    cpu: 500m\n    memory: 512Mi\n", 1},
+		{"podman overcommit", "podman:\n  resources:\n    cpu: 500m\n    memory: 512Mi\n    overcommit:\n      memory: 2\n", 1},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			issues, _, err := bm.ValidateRawBlueprint([]byte(base + tt.extra))
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if len(issues) != tt.wantIssues {
+				t.Fatalf("expected %d issues, got %+v", tt.wantIssues, issues)
+			}
+		})
+	}
+}

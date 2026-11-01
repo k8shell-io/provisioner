@@ -1,0 +1,67 @@
+blueprints:
+  # *** Template for workspaces that run in a Kata Containers VM ****
+  #
+  # The whole pod is one VM (RuntimeClass kata-qemu), including the privileged
+  # podman sidecar, so privileged only applies inside the guest. The `kata`
+  # podman profile fills in the guest setup script, the
+  # podman storage image and its configuration; see internal/podmanprofile.
+  #
+  # The VM starts with 512Mi and 1 vCPU plus the limits of the containers, and
+  # is not resized afterwards. Podman containers and nested clusters (kind)
+  # must fit into resources below.
+  #
+  # Guest RAM is backed by the node's /dev/shm and a VM only ever grows, so
+  # the sum of the VM sizes on a node must fit into /dev/shm (default: half of
+  # the node's RAM; raise it) and into the node's memory. Return of memory to
+  # the host needs on the Kata nodes (configuration-qemu-runtime-rs.toml):
+  #   reclaim_guest_freed_memory = true     # free page reporting
+  #   mem_agent_enable = true               # evicts cold guest page cache
+  # and podman.cacheTrimSeconds (kata profile: every 300s, 0 turns it off)
+  # drops what the memory agent leaves behind.
+  - name: kata
+    template: base
+    isTemplate: true
+    description: Workspace running in a Kata VM with a podman engine that supports nested containers and kind.
+
+    # the runtime class is always explicit (podman.profile: kata requires it);
+    # its name differs per cluster, so the provisioner must have
+    # KATA_RUNTIME_CLASS set (e.g. kata-qemu), or blueprints fail to load
+    runtimeClassName: !cel env("KATA_RUNTIME_CLASS")
+
+    # must provide mkfs.ext4 and blkid: it also prepares the podman storage
+    # (override podman.storageImage.initImage to use another image)
+    image: registry.k8shell.io/workspaces/dev:1.13
+
+    resources:
+      cpu: 8
+      memory: 8Gi
+      # Requests are limit / ratio (main container and podman sidecar). Unset keeps
+      # the fixed default requests. Guest RAM of a VM is not reclaimable tmpfs on the
+      # node, so keep the memory ratio low (1-2); CPU is only throttled, it can be higher.
+      # overcommit:
+      #   cpu: 4
+      #   memory: 2
+
+    podman:
+      enabled: true
+      profile: kata
+
+      # cacheTrimSeconds: 300   # drop the guest page cache every N seconds, 0 = off
+
+      # storageImage:
+      #   mode: file      # sparse ext4 image on a filesystem volume (default)
+      #   mode: block     # raw block volume, needs claimSpec.volumeMode: Block
+      #   size: 13Gi      # file mode only, defaults to 90% of the claim
+
+      storages:
+        graphdb:
+          enabled: true
+          readonly: false
+          claimSpec:
+            storageClassName: openebs-zfspv
+            accessModes:
+              - ReadWriteOnce
+            # volumeMode: Block   # for storageImage.mode: block
+            resources:
+              requests:
+                storage: 15Gi
