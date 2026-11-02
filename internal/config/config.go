@@ -19,12 +19,17 @@ import (
 	"github.com/k8shell-io/common/pkg/gapi"
 	natsc "github.com/k8shell-io/common/pkg/nats"
 	"github.com/k8shell-io/common/pkg/validator"
+	"k8s.io/apimachinery/pkg/util/validation"
 )
 
 // Config represents the server configuration
 type Config struct {
-	TargetNamespace     string                  `yaml:"targetNamespace" validate:"required"`
-	InjectNamespaces    []string                `yaml:"injectNamespaces"`
+	TargetNamespace  string   `yaml:"targetNamespace" validate:"required"`
+	InjectNamespaces []string `yaml:"injectNamespaces"`
+	// NodeSelectorKeys are the node label keys (e.g. "k8shell.io/pool") whose
+	// values are discovered from cluster nodes and offered as placement
+	// options. Discovery needs cluster-wide get/list/watch on nodes.
+	NodeSelectorKeys    []string                `yaml:"nodeSelectorKeys"`
 	ClusterDomain       string                  `yaml:"clusterDomain"`
 	DefaultRegistry     DefaultRegistry         `yaml:"defaultRegistry"`
 	PrivateRegistry     PrivateRegistry         `yaml:"privateRegistry"`
@@ -209,6 +214,12 @@ func NewConfig(configFile string) (*Config, error) {
 		cfg.InjectNamespaces[i] = ns
 	}
 
+	keys, err := normalizeNodeSelectorKeys(cfg.NodeSelectorKeys)
+	if err != nil {
+		return nil, err
+	}
+	cfg.NodeSelectorKeys = keys
+
 	cfg.BaseDir = filepath.Dir(configFile)
 
 	injectedNamespaces := make([]string, 0, len(cfg.InjectNamespaces))
@@ -259,4 +270,23 @@ func (c *Config) IsClusterWideInjectionEnabled() bool {
 		}
 	}
 	return false
+}
+
+// normalizeNodeSelectorKeys trims the keys, drops duplicates and rejects any
+// that is not a valid Kubernetes label key.
+func normalizeNodeSelectorKeys(in []string) ([]string, error) {
+	var out []string
+	seen := make(map[string]struct{}, len(in))
+	for i, k := range in {
+		k = strings.TrimSpace(k)
+		if errs := validation.IsQualifiedName(k); len(errs) > 0 {
+			return nil, fmt.Errorf("nodeSelectorKeys[%d] %q is not a valid label key: %s", i, k, strings.Join(errs, "; "))
+		}
+		if _, dup := seen[k]; dup {
+			continue
+		}
+		seen[k] = struct{}{}
+		out = append(out, k)
+	}
+	return out, nil
 }

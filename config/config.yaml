@@ -10,6 +10,13 @@ targetNamespace: workspaces-staging
 injectNamespaces:
   - k8shell-test
 
+# Node label keys whose values are discovered from cluster nodes and offered as
+# placement options (see the GetNodeSelectorOptions RPC). Requires a
+# ClusterRole granting get/list/watch on nodes; the provisioner fails to start
+# without it when keys are configured.
+nodeSelectorKeys:
+  - k8shell.io/pool
+
 clusterDomain: cluster.local
 
 # Rate limit for the in-cluster Kubernetes client used for all workspace

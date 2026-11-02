@@ -27,6 +27,7 @@ import (
 	"github.com/k8shell-io/provisioner/internal/config"
 	"github.com/k8shell-io/provisioner/internal/db"
 	"github.com/k8shell-io/provisioner/internal/helm"
+	"github.com/k8shell-io/provisioner/internal/nodepool"
 	"github.com/rs/zerolog"
 	"google.golang.org/grpc"
 )
@@ -46,6 +47,7 @@ type Server struct {
 	grpc            *gapi.Server
 	bpManager       *blueprint.BlueprintManager
 	helm            *helm.Client
+	nodePools       *nodepool.Discovery
 	provisionJobsKV *natsc.JetStreamKV
 	// threatDetectionKV is the worktrace-owned bucket holding per-workspace
 	// threat:detect decisions; opened lazily by threatDetection.
@@ -210,6 +212,8 @@ func NewServer(configFile string, appVersion string, commit string) (*Server, er
 		return nil, fmt.Errorf("failed to create Helm client: %w", err)
 	}
 
+	server.nodePools = nodepool.New(server.helm.KubeClient(), server.config.NodeSelectorKeys)
+
 	server.helm.AppVersion = appVersion
 	server.helm.Commit = commit
 
@@ -293,6 +297,12 @@ func (s *Server) Serve() error {
 	// Serve the read-only workspace lookups from watch-backed caches rather
 	// than listing pods and Helm release secrets on every request.
 	s.helm.StartWorkspaceInformers(ctx, s.config.InjectNamespaces)
+
+	// Node selector discovery is required whenever keys are configured:
+	// refuse to start rather than serve empty options.
+	if err := s.nodePools.Start(ctx); err != nil {
+		return fmt.Errorf("start node selector discovery: %w", err)
+	}
 
 	// Start injection watcher whenever injection is configured.
 	if len(s.config.InjectNamespaces) > 0 {
