@@ -50,6 +50,10 @@ var WorkspacesQueryDescriptor = query.NewDescriptor("workspaces").
 		queryv1.Operator_OPERATOR_EQ, queryv1.Operator_OPERATOR_NE, queryv1.Operator_OPERATOR_IN, queryv1.Operator_OPERATOR_EXISTS).
 	Field("workspace_type", queryv1.FieldType_FIELD_TYPE_STRING,
 		queryv1.Operator_OPERATOR_EQ, queryv1.Operator_OPERATOR_NE, queryv1.Operator_OPERATOR_IN).
+	// runtime is unset for the cluster's default runtime, so it supports
+	// EXISTS to select (or exclude) workspaces in a runtime class.
+	Field("runtime", queryv1.FieldType_FIELD_TYPE_STRING,
+		queryv1.Operator_OPERATOR_EQ, queryv1.Operator_OPERATOR_NE, queryv1.Operator_OPERATOR_IN, queryv1.Operator_OPERATOR_EXISTS).
 	// workload_kind/workload_name are only set on injected workspaces, so
 	// they support EXISTS the way the optional repo_* fields do.
 	Field("workload_kind", queryv1.FieldType_FIELD_TYPE_STRING,
@@ -120,6 +124,7 @@ var workspaceFieldValues = map[string]func(w *models.WorkspaceDetails) (string, 
 	"workspace_type": func(w *models.WorkspaceDetails) (string, bool) {
 		return string(w.WorkspaceType), w.WorkspaceType != ""
 	},
+	"runtime":       func(w *models.WorkspaceDetails) (string, bool) { return w.Runtime, w.Runtime != "" },
 	"workload_kind": func(w *models.WorkspaceDetails) (string, bool) { return w.WorkloadKind, w.WorkloadKind != "" },
 	"workload_name": func(w *models.WorkspaceDetails) (string, bool) { return w.WorkloadName, w.WorkloadName != "" },
 	"network_policy_class": func(w *models.WorkspaceDetails) (string, bool) {

@@ -122,6 +122,15 @@ func formatLastFailMessage(reason, msg string) string {
 	return msg
 }
 
+// podRuntime returns the runtime class the pod runs in, or "" for the
+// cluster's default runtime.
+func podRuntime(pod *corev1.Pod) string {
+	if rc := pod.Spec.RuntimeClassName; rc != nil {
+		return *rc
+	}
+	return ""
+}
+
 // podHostname returns the workspace's in-cluster DNS name. It prefers the
 // k8shell.io/hostname label ("<hostname>.<subdomain>") stamped by the chart, and
 // falls back to deriving "<hostname>.<subdomain>.<namespace>" from the pod spec

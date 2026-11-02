@@ -1445,6 +1445,7 @@ func workspaceDetailsCore(pod *corev1.Pod) *models.WorkspaceDetails {
 		WebProxyAliasMessage: webProxyAliasMessage,
 
 		WorkspaceType: workspaceType,
+		Runtime:       podRuntime(pod),
 		WorkloadKind:  workloadKind,
 		WorkloadName:  workloadName,
 	}
