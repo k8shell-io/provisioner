@@ -25,9 +25,9 @@ const syncTimeout = 30 * time.Second
 // Value is one value of a selector key and the nodes carrying it.
 type Value struct {
 	Value            string
-	NodeCount        int
-	ReadyCount       int
-	SchedulableCount int
+	NodeCount        int32
+	ReadyCount       int32
+	SchedulableCount int32
 }
 
 // Key is a configured selector key with its discovered values, sorted by

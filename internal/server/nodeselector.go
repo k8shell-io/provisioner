@@ -20,9 +20,9 @@ func (p *ProvisionerService) GetNodeSelectorOptions(ctx context.Context,
 		for _, v := range k.Values {
 			pk.Values = append(pk.Values, &provisionerv1.NodeSelectorValue{
 				Value:            v.Value,
-				NodeCount:        int32(v.NodeCount),
-				ReadyCount:       int32(v.ReadyCount),
-				SchedulableCount: int32(v.SchedulableCount),
+				NodeCount:        v.NodeCount,
+				ReadyCount:       v.ReadyCount,
+				SchedulableCount: v.SchedulableCount,
 			})
 		}
 		resp.Keys = append(resp.Keys, pk)
