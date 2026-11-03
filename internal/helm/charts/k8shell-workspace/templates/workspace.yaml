@@ -500,16 +500,26 @@ spec:
       secretName: {{ .Release.Name }}-tls
   {{- end }}
 
-  {{- if .Values.affinity }}
+  {{- if or .Values.affinity .Values.orgNodeSelector }}
   affinity:
     nodeAffinity:
       requiredDuringSchedulingIgnoredDuringExecution:
         nodeSelectorTerms:
         - matchExpressions:
+          {{- if .Values.affinity }}
           - key: kubernetes.io/hostname
             operator: In
             values:
             {{- toYaml .Values.affinity | nindent 12 }}
+          {{- end }}
+          {{- range $key, $vals := .Values.orgNodeSelector }}
+          - key: {{ $key | quote }}
+            operator: In
+            values:
+            {{- range $vals }}
+            - {{ . | quote }}
+            {{- end }}
+          {{- end }}
   {{- end }}
 
   enableServiceLinks: false

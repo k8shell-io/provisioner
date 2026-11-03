@@ -122,6 +122,34 @@ func formatLastFailMessage(reason, msg string) string {
 	return msg
 }
 
+// podNodeSelectors reports the node placement constraint on the pod as key to
+// label value. It combines the pod's nodeSelector with the required node
+// affinity terms that select on a label with the In operator, joining several
+// values with commas (the encoding orgs use). The hostname term is skipped: it
+// pins to specific nodes and is not a selector. A stopped workspace's pod comes
+// from the release manifest and carries the same fields.
+func podNodeSelectors(pod *corev1.Pod) map[string]string {
+	out := map[string]string{}
+	for k, v := range pod.Spec.NodeSelector {
+		out[k] = v
+	}
+	if aff := pod.Spec.Affinity; aff != nil && aff.NodeAffinity != nil &&
+		aff.NodeAffinity.RequiredDuringSchedulingIgnoredDuringExecution != nil {
+		for _, term := range aff.NodeAffinity.RequiredDuringSchedulingIgnoredDuringExecution.NodeSelectorTerms {
+			for _, e := range term.MatchExpressions {
+				if e.Operator != corev1.NodeSelectorOpIn || e.Key == corev1.LabelHostname {
+					continue
+				}
+				out[e.Key] = strings.Join(e.Values, ",")
+			}
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
 // podRuntime returns the runtime class the pod runs in, or "" for the
 // cluster's default runtime.
 func podRuntime(pod *corev1.Pod) string {

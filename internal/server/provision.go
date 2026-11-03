@@ -593,6 +593,27 @@ func (p *ProvisionerService) prepareWorkspaceWithUserStr(ctx context.Context,
 	workspace.SetAppliedObligations(obligations)
 	workspace.SetProvisionContext(provisionMode, workloadName, workloadNamespace, workloadKind)
 
+	// Place the workspace on the nodes the user's org selects. No org, or an org
+	// without selectors, leaves the pod free to run on any node. A lookup failure
+	// fails the provision rather than placing the workspace outside its org pool.
+	if user.Organization != "" {
+		org, err := p.server.Identity.GetOrganization(ctx, &identityv1.GetOrganizationRequest{Name: user.Organization})
+		if err != nil {
+			return nil, status.Errorf(status.Code(err), "failed to get organization %q: %v", user.Organization, err)
+		}
+		parsed, err := ws.ParseNodeSelectors(org.GetNodeSelectors())
+		if err == nil {
+			err = validateNodeSelectors(parsed, p.server.nodePools.Options())
+		}
+		if err == nil {
+			err = workspace.SetNodeSelectors(org.GetNodeSelectors())
+		}
+		if err != nil {
+			return nil, status.Errorf(codes.FailedPrecondition,
+				"organization %q has invalid node selectors: %v", user.Organization, err)
+		}
+	}
+
 	if err := workspace.FetchUserEnvVars(ctx); err != nil {
 		return nil, status.Errorf(codes.Internal, "failed to fetch user environment variables: %v", err)
 	}

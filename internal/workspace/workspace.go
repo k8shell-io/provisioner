@@ -15,6 +15,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"k8s.io/apimachinery/pkg/util/validation"
 	"slices"
 	"strconv"
 	"strings"
@@ -76,6 +77,7 @@ type Workspace struct {
 	pat               string
 	canonicalId       string
 	userEnvVars       map[string]string
+	nodeSelectors     map[string][]string
 }
 
 // Values is a typed container for a Helm values map.
@@ -727,17 +729,33 @@ func NewWorkspaceFromHelmRelease(ctx context.Context, name string, helmClient *h
 		}
 	}
 
+	// Keep the org placement the workspace was provisioned with, so re-rendering
+	// from the release does not silently drop the nodeSelector.
+	var nodeSelectors map[string][]string
+	if raw, ok := values["orgNodeSelector"].(map[string]interface{}); ok {
+		nodeSelectors = make(map[string][]string, len(raw))
+		for k, v := range raw {
+			vals, _ := v.([]interface{})
+			for _, e := range vals {
+				if sv, ok := e.(string); ok {
+					nodeSelectors[k] = append(nodeSelectors[k], sv)
+				}
+			}
+		}
+	}
+
 	ws := &Workspace{
-		Name:        name,
-		JobId:       jobId,
-		log:         log.NewLogger("workspace"),
-		client:      helmClient,
-		identify:    identityClient,
-		blueprint:   blueprint,
-		user:        user,
-		userStr:     canonicalUserStr,
-		config:      config,
-		canonicalId: canonicalId,
+		Name:          name,
+		JobId:         jobId,
+		nodeSelectors: nodeSelectors,
+		log:           log.NewLogger("workspace"),
+		client:        helmClient,
+		identify:      identityClient,
+		blueprint:     blueprint,
+		user:          user,
+		userStr:       canonicalUserStr,
+		config:        config,
+		canonicalId:   canonicalId,
 	}
 
 	return ws, nil
@@ -799,6 +817,49 @@ func (w *Workspace) SetProvisionContext(mode authz.WorkspaceProvisionMode, workl
 	w.workloadName = workloadName
 	w.workloadNamespace = workloadNamespace
 	w.workloadKind = workloadKind
+}
+
+// ParseNodeSelectors validates the org's node selectors and splits each value
+// on commas into the set of values the node label may have. Every key must be
+// a valid Kubernetes label key and every value a non-empty valid label value.
+// Duplicate values are dropped.
+func ParseNodeSelectors(selectors map[string]string) (map[string][]string, error) {
+	out := make(map[string][]string, len(selectors))
+	for k, raw := range selectors {
+		if errs := validation.IsQualifiedName(k); len(errs) > 0 {
+			return nil, fmt.Errorf("invalid node selector key %q: %s", k, strings.Join(errs, "; "))
+		}
+		seen := map[string]struct{}{}
+		for _, v := range strings.Split(raw, ",") {
+			v = strings.TrimSpace(v)
+			if v == "" {
+				return nil, fmt.Errorf("node selector %q has an empty value in %q", k, raw)
+			}
+			if errs := validation.IsValidLabelValue(v); len(errs) > 0 {
+				return nil, fmt.Errorf("invalid node selector value %q for key %q: %s", v, k, strings.Join(errs, "; "))
+			}
+			if _, dup := seen[v]; dup {
+				continue
+			}
+			seen[v] = struct{}{}
+			out[k] = append(out[k], v)
+		}
+	}
+	return out, nil
+}
+
+// SetNodeSelectors validates and stores the org's node selectors, where a
+// comma-separated value allows several label values for one key. Values()
+// renders them as required node affinity (values of one key are ORed, keys are
+// ANDed); an empty map leaves placement unrestricted. If any selector is
+// invalid nothing is stored and an error is returned.
+func (w *Workspace) SetNodeSelectors(selectors map[string]string) error {
+	parsed, err := ParseNodeSelectors(selectors)
+	if err != nil {
+		return err
+	}
+	w.nodeSelectors = parsed
+	return nil
 }
 
 // SetPAT stores the personal access token minted for this workspace so it can
@@ -1043,6 +1104,10 @@ func (w *Workspace) Values() (map[string]interface{}, error) {
 		envMap["WORKLOAD_KIND"] = w.workloadKind
 	}
 	values["env"] = envMap
+
+	if len(w.nodeSelectors) > 0 {
+		values["orgNodeSelector"] = w.nodeSelectors
+	}
 
 	return values, nil
 }
@@ -1446,6 +1511,8 @@ func workspaceDetailsCore(pod *corev1.Pod) *models.WorkspaceDetails {
 
 		WorkspaceType: workspaceType,
 		Runtime:       podRuntime(pod),
+		NodeSelectors: podNodeSelectors(pod),
+		NodeName:      pod.Spec.NodeName,
 		WorkloadKind:  workloadKind,
 		WorkloadName:  workloadName,
 	}
