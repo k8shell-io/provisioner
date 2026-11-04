@@ -593,24 +593,36 @@ func (p *ProvisionerService) prepareWorkspaceWithUserStr(ctx context.Context,
 	workspace.SetAppliedObligations(obligations)
 	workspace.SetProvisionContext(provisionMode, workloadName, workloadNamespace, workloadKind)
 
-	// Place the workspace on the nodes the user's org selects. No org, or an org
-	// without selectors, leaves the pod free to run on any node. A lookup failure
-	// fails the provision rather than placing the workspace outside its org pool.
+	// Place the workspace on the nodes the user's org selects. A user in an org
+	// must have it configured with node selectors: an org without any rejects
+	// the provision rather than letting the workspace land on any node. A user
+	// without an org is not placed. A lookup failure also fails the provision,
+	// so a workspace never lands outside its org's pool.
 	if user.Organization != "" {
 		org, err := p.server.Identity.GetOrganization(ctx, &identityv1.GetOrganizationRequest{Name: user.Organization})
 		if err != nil {
 			return nil, status.Errorf(status.Code(err), "failed to get organization %q: %v", user.Organization, err)
 		}
+		// InvalidArgument is deliberate. The provisioner client in common only
+		// passes the message of a few handshake codes through to callers; any
+		// other code (e.g. ResourceExhausted) is reported generically, and
+		// FailedPrecondition is mislabelled "workspace already exists".
+		if len(org.GetNodeSelectors()) == 0 {
+			return nil, status.Errorf(codes.InvalidArgument,
+				"cannot provision the workspace as there are no nodes configured in organization '%s'", user.Organization)
+		}
 		parsed, err := ws.ParseNodeSelectors(org.GetNodeSelectors())
-		if err == nil {
-			err = validateNodeSelectors(parsed, p.server.nodePools.Options())
-		}
-		if err == nil {
-			err = workspace.SetNodeSelectors(org.GetNodeSelectors())
-		}
 		if err != nil {
-			return nil, status.Errorf(codes.FailedPrecondition,
-				"organization %q has invalid node selectors: %v", user.Organization, err)
+			return nil, status.Errorf(codes.InvalidArgument,
+				"organization '%s' has invalid node selectors: %v", user.Organization, err)
+		}
+		if err := validateNodeSelectors(parsed, p.server.nodePools.Options()); err != nil {
+			return nil, status.Errorf(codes.InvalidArgument,
+				"cannot provision the workspace as the node selectors of organization '%s' match no nodes: %v", user.Organization, err)
+		}
+		if err := workspace.SetNodeSelectors(org.GetNodeSelectors()); err != nil {
+			return nil, status.Errorf(codes.InvalidArgument,
+				"organization '%s' has invalid node selectors: %v", user.Organization, err)
 		}
 	}
 
