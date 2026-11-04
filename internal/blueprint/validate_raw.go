@@ -333,6 +333,9 @@ func (bm *BlueprintManager) validateRawBlueprint(org string, data []byte) ([]Val
 	for _, e := range validateWebProxy(&bp) {
 		issues = append(issues, errorToIssue(e))
 	}
+	for _, e := range validateSchedule(&bp) {
+		issues = append(issues, errorToIssue(e))
+	}
 	for _, e := range validateEnvNames(&bp) {
 		issues = append(issues, errorToIssue(e))
 	}

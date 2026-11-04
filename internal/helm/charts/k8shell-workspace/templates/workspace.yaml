@@ -36,6 +36,20 @@ metadata:
     {{- if .Values.__webproxyaliasmessage__ }}
     k8shell.io/web-proxy-alias-message: {{ .Values.__webproxyaliasmessage__ | quote }}
     {{- end }}
+    {{- with .Values.schedule }}
+    {{- if .from }}
+    k8shell.io/schedule-from: {{ .from | quote }}
+    {{- end }}
+    {{- if .to }}
+    k8shell.io/schedule-to: {{ .to | quote }}
+    {{- end }}
+    {{- if .stopGrace }}
+    k8shell.io/schedule-stop-grace: {{ .stopGrace | quote }}
+    {{- end }}
+    {{- if .terminateGrace }}
+    k8shell.io/schedule-terminate-grace: {{ .terminateGrace | quote }}
+    {{- end }}
+    {{- end }}
   labels:
     {{- include "workspace.workspaceLabels" . | nindent 4 }} 
 spec:

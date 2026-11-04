@@ -626,6 +626,10 @@ func (p *ProvisionerService) prepareWorkspaceWithUserStr(ctx context.Context,
 		}
 	}
 
+	if err := workspace.CheckSchedule(time.Now()); err != nil {
+		return nil, convertToGRPCError(err)
+	}
+
 	if err := workspace.FetchUserEnvVars(ctx); err != nil {
 		return nil, status.Errorf(codes.Internal, "failed to fetch user environment variables: %v", err)
 	}

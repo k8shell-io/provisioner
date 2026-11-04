@@ -274,6 +274,9 @@ func (bm *BlueprintManager) validateAllBlueprints() []error {
 		for _, e := range validateWebProxy(bp) {
 			allErrors = append(allErrors, fmt.Errorf("blueprint '%s': %w", name, e))
 		}
+		for _, e := range validateSchedule(bp) {
+			allErrors = append(allErrors, fmt.Errorf("blueprint '%s': %w", name, e))
+		}
 		for _, e := range validateEnvNames(bp) {
 			allErrors = append(allErrors, fmt.Errorf("blueprint '%s': %w", name, e))
 		}
@@ -378,6 +381,20 @@ func validateWebProxy(bp *models.Blueprint) []error {
 	if wp.Port == models.WORKSPACE_PORT {
 		return []error{newFieldError("network.webProxy.port",
 			"network.webProxy.port %d is reserved for the workspace grpc API", wp.Port)}
+	}
+	return nil
+}
+
+// validateSchedule checks the schedule block: timestamps are RFC 3339, from
+// precedes to, and the grace periods are non-negative durations. It runs on
+// the blueprint after template inheritance, so it sees the effective values.
+func validateSchedule(bp *models.Blueprint) []error {
+	if _, err := models.ParseSchedule(bp.Schedule); err != nil {
+		var se *models.ScheduleError
+		if errors.As(err, &se) {
+			return []error{newFieldError("schedule."+se.Field, "%s", se.Msg)}
+		}
+		return []error{err}
 	}
 	return nil
 }

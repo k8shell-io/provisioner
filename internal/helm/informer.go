@@ -73,6 +73,11 @@ func releasePodFromSecret(log *zerolog.Logger, s *corev1.Secret) *ReleasePod {
 	// A release without a Pod in its manifest isn't a workspace release; it
 	// is kept (with a nil Pod) only so the store mirrors the Secret listing.
 	if pod, err := PodManifestFromRelease(rel); err == nil {
+		// A schedule override made while the workspace ran must also show for
+		// the stopped workspace, whose pod is rebuilt from this manifest.
+		if err := ApplyScheduleOverride(pod, s.Annotations[AnnotationScheduleOverride]); err != nil {
+			log.Warn().Err(err).Str("secret", s.Name).Msg("ignoring invalid schedule override")
+		}
 		rp.Pod = pod
 	}
 	return rp

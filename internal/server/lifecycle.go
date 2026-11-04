@@ -445,6 +445,10 @@ func (p *ProvisionerService) StartWorkspaceStream(
 			"Workspace %s already exists and is running", name))
 	}
 
+	if err := workspace.CheckStartSchedule(ctx, time.Now()); err != nil {
+		return p.sendHandshakeErr(msgStream, name, convertToGRPCError(err))
+	}
+
 	// The PAT is minted inside workspace.Provision (see doInstallation/
 	// doStart), under the workspace lock, only once the authoritative
 	// recheck there confirms this call is the one actually starting the

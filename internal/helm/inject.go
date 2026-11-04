@@ -108,6 +108,33 @@ const (
 	// workspace of the organization holds it.
 	AnnotationWebProxyAliasMessage = "k8shell.io/web-proxy-alias-message"
 
+	// AnnotationScheduleFrom, AnnotationScheduleTo, AnnotationScheduleStopGrace
+	// and AnnotationScheduleTerminateGrace hold the run schedule the workspace
+	// was provisioned with (see models.Schedule), as the blueprint's strings.
+	// The chart stamps only the ones the blueprint sets. They are part of the
+	// pod manifest in the Helm release, so a stopped workspace still carries
+	// them.
+	AnnotationScheduleFrom           = "k8shell.io/schedule-from"
+	AnnotationScheduleTo             = "k8shell.io/schedule-to"
+	AnnotationScheduleStopGrace      = "k8shell.io/schedule-stop-grace"
+	AnnotationScheduleTerminateGrace = "k8shell.io/schedule-terminate-grace"
+
+	// AnnotationScheduleOverride is set on the deployed Helm release Secret of
+	// a workspace whose schedule was overridden (SetWorkspaceSchedule). It
+	// holds the whole effective schedule as JSON (models.Schedule; an empty
+	// field is unset). It lives on the release, which outlasts the pod, so the
+	// override survives a stop and a start; a re-provision creates a new
+	// release revision without it, reverting to the blueprint's schedule, and
+	// uninstalling the release removes it. ApplyScheduleOverride writes it
+	// over the pod manifest's schedule annotations wherever a release is read.
+	AnnotationScheduleOverride = "k8shell.io/schedule-override"
+
+	// AnnotationScheduleWarned is set on a running workspace pod, to an RFC
+	// 3339 time, when the user has been warned that the workspace is about to
+	// stop. It makes the warning happen once, also across provisioner
+	// replicas. It is not part of the chart's pod manifest.
+	AnnotationScheduleWarned = "k8shell.io/schedule-warned"
+
 	// LabelStopRequested is stamped on a workspace pod immediately before
 	// Workspace.StopPod deletes it, so the pod still carries the label during
 	// its graceful-termination window. AnalyzePod uses its presence to report

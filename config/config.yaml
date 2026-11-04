@@ -99,6 +99,13 @@ nats:
     # TTL for provision jobs in the NATS KV store
     provisionBucketTTL: 48h
 
+# Enforcement of blueprint schedules (see the "schedule" blueprint block).
+# enforcement: off (default, schedules are only shown), dry-run (log what
+# would be done) or enforce (warn, stop and terminate workspaces).
+schedule:
+  enforcement: off
+  interval: 30s
+
 # Identity service configuration
 identity:
   address: identity.k8shell-staging:9020 #identity.k8shell-test:9020

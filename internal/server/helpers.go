@@ -27,6 +27,14 @@ func convertToGRPCError(err error) error {
 	if errors.Is(err, ws.ErrNodeUnreachable) {
 		return status.Errorf(codes.FailedPrecondition, "%s", err.Error())
 	}
+	// InvalidArgument, not FailedPrecondition: the provisioner client in common
+	// only passes the message of a few handshake codes through to callers.
+	if errors.Is(err, ws.ErrScheduleNotAllowed) {
+		return status.Errorf(codes.InvalidArgument, "%s", err.Error())
+	}
+	if errors.Is(err, ws.ErrWorkspaceNotRunning) {
+		return status.Errorf(codes.FailedPrecondition, "%s", err.Error())
+	}
 	if errors.Is(err, ws.ErrResizeUnsupported) {
 		return status.Errorf(codes.FailedPrecondition, "%s", err.Error())
 	}

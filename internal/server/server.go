@@ -304,6 +304,8 @@ func (s *Server) Serve() error {
 		return fmt.Errorf("start node selector discovery: %w", err)
 	}
 
+	s.startScheduleEnforcement(ctx)
+
 	// Start injection watcher whenever injection is configured.
 	if len(s.config.InjectNamespaces) > 0 {
 		watcher := NewInjectionWatcher(s.helm, s.config.InjectNamespaces)

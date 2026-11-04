@@ -43,12 +43,59 @@ type Config struct {
 	Blueprints          BlueprintsFileConfig    `yaml:"blueprints"`
 	BaseDir             string                  `yaml:"baseDir"`
 	KubeClient          KubeClientConfig        `yaml:"kubeClient"`
+	Schedule            ScheduleConfig          `yaml:"schedule"`
 
 	// DB configures the database connection used to persist org-scoped
 	// blueprint definitions, layered on top of the file-based blueprints
 	// loaded from Blueprints.Directory. Disabled (the default) means org
 	// blueprints are unavailable and only file-based blueprints are served.
 	DB db.DBConfig `yaml:"db"`
+}
+
+// Schedule enforcement modes. See ScheduleConfig.Enforcement.
+const (
+	ScheduleEnforcementOff     = "off"
+	ScheduleEnforcementDryRun  = "dry-run"
+	ScheduleEnforcementEnforce = "enforce"
+)
+
+// DefaultScheduleInterval is how often workspace schedules are evaluated when
+// ScheduleConfig.Interval is not set.
+const DefaultScheduleInterval = 30 * time.Second
+
+// ScheduleConfig configures the enforcement of blueprint schedules (see
+// models.Schedule): warning users, stopping workspaces whose schedule has
+// ended and terminating them after their terminate grace period.
+type ScheduleConfig struct {
+	// Enforcement is "off" (the default: schedules are shown but nothing acts
+	// on them), "dry-run" (log what would be done, change nothing) or
+	// "enforce".
+	Enforcement string `yaml:"enforcement"`
+	// IntervalRaw is how often schedules are evaluated, as a duration such as
+	// "30s". Defaults to DefaultScheduleInterval.
+	IntervalRaw string        `yaml:"interval"`
+	Interval    time.Duration `yaml:"-"`
+}
+
+// normalize validates c and fills in its defaults and derived fields.
+func (c *ScheduleConfig) normalize() error {
+	switch c.Enforcement {
+	case "":
+		c.Enforcement = ScheduleEnforcementOff
+	case ScheduleEnforcementOff, ScheduleEnforcementDryRun, ScheduleEnforcementEnforce:
+	default:
+		return fmt.Errorf("invalid schedule.enforcement %q: must be %s, %s or %s", c.Enforcement,
+			ScheduleEnforcementOff, ScheduleEnforcementDryRun, ScheduleEnforcementEnforce)
+	}
+	c.Interval = DefaultScheduleInterval
+	if c.IntervalRaw != "" {
+		d, err := time.ParseDuration(c.IntervalRaw)
+		if err != nil || d < time.Second {
+			return fmt.Errorf("invalid schedule.interval %q: must be a duration of at least 1s", c.IntervalRaw)
+		}
+		c.Interval = d
+	}
+	return nil
 }
 
 // ProvisionerNatsConfig represents the NATS configuration for the provisioner
@@ -175,6 +222,10 @@ func NewConfig(configFile string) (*Config, error) {
 			return nil, fmt.Errorf("invalid nats.kv.provisionBucketTTL %q: %w", cfg.Nats.KV.ProvisionBucketTTLRaw, err)
 		}
 		cfg.Nats.KV.ProvisionBucketTTL = d
+	}
+
+	if err := cfg.Schedule.normalize(); err != nil {
+		return nil, err
 	}
 
 	if cfg.CertManager.Enabled {

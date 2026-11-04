@@ -518,22 +518,16 @@ func stoppedReleasePods(ctx context.Context, helmClient *helm.Client, namespace,
 		return filteredCachedReleasePods(ctx, helmClient, namespace, selector)
 	}
 
-	releases, err := helmClient.ListReleasesBySelector(ctx, namespace, selector)
+	all, err := helmClient.ListReleasePodsBySelector(ctx, namespace, selector)
 	if err != nil {
 		return nil, err
 	}
-	rps := make([]*helm.ReleasePod, 0, len(releases))
-	for _, rel := range releases {
-		pod, err := helm.PodManifestFromRelease(rel)
-		if err != nil {
+	rps := make([]*helm.ReleasePod, 0, len(all))
+	for _, rp := range all {
+		if rp.Pod == nil {
 			continue
 		}
-		rp := &helm.ReleasePod{Pod: pod}
-		rp.Name = rel.Name
-		if rel.Info != nil {
-			rp.FirstDeployed = rel.Info.FirstDeployed.Time
-			rp.LastDeployed = rel.Info.LastDeployed.Time
-		}
+		rp.Name = rp.Pod.Name
 		rps = append(rps, rp)
 	}
 	return rps, nil
@@ -1515,5 +1509,6 @@ func workspaceDetailsCore(pod *corev1.Pod) *models.WorkspaceDetails {
 		NodeName:      pod.Spec.NodeName,
 		WorkloadKind:  workloadKind,
 		WorkloadName:  workloadName,
+		Schedule:      scheduleFromPod(pod),
 	}
 }

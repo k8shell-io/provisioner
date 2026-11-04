@@ -368,9 +368,16 @@ func (w *Workspace) doStart(ctx context.Context, opts *ProvisionOptions) (*model
 		return nil, fmt.Errorf("failed to refresh PAT secret: %w", err)
 	}
 
-	pod, err := w.client.PodFromRelease(w.Name)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get pod manifest from release: %w", err)
+	// The pod manifest of the release, with the workspace's schedule override
+	// (SetWorkspaceSchedule) applied, so that a stop and a start keep it.
+	var pod *corev1.Pod
+	if rp, rpErr := w.client.DeployedReleasePod(ctx, w.Name); rpErr == nil {
+		pod = rp.Pod
+	} else {
+		var err error
+		if pod, err = w.client.PodFromRelease(w.Name); err != nil {
+			return nil, fmt.Errorf("failed to get pod manifest from release: %w", err)
+		}
 	}
 
 	// The release manifest carries the alias the workspace held when it was
