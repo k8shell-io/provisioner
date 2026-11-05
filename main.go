@@ -11,6 +11,9 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	// Embeds the time zone database, so that schedule time zones resolve in
+	// images that ship without /usr/share/zoneinfo (e.g. distroless).
+	_ "time/tzdata"
 
 	log "github.com/k8shell-io/common/pkg/logger"
 	"github.com/k8shell-io/provisioner/internal/server"

@@ -169,7 +169,7 @@ func (f *fakeScheduleBackend) Notify(_ context.Context, n scheduleNotice) error 
 
 func newTestEnforcer(b *fakeScheduleBackend, mode string, now time.Time) *scheduleEnforcer {
 	log := zerolog.Nop()
-	e := newScheduleEnforcer(b, mode, &log)
+	e := newScheduleEnforcer(b, mode, time.UTC, &log)
 	e.now = func() time.Time { return now }
 	return e
 }
@@ -317,7 +317,7 @@ func TestEnforcerListErrorAndNoSchedule(t *testing.T) {
 func TestScheduleNoticesWithoutTerminateGrace(t *testing.T) {
 	d := schedWorkspace("ws", models.WorkspaceStatusRunning)
 	d.Schedule.TerminatesAt = nil
-	for _, n := range []scheduleNotice{warnNotice(d), stoppedNotice(d)} {
+	for _, n := range []scheduleNotice{warnNotice(d, time.UTC), stoppedNotice(d, time.UTC)} {
 		if strings.Contains(n.Body, "will be deleted") {
 			t.Errorf("%s notice promises a deletion that is not scheduled: %q", n.Category, n.Body)
 		}
@@ -418,10 +418,72 @@ func TestConvertScheduleErrors(t *testing.T) {
 		{fmt.Errorf("%w: the workspace schedule ended", ws.ErrScheduleNotAllowed), codes.InvalidArgument},
 		{fmt.Errorf("%w: schedule.to is not in the future", models.ErrInvalidParameters), codes.InvalidArgument},
 		{fmt.Errorf("%w: the schedule can only be changed while running", ws.ErrWorkspaceNotRunning), codes.FailedPrecondition},
+		{ws.ErrForceNeedsExpiry, codes.InvalidArgument},
 	}
 	for _, tt := range tests {
 		if got := status.Code(convertToGRPCError(tt.err)); got != tt.want {
 			t.Errorf("%v: code = %v, want %v", tt.err, got, tt.want)
 		}
+	}
+}
+
+func TestNoticesShowTimesInTheDeploymentZone(t *testing.T) {
+	prague, err := time.LoadLocation("Europe/Prague")
+	if err != nil {
+		t.Skipf("no time zone data: %v", err)
+	}
+	d := schedWorkspace("ws", models.WorkspaceStatusRunning)
+
+	warn := warnNotice(d, prague)
+	// to 18:00Z, stops at 18:15Z, deleted at 2026-11-17 18:15Z; Prague is CET (+1)
+	for _, want := range []string{"2026-11-10 19:00 CET", "2026-11-10 19:15 CET", "2026-11-17 19:15 CET"} {
+		if !strings.Contains(warn.Body, want) {
+			t.Errorf("warning body should contain %q: %q", want, warn.Body)
+		}
+	}
+	if !strings.Contains(warn.Title, "2026-11-10 19:15 CET") {
+		t.Errorf("title = %q", warn.Title)
+	}
+	if strings.Contains(warn.Body, "UTC") {
+		t.Errorf("body should not mention UTC: %q", warn.Body)
+	}
+
+	// in summer the same zone is CEST
+	summer := schedWorkspace("ws", models.WorkspaceStatusRunning)
+	to := time.Date(2026, 7, 10, 18, 0, 0, 0, time.UTC)
+	stops := to.Add(15 * time.Minute)
+	summer.Schedule.To, summer.Schedule.StopsAt, summer.Schedule.TerminatesAt = &to, &stops, nil
+	if body := stoppedNotice(summer, prague).Body; !strings.Contains(body, "2026-07-10 20:00 CEST") {
+		t.Errorf("summer body = %q", body)
+	}
+
+	if body := warnNotice(d, nil).Body; !strings.Contains(body, "18:15 UTC") {
+		t.Errorf("a nil zone should show UTC: %q", body)
+	}
+}
+
+func TestStoppedNoticeTellsWhatToDo(t *testing.T) {
+	d := schedWorkspace("ws", models.WorkspaceStatusStopped)
+
+	body := stoppedNotice(d, time.UTC).Body
+	for _, want := range []string{
+		"was stopped because its scheduled time ended at 2026-11-10 18:00 UTC",
+		"will be deleted at 2026-11-17 18:15 UTC",
+		"If you need access to your workspace before it is deleted, ask your administrator to extend its schedule.",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("body should contain %q: %q", want, body)
+		}
+	}
+	if strings.Contains(body, "cannot be started again") {
+		t.Errorf("body must not say the workspace cannot be started: %q", body)
+	}
+
+	// a workspace that is kept after the stop has nothing to be deleted before
+	d.Schedule.TerminatesAt = nil
+	body = stoppedNotice(d, time.UTC).Body
+	if !strings.Contains(body, "If you need access to your workspace, ask your administrator to extend its schedule.") ||
+		strings.Contains(body, "deleted") {
+		t.Errorf("body without a deletion = %q", body)
 	}
 }

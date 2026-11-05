@@ -37,6 +37,10 @@ type ProvisionOptions struct {
 	// actually win the lock and install, leaving the identity service's
 	// token out of sync with whatever got baked into the pod's Secret.
 	PATScopes []string
+	// ForcedSchedule, when set, is the schedule a workspace being started
+	// runs with from now on, stored as its override before the pod is created
+	// (see Workspace.PrepareForcedSchedule). Only doStart uses it.
+	ForcedSchedule *models.Schedule
 }
 
 // ExistsRunning checks if the workspace already exists and is running
@@ -377,6 +381,12 @@ func (w *Workspace) doStart(ctx context.Context, opts *ProvisionOptions) (*model
 		var err error
 		if pod, err = w.client.PodFromRelease(w.Name); err != nil {
 			return nil, fmt.Errorf("failed to get pod manifest from release: %w", err)
+		}
+	}
+
+	if opts.ForcedSchedule != nil {
+		if err := w.applyForcedSchedule(ctx, pod, opts.ForcedSchedule); err != nil {
+			return nil, err
 		}
 	}
 

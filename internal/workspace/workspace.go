@@ -969,6 +969,15 @@ func (w *Workspace) Values() (map[string]interface{}, error) {
 		return nil, fmt.Errorf("failed to convert blueprint to map: %w", err)
 	}
 
+	// Resolve the schedule's times without an offset now, so that the release,
+	// and with it the workspace, keeps absolute times even if the configured
+	// time zone changes later.
+	if bp.Schedule != nil {
+		if values["schedule"], err = w.scheduleValues(bp.Schedule); err != nil {
+			return nil, err
+		}
+	}
+
 	if k8shelldTagOverride != "" {
 		if k8shelldValues, ok := values["k8shelld"].(map[string]interface{}); ok {
 			if image, ok := k8shelldValues["image"].(string); ok {

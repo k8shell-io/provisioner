@@ -85,31 +85,47 @@ type scheduleNotice struct {
 	Body      string
 }
 
-func fmtScheduleTime(t time.Time) string { return t.UTC().Format("2006-01-02 15:04 UTC") }
+// fmtScheduleTime formats t in loc with the zone's abbreviation, e.g.
+// "2026-11-14 19:15 CET". A nil loc is UTC.
+func fmtScheduleTime(t time.Time, loc *time.Location) string {
+	if loc == nil {
+		loc = time.UTC
+	}
+	return t.In(loc).Format("2006-01-02 15:04 MST")
+}
 
-func warnNotice(d *models.WorkspaceDetails) scheduleNotice {
+func warnNotice(d *models.WorkspaceDetails, loc *time.Location) scheduleNotice {
 	s := d.Schedule
 	return scheduleNotice{
 		Username: d.Username, Workspace: d.Name, Category: notifyStopWarning,
-		Title: fmt.Sprintf("Workspace %s will stop at %s", d.Name, fmtScheduleTime(*s.StopsAt)),
+		Title: fmt.Sprintf("Workspace %s will stop at %s", d.Name, fmtScheduleTime(*s.StopsAt, loc)),
 		Body: fmt.Sprintf("The scheduled time of your workspace %s (blueprint %s) ended at %s.\n"+
 			"It will be stopped at %s. Save your work before then.%s",
-			d.Name, d.Blueprint, fmtScheduleTime(*s.To), fmtScheduleTime(*s.StopsAt), terminateSentence(s)),
+			d.Name, d.Blueprint, fmtScheduleTime(*s.To, loc), fmtScheduleTime(*s.StopsAt, loc), terminateSentence(s, loc)),
 	}
 }
 
-func stoppedNotice(d *models.WorkspaceDetails) scheduleNotice {
+func stoppedNotice(d *models.WorkspaceDetails, loc *time.Location) scheduleNotice {
 	s := d.Schedule
 	return scheduleNotice{
 		Username: d.Username, Workspace: d.Name, Category: notifyStopped,
 		Title: fmt.Sprintf("Workspace %s was stopped", d.Name),
-		Body: fmt.Sprintf("Your workspace %s (blueprint %s) was stopped because its scheduled time ended at %s. "+
-			"It cannot be started again.%s",
-			d.Name, d.Blueprint, fmtScheduleTime(*s.To), terminateSentence(s)),
+		Body: fmt.Sprintf("Your workspace %s (blueprint %s) was stopped because its scheduled time ended at %s.%s "+
+			"If you need access to your workspace%s, ask your administrator to extend its schedule.",
+			d.Name, d.Blueprint, fmtScheduleTime(*s.To, loc), terminateSentence(s, loc), beforeDeletion(s)),
 	}
 }
 
-func terminatedNotice(d *models.WorkspaceDetails) scheduleNotice {
+// beforeDeletion is " before it is deleted" when the workspace is going to be
+// deleted, and empty when it is kept.
+func beforeDeletion(s *models.WorkspaceSchedule) string {
+	if s.TerminatesAt == nil {
+		return ""
+	}
+	return " before it is deleted"
+}
+
+func terminatedNotice(d *models.WorkspaceDetails, loc *time.Location) scheduleNotice {
 	return scheduleNotice{
 		Username: d.Username, Workspace: d.Name, Category: notifyTerminated,
 		Title: fmt.Sprintf("Workspace %s was deleted", d.Name),
@@ -118,11 +134,11 @@ func terminatedNotice(d *models.WorkspaceDetails) scheduleNotice {
 	}
 }
 
-func terminateSentence(s *models.WorkspaceSchedule) string {
+func terminateSentence(s *models.WorkspaceSchedule, loc *time.Location) string {
 	if s.TerminatesAt == nil {
 		return ""
 	}
-	return fmt.Sprintf(" The workspace and its data will be deleted at %s.", fmtScheduleTime(*s.TerminatesAt))
+	return fmt.Sprintf(" The workspace and its data will be deleted at %s.", fmtScheduleTime(*s.TerminatesAt, loc))
 }
 
 // scheduleBackend is what the enforcer needs from the cluster, so that the
@@ -156,10 +172,12 @@ type scheduleEnforcer struct {
 	mode string
 	log  *zerolog.Logger
 	now  func() time.Time
+	// loc is the zone times are shown in, in notices.
+	loc *time.Location
 }
 
-func newScheduleEnforcer(backend scheduleBackend, mode string, log *zerolog.Logger) *scheduleEnforcer {
-	return &scheduleEnforcer{backend: backend, mode: mode, log: log, now: time.Now}
+func newScheduleEnforcer(backend scheduleBackend, mode string, loc *time.Location, log *zerolog.Logger) *scheduleEnforcer {
+	return &scheduleEnforcer{backend: backend, mode: mode, loc: loc, log: log, now: time.Now}
 }
 
 // Run reconciles every interval until ctx is cancelled.
@@ -220,7 +238,7 @@ func (e *scheduleEnforcer) apply(ctx context.Context, action scheduleAction, d *
 		if !won {
 			return
 		}
-		e.notify(ctx, &log, warnNotice(d))
+		e.notify(ctx, &log, warnNotice(d, e.loc))
 		log.Info().Msg("Warned user that the workspace is about to stop")
 
 	case scheduleStop:
@@ -236,7 +254,7 @@ func (e *scheduleEnforcer) apply(ctx context.Context, action scheduleAction, d *
 		if !stopped {
 			return
 		}
-		e.notify(ctx, &log, stoppedNotice(d))
+		e.notify(ctx, &log, stoppedNotice(d, e.loc))
 		log.Info().Msg("Stopped workspace as its schedule ended")
 
 	case scheduleTerminate:
@@ -248,7 +266,7 @@ func (e *scheduleEnforcer) apply(ctx context.Context, action scheduleAction, d *
 		if !terminated {
 			return
 		}
-		e.notify(ctx, &log, terminatedNotice(d))
+		e.notify(ctx, &log, terminatedNotice(d, e.loc))
 		log.Info().Msg("Terminated workspace as its schedule ended")
 	}
 }
@@ -363,6 +381,17 @@ func (b *provisionerScheduleBackend) Stop(ctx context.Context, d *models.Workspa
 }
 
 func (b *provisionerScheduleBackend) Terminate(ctx context.Context, d *models.WorkspaceDetails, pod *corev1.Pod) (bool, error) {
+	// The listing may be cached. Deleting is not undoable, so look at the
+	// workspace's schedule as it is now: an administrator may just have
+	// force-started it with a new expiry.
+	fresh, err := ws.GetWorkspaces(ctx, b.p.server.helm, ws.GetWorkspacesOptions{WorkspaceName: d.Name})
+	if err != nil {
+		return false, err
+	}
+	if len(fresh.Workspaces) == 0 || planSchedule(fresh.Workspaces[0], true, time.Now()) != scheduleTerminate {
+		return false, nil
+	}
+
 	if err := ws.DeleteWorkspacePod(ctx, b.p.server.helm, b.p.server.Identity, pod); err != nil {
 		if errors.Is(err, ws.ErrLockAlreadyHeld) {
 			return false, nil
@@ -393,14 +422,22 @@ func (b *provisionerScheduleBackend) Notify(ctx context.Context, n scheduleNotic
 	return err
 }
 
-// startScheduleEnforcement starts the schedule enforcer in the background
-// unless it is switched off in the configuration.
+// startScheduleEnforcement starts the schedule enforcer in the background.
+//
+// TEMPORARY: enforcement is hard-wired on, in enforce mode and at the default
+// interval, whatever schedule.enforcement and schedule.interval say, so it can
+// be tested without a config change. Remove this override to make the
+// configuration decide again; the commented code below is the real logic.
 func (s *Server) startScheduleEnforcement(ctx context.Context) {
-	cfg := s.config.Schedule
-	if cfg.Enforcement == "" || cfg.Enforcement == config.ScheduleEnforcementOff {
-		return
-	}
+	mode, interval := config.ScheduleEnforcementEnforce, config.DefaultScheduleInterval
+
+	// cfg := s.config.Schedule
+	// if cfg.Enforcement == "" || cfg.Enforcement == config.ScheduleEnforcementOff {
+	// 	return
+	// }
+	// mode, interval := cfg.Enforcement, cfg.Interval
+
 	backend := &provisionerScheduleBackend{p: NewProvisionerService(s)}
-	enforcer := newScheduleEnforcer(backend, cfg.Enforcement, s.log)
-	go enforcer.Run(ctx, cfg.Interval)
+	enforcer := newScheduleEnforcer(backend, mode, s.config.Schedule.Location, s.log)
+	go enforcer.Run(ctx, interval)
 }

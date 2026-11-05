@@ -59,6 +59,11 @@ const (
 	ScheduleEnforcementEnforce = "enforce"
 )
 
+// DefaultForceStartDuration is how long a workspace whose schedule has ended
+// runs after it is force-started without an expiry of its own, unless
+// ScheduleConfig.ForceStartDuration says otherwise.
+const DefaultForceStartDuration = time.Hour
+
 // DefaultScheduleInterval is how often workspace schedules are evaluated when
 // ScheduleConfig.Interval is not set.
 const DefaultScheduleInterval = 30 * time.Second
@@ -75,6 +80,19 @@ type ScheduleConfig struct {
 	// "30s". Defaults to DefaultScheduleInterval.
 	IntervalRaw string        `yaml:"interval"`
 	Interval    time.Duration `yaml:"-"`
+	// Timezone is the IANA name (e.g. "Europe/Prague") of the zone a blueprint
+	// schedule's times without an offset are read in, unless the blueprint sets
+	// its own timezone. When empty the system's local zone (the TZ environment
+	// variable, UTC if unset) is used.
+	Timezone string `yaml:"timezone"`
+	// Location is Timezone resolved, or the system's local zone.
+	Location *time.Location `yaml:"-"`
+	// ForceStartDurationRaw is how long a force-started workspace whose
+	// schedule has ended may run when the start request names no expiry, as a
+	// duration such as "1h". The workspace's new expiry is that long from the
+	// start. Defaults to DefaultForceStartDuration.
+	ForceStartDurationRaw string        `yaml:"forceStartDuration"`
+	ForceStartDuration    time.Duration `yaml:"-"`
 }
 
 // normalize validates c and fills in its defaults and derived fields.
@@ -86,6 +104,22 @@ func (c *ScheduleConfig) normalize() error {
 	default:
 		return fmt.Errorf("invalid schedule.enforcement %q: must be %s, %s or %s", c.Enforcement,
 			ScheduleEnforcementOff, ScheduleEnforcementDryRun, ScheduleEnforcementEnforce)
+	}
+	c.Location = time.Local
+	if c.Timezone != "" {
+		loc, err := time.LoadLocation(c.Timezone)
+		if err != nil {
+			return fmt.Errorf("invalid schedule.timezone %q: %w", c.Timezone, err)
+		}
+		c.Location = loc
+	}
+	c.ForceStartDuration = DefaultForceStartDuration
+	if c.ForceStartDurationRaw != "" {
+		d, err := time.ParseDuration(c.ForceStartDurationRaw)
+		if err != nil || d <= 0 {
+			return fmt.Errorf("invalid schedule.forceStartDuration %q: must be a positive duration", c.ForceStartDurationRaw)
+		}
+		c.ForceStartDuration = d
 	}
 	c.Interval = DefaultScheduleInterval
 	if c.IntervalRaw != "" {
@@ -224,6 +258,12 @@ func NewConfig(configFile string) (*Config, error) {
 		cfg.Nats.KV.ProvisionBucketTTL = d
 	}
 
+	// TEMPORARY: the schedule time zone is hard-wired, whatever schedule.timezone
+	// says, for testing. Remove this line to make the configuration decide.
+	cfg.Schedule.Timezone = "Europe/Prague"
+	// TEMPORARY, likewise: how long a force-started workspace runs without an
+	// expiry of its own. Remove to make schedule.forceStartDuration decide.
+	cfg.Schedule.ForceStartDurationRaw = "1h"
 	if err := cfg.Schedule.normalize(); err != nil {
 		return nil, err
 	}

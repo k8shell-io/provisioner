@@ -39,3 +39,60 @@ func TestScheduleConfigNormalize(t *testing.T) {
 		})
 	}
 }
+
+func TestScheduleConfigTimezone(t *testing.T) {
+	t.Run("defaults to the system's local zone", func(t *testing.T) {
+		c := ScheduleConfig{}
+		if err := c.normalize(); err != nil {
+			t.Fatal(err)
+		}
+		if c.Location != time.Local {
+			t.Fatalf("location = %v, want the local zone", c.Location)
+		}
+	})
+
+	t.Run("configured zone", func(t *testing.T) {
+		c := ScheduleConfig{Timezone: "Europe/Prague"}
+		if err := c.normalize(); err != nil {
+			t.Fatal(err)
+		}
+		if c.Location.String() != "Europe/Prague" {
+			t.Fatalf("location = %v", c.Location)
+		}
+	})
+
+	t.Run("unknown zone", func(t *testing.T) {
+		c := ScheduleConfig{Timezone: "Mars/Olympus"}
+		if err := c.normalize(); err == nil {
+			t.Fatal("expected an error")
+		}
+	})
+}
+
+func TestScheduleConfigForceStartDuration(t *testing.T) {
+	tests := []struct {
+		name    string
+		raw     string
+		want    time.Duration
+		wantErr bool
+	}{
+		{"defaults to one hour", "", time.Hour, false},
+		{"configured", "30m", 30 * time.Minute, false},
+		{"a day", "24h", 24 * time.Hour, false},
+		{"not a duration", "soon", 0, true},
+		{"zero", "0s", 0, true},
+		{"negative", "-1h", 0, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			c := ScheduleConfig{ForceStartDurationRaw: tt.raw}
+			err := c.normalize()
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("error = %v, wantErr %v", err, tt.wantErr)
+			}
+			if err == nil && c.ForceStartDuration != tt.want {
+				t.Fatalf("duration = %v, want %v", c.ForceStartDuration, tt.want)
+			}
+		})
+	}
+}

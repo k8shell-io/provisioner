@@ -102,9 +102,16 @@ nats:
 # Enforcement of blueprint schedules (see the "schedule" blueprint block).
 # enforcement: off (default, schedules are only shown), dry-run (log what
 # would be done) or enforce (warn, stop and terminate workspaces).
+# timezone is the zone times without an offset in a schedule are read in
+# (e.g. "2026-11-10 09:00"), unless the blueprint sets its own. Default is the
+# system's time zone (TZ).
 schedule:
   enforcement: off
   interval: 30s
+  # timezone: Europe/Prague
+  # forceStartDuration is how long a force-started workspace whose schedule has
+  # ended runs when the request names no new expiry (default 1h).
+  # forceStartDuration: 1h
 
 # Identity service configuration
 identity:

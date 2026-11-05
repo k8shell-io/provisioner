@@ -445,8 +445,21 @@ func (p *ProvisionerService) StartWorkspaceStream(
 			"Workspace %s already exists and is running", name))
 	}
 
+	// A workspace whose schedule does not allow it is only started when forced.
+	// A forced start of an expired one needs a new expiry, which becomes its
+	// schedule override: it would be stopped again at once otherwise.
+	var forced *models.Schedule
 	if err := workspace.CheckStartSchedule(ctx, time.Now()); err != nil {
-		return p.sendHandshakeErr(msgStream, name, convertToGRPCError(err))
+		if !req.GetForce() || !errors.Is(err, ws.ErrScheduleNotAllowed) {
+			return p.sendHandshakeErr(msgStream, name, convertToGRPCError(err))
+		}
+		p.log.Warn().Str("workspace", name).Err(err).Msg("Forced start of a workspace past its schedule")
+	}
+	if req.GetForce() {
+		forced, err = workspace.PrepareForcedSchedule(ctx, req.To, time.Now())
+		if err != nil {
+			return p.sendHandshakeErr(msgStream, name, convertToGRPCError(err))
+		}
 	}
 
 	// The PAT is minted inside workspace.Provision (see doInstallation/
@@ -494,9 +507,10 @@ func (p *ProvisionerService) StartWorkspaceStream(
 	return p.runWorkspaceStream(ctx, stream, workspace.Name, job, req.SendProgress, req.SendEvents,
 		func(messages chan models.WorkspaceStreamEvent) (*models.WorkspaceStatus, error) {
 			return workspace.Provision(ctx, &ws.ProvisionOptions{
-				Timeout:   timeout,
-				Messages:  messages,
-				PATScopes: PAT_SCOPES,
+				Timeout:        timeout,
+				Messages:       messages,
+				PATScopes:      PAT_SCOPES,
+				ForcedSchedule: forced,
 			})
 		})
 }

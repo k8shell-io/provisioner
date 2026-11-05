@@ -112,9 +112,10 @@ func NewServer(configFile string, appVersion string, commit string) (*Server, er
 		orgStore = server.DB
 	}
 	server.bpManager, err = blueprint.NewBlueprintManager(blueprint.LoadOptions{
-		Dir:         blueprintDir,
-		EnableWatch: true,
-		OrgStore:    orgStore,
+		Dir:              blueprintDir,
+		EnableWatch:      true,
+		OrgStore:         orgStore,
+		ScheduleLocation: server.config.Schedule.Location,
 		Strategies: blueprint.MergeStrategies{
 			// claimSpec.accessModes: child replaces parent entirely — appending access modes makes no sense.
 			// Using the full path avoids colliding with any other "accessModes" key elsewhere in the tree.

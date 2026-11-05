@@ -114,6 +114,11 @@ type LoadOptions struct {
 	// database that are merged with the file-based blueprints loaded from
 	// Dir. Nil disables org blueprint support entirely.
 	OrgStore OrgBlueprintStore
+
+	// ScheduleLocation is the zone the times without an offset in a
+	// blueprint's schedule are read in, unless the blueprint sets its own
+	// timezone. Nil means the system's local zone.
+	ScheduleLocation *time.Location
 }
 
 // BlueprintManager manages blueprints with lazy CEL evaluation.
@@ -125,6 +130,7 @@ type BlueprintManager struct {
 	processor     *config.Processor        // YAML processor for parsing and validating blueprints
 	watcher       *Watcher                 // the file watcher
 	orgStore      OrgBlueprintStore        // optional database-backed store of org-scoped blueprints
+	scheduleLoc   *time.Location           // default zone of schedule times without an offset
 	mu            sync.RWMutex             // Mutex for thread-safe access to rawBlueprints
 }
 
@@ -170,8 +176,9 @@ func NewBlueprintManager(opts LoadOptions) (*BlueprintManager, error) {
 			EnableEnvVarExpansion: false,
 			EnableFileTag:         true,
 		}),
-		orgStore: opts.OrgStore,
-		mu:       sync.RWMutex{},
+		orgStore:    opts.OrgStore,
+		scheduleLoc: opts.ScheduleLocation,
+		mu:          sync.RWMutex{},
 	}
 
 	if opts.EnableWatch {
@@ -274,7 +281,7 @@ func (bm *BlueprintManager) validateAllBlueprints() []error {
 		for _, e := range validateWebProxy(bp) {
 			allErrors = append(allErrors, fmt.Errorf("blueprint '%s': %w", name, e))
 		}
-		for _, e := range validateSchedule(bp) {
+		for _, e := range validateSchedule(bp, bm.scheduleLoc) {
 			allErrors = append(allErrors, fmt.Errorf("blueprint '%s': %w", name, e))
 		}
 		for _, e := range validateEnvNames(bp) {
@@ -385,11 +392,12 @@ func validateWebProxy(bp *models.Blueprint) []error {
 	return nil
 }
 
-// validateSchedule checks the schedule block: timestamps are RFC 3339, from
+// validateSchedule checks the schedule block: the timezone is known, times
+// are RFC 3339 timestamps or local times (read in the timezone, or def), from
 // precedes to, and the grace periods are non-negative durations. It runs on
 // the blueprint after template inheritance, so it sees the effective values.
-func validateSchedule(bp *models.Blueprint) []error {
-	if _, err := models.ParseSchedule(bp.Schedule); err != nil {
+func validateSchedule(bp *models.Blueprint, def *time.Location) []error {
+	if _, err := models.ParseSchedule(bp.Schedule, def); err != nil {
 		var se *models.ScheduleError
 		if errors.As(err, &se) {
 			return []error{newFieldError("schedule."+se.Field, "%s", se.Msg)}
